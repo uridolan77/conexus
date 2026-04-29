@@ -18,6 +18,7 @@ from app.llm.base import LLMProvider
 from app.llm.dependencies import get_provider
 from app.llm.errors import (
     AllProvidersFailedError,
+    ProviderError,
     ProviderRateLimitError,
     ProviderUnavailableError,
     UnknownModelError,
@@ -573,6 +574,63 @@ async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
         assert log.project_id == project.id
         assert log.api_key_id == api_key.id
         assert log.requested_model == "gpt-4o-mini"
+        assert log.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_after_partial_output_emits_safe_sse_error_and_logs_failed(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hello"),
+        ],
+        stream_raises=ProviderError("upstream broke", provider="openai"),
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    # Partial output is delivered.
+    assert "hello" in payload
+    # A safe error object is delivered (not the raw provider exception).
+    assert "\"error\"" in payload
+    assert "Stream interrupted." in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "gpt-4o-mini"
+        # Failure finish must win: success fields must not be stamped.
+        assert log.provider is None
+        assert log.model is None
+        assert log.error_code == "ProviderError"
+        assert log.error_message == "upstream broke"
         assert log.completed_at is not None
 
 

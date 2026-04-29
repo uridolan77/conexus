@@ -30,7 +30,7 @@ Supported and forwarded to providers:
 - `max_tokens`
 - `temperature`
 
-Accepted for OpenAI client compatibility (currently **ignored** by providers in Conexus):
+Accepted for OpenAI client compatibility (**accepted but not forwarded** by Conexus today):
 
 - `top_p`
 - `stop`
@@ -51,6 +51,7 @@ Conexus intentionally does **not** implement these yet:
 
 - `tools`, `tool_choice` (**tool calls are not supported yet**)
 - `logprobs`, `top_logprobs` (**logprobs are not supported yet**)
+- `n > 1` (**only n=1 is supported**)
 
 Conexus does **not** implement:
 
@@ -73,6 +74,8 @@ Request logging notes:
 
 - Conexus **does not store prompt or response bodies** (including streamed content).
 - If token usage is available from the provider stream, Conexus stores tokens and estimated cost; otherwise those fields remain null.
+- Some compatibility-validation 400s may include `X-Conexus-Request-Id` but **may not create** a `gateway_requests` row (the BO request log is only for calls that reach the gateway service).
+- When a streaming error occurs after the SSE response has started, Conexus may emit a best-effort SSE `error` object; **the BO request status is authoritative**.
 
 ## Known limitations
 
@@ -80,5 +83,7 @@ Request logging notes:
 - No tool calls
 - No logprobs
 - `response_format` only supports plain text mode
-- Streaming is supported for OpenAI provider streaming; Anthropic streaming is not enabled yet
+- **Concrete OpenAI models** stream (for example `gpt-4o-mini`)
+- **Anthropic streaming is not supported yet**
+- **Conexus alias streaming** currently streams via the alias’ **OpenAI** mapping until Anthropic streaming is implemented
 

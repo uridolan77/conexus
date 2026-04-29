@@ -210,7 +210,11 @@ class GatewayProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> AsyncIterator[ChatStreamChunk]:
-        """Stream from the selected primary route (no mid-stream fallback)."""
+        """Stream from a single selected route (no mid-stream fallback).
+
+        Conexus aliases currently stream via OpenAI until Anthropic streaming
+        is implemented. Concrete provider model names bypass alias routing.
+        """
         route, anthropic_model, openai_model = _resolve_models(model)
 
         if route == "openai_only":
@@ -241,21 +245,32 @@ class GatewayProvider(LLMProvider):
                 yield chunk
             return
 
-        # Alias routing: stream only the primary route for now.
-        if self._primary is None:
-            raise AllProvidersFailedError(
-                "All configured LLM providers failed or are not configured."
+        # Alias routing: stream via OpenAI until Anthropic streaming exists.
+        if self._fallback is None:
+            raise ProviderError(
+                "Streaming is not supported for Conexus aliases unless OpenAI is configured.",
+                provider=self.provider_name,
             )
-        try:
-            async for chunk in self._primary.stream_chat(
-                messages,
-                model=anthropic_model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            ):
+
+        async for chunk in self._fallback.stream_chat(
+            messages,
+            model=openai_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ):
+            # Preserve a hint that alias routing chose OpenAI intentionally.
+            if self._primary is not None:
+                yield ChatStreamChunk(
+                    provider=chunk.provider,
+                    model=chunk.model,
+                    role_delta=chunk.role_delta,
+                    content_delta=chunk.content_delta,
+                    finish_reason=chunk.finish_reason,
+                    usage=chunk.usage,
+                    fallback_used=True,
+                )
+            else:
                 yield chunk
-        except ProviderError:
-            raise
 
     async def aclose(self) -> None:
         for provider in (self._primary, self._fallback):
