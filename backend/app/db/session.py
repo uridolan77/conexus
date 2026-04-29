@@ -81,3 +81,12 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+def get_db_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """FastAPI dependency that yields the process-scoped sessionmaker.
+
+    Used by the gateway service so that request-log writes can manage their
+    own short-lived sessions, independent of any request-level transaction.
+    """
+    return get_sessionmaker()

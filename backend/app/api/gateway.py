@@ -1,7 +1,10 @@
-"""POST /v1/chat/completions — OpenAI-compatible gateway endpoint.
+"""POST /v1/chat/completions — minimal OpenAI-compatible subset.
 
-Goal (docs/04_GATEWAY.md): a client that already speaks the OpenAI Chat
-Completions API can swap ``base_url`` and ``api_key`` and keep working.
+This endpoint accepts the small slice of the OpenAI Chat Completions request
+shape that Conexus needs in M2: ``model`` + ``messages`` + ``max_tokens`` +
+``temperature``. Streaming, tool calls, response_format, logprobs, n>1 etc.
+are out of scope. Full compatibility may follow once the gateway has more
+production usage.
 """
 
 from __future__ import annotations
@@ -9,12 +12,12 @@ from __future__ import annotations
 import time
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.auth import AuthenticatedProject, require_project_api_key
-from app.db.session import get_session
+from app.db.session import get_db_sessionmaker
 from app.llm import LLMProvider
 from app.llm.dependencies import get_provider
 from app.services.gateway_service import (
@@ -24,6 +27,8 @@ from app.services.gateway_service import (
 )
 
 router = APIRouter(prefix="/v1", tags=["gateway"])
+
+REQUEST_ID_HEADER = "X-Conexus-Request-Id"
 
 
 class ChatMessageBody(BaseModel):
@@ -61,16 +66,23 @@ class ChatCompletionsResponse(BaseModel):
     usage: _Usage
 
 
+def _error_detail(code: str, message: str, request_id: str) -> dict[str, str]:
+    return {"code": code, "message": message, "request_id": request_id}
+
+
 @router.post("/chat/completions", response_model=ChatCompletionsResponse)
 async def chat_completions(
     body: ChatCompletionsBody,
+    response: Response,
     auth: Annotated[AuthenticatedProject, Depends(require_project_api_key)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    sessionmaker: Annotated[
+        async_sessionmaker[AsyncSession], Depends(get_db_sessionmaker)
+    ],
     provider: Annotated[LLMProvider, Depends(get_provider)],
 ) -> ChatCompletionsResponse:
     try:
-        response = await run_chat_completion(
-            session=session,
+        result = await run_chat_completion(
+            sessionmaker=sessionmaker,
             provider=provider,
             project=auth.project,
             api_key=auth.api_key,
@@ -82,31 +94,34 @@ async def chat_completions(
     except GatewayClientError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": exc.code, "message": str(exc)},
+            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            headers={REQUEST_ID_HEADER: exc.request_id},
         ) from exc
     except GatewayUpstreamError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": exc.code, "message": str(exc)},
+            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            headers={REQUEST_ID_HEADER: exc.request_id},
         ) from exc
 
-    result = response.result
+    chat_result = result.result
+    response.headers[REQUEST_ID_HEADER] = result.request_id
     return ChatCompletionsResponse(
-        id=f"chatcmpl-{response.request_id}",
+        id=f"chatcmpl-{result.request_id}",
         created=int(time.time()),
-        model=result.model,
-        provider=result.provider,
-        fallback_used=result.fallback_used,
+        model=chat_result.model,
+        provider=chat_result.provider,
+        fallback_used=chat_result.fallback_used,
         choices=[
             _Choice(
                 index=0,
-                message=ChatMessageBody(role="assistant", content=result.content),
+                message=ChatMessageBody(role="assistant", content=chat_result.content),
                 finish_reason="stop",
             )
         ],
         usage=_Usage(
-            prompt_tokens=result.usage.input_tokens,
-            completion_tokens=result.usage.output_tokens,
-            total_tokens=result.usage.total_tokens,
+            prompt_tokens=chat_result.usage.input_tokens,
+            completion_tokens=chat_result.usage.output_tokens,
+            total_tokens=chat_result.usage.total_tokens,
         ),
     )

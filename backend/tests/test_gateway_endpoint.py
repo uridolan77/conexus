@@ -8,8 +8,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api.gateway import REQUEST_ID_HEADER
 from app.db import models
-from app.db.session import get_session
+from app.db.session import get_db_sessionmaker, get_session
 from app.llm.base import LLMProvider
 from app.llm.dependencies import get_provider
 from app.llm.errors import (
@@ -84,6 +85,7 @@ async def seeded(db_sessionmaker):
 @pytest_asyncio.fixture
 async def client(db_sessionmaker):
     async def override_session():
+        # Auth dep: read-only session with auto-commit on success.
         async with db_sessionmaker() as session:
             try:
                 yield session
@@ -92,7 +94,12 @@ async def client(db_sessionmaker):
                 await session.rollback()
                 raise
 
+    def override_sessionmaker():
+        # Gateway service: owns its own short-lived sessions.
+        return db_sessionmaker
+
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_db_sessionmaker] = override_sessionmaker
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -211,6 +218,8 @@ async def test_chat_completions_happy_path(
     }
     request_id = body["id"].removeprefix("chatcmpl-")
     assert request_id
+    # Success response advertises the request id so callers can correlate logs.
+    assert response.headers[REQUEST_ID_HEADER] == request_id
 
     # Request log row written.
     async with db_sessionmaker() as session:
@@ -264,16 +273,18 @@ async def test_chat_completions_provider_failure_logs_failure(
     assert response.status_code == 502
     body = response.json()
     assert body["detail"]["code"] == "all_providers_failed"
+    request_id = body["detail"]["request_id"]
+    assert request_id
+    assert response.headers[REQUEST_ID_HEADER] == request_id
 
     async with db_sessionmaker() as session:
         log = (
             await session.execute(
-                select(models.GatewayRequest).order_by(
-                    models.GatewayRequest.created_at.desc()
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
                 )
             )
-        ).scalars().first()
-        assert log is not None
+        ).scalar_one()
         assert log.status == "failed"
         assert log.error_code == "all_providers_failed"
         assert log.error_message == "everyone is down"
@@ -306,6 +317,9 @@ async def test_chat_completions_unknown_model_returns_400(
     assert response.status_code == 400
     body = response.json()
     assert body["detail"]["code"] == "unknown_model"
+    request_id = body["detail"]["request_id"]
+    assert request_id
+    assert response.headers[REQUEST_ID_HEADER] == request_id
 
 
 @pytest.mark.asyncio
@@ -331,14 +345,16 @@ async def test_chat_completions_provider_rate_limit_logs_failure(
         app.dependency_overrides.pop(get_provider, None)
 
     assert response.status_code == 502
+    body = response.json()
+    request_id = body["detail"]["request_id"]
+    assert response.headers[REQUEST_ID_HEADER] == request_id
     async with db_sessionmaker() as session:
         log = (
             await session.execute(
-                select(models.GatewayRequest).order_by(
-                    models.GatewayRequest.created_at.desc()
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
                 )
             )
-        ).scalars().first()
-        assert log is not None
+        ).scalar_one()
         assert log.status == "failed"
         assert log.error_code == "ProviderRateLimitError"
