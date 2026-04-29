@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     )
 
     auth_secret: str = Field(default="replace-me-local", alias="AUTH_SECRET")
+    admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
+    admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
+    admin_session_ttl_hours: int = Field(default=12, alias="ADMIN_SESSION_TTL_HOURS")
+    encryption_key: str = Field(
+        default="8A4Rfd9yzsttvGQY0Q_IeEjV_j9V2drZW8JfHK4HgxA=",
+        alias="ENCRYPTION_KEY",
+    )
 
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")

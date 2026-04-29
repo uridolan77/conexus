@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -115,4 +116,25 @@ class GatewayRequest(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class ProviderConfig(Base):
+    __tablename__ = "provider_configs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    key_mask: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_test_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )

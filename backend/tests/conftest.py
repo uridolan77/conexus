@@ -42,3 +42,21 @@ def _no_retry_wait():
     yield
     for t, w in zip(targets, originals):
         t.retry.wait = w
+
+
+@pytest.fixture(autouse=True)
+def _reset_provider_test_factory():
+    from app.services.provider_config_service import reset_provider_factory_for_tests
+
+    reset_provider_factory_for_tests()
+    yield
+    reset_provider_factory_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_secret_crypto_cache():
+    from app.services.secret_crypto import reset_fernet_for_tests
+
+    reset_fernet_for_tests()
+    yield
+    reset_fernet_for_tests()

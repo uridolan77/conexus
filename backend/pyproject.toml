@@ -15,6 +15,7 @@ dependencies = [
     "tenacity>=9.0",
     "pyyaml>=6.0",
     "structlog>=24.1",
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]
