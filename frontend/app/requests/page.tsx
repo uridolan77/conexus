@@ -24,32 +24,58 @@ import {
 import { BACKEND_BASE, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = "50";
 
 type Filters = {
+  limit: string;
+  request_id: string;
   status: string;
   project_id: string;
+  api_key_id: string;
   provider: string;
+  requested_model: string;
+  model: string;
   model_search: string;
   fallback_used: string;
+  error_code: string;
   created_from: string;
   created_to: string;
+  completed_from: string;
+  completed_to: string;
+  min_latency_ms: string;
+  max_latency_ms: string;
+  min_total_tokens: string;
+  max_total_tokens: string;
+  min_estimated_cost: string;
+  max_estimated_cost: string;
   sort_by: string;
   sort_dir: string;
-  request_id: string;
 };
 
 const defaultFilters: Filters = {
+  limit: DEFAULT_LIMIT,
+  request_id: "",
   status: "",
   project_id: "",
+  api_key_id: "",
   provider: "",
+  requested_model: "",
+  model: "",
   model_search: "",
   fallback_used: "",
+  error_code: "",
   created_from: "",
   created_to: "",
+  completed_from: "",
+  completed_to: "",
+  min_latency_ms: "",
+  max_latency_ms: "",
+  min_total_tokens: "",
+  max_total_tokens: "",
+  min_estimated_cost: "",
+  max_estimated_cost: "",
   sort_by: "created_at",
   sort_dir: "desc",
-  request_id: "",
 };
 
 function empty(value: string | number | null | undefined) {
@@ -86,25 +112,38 @@ function filtersFromLocation(): Filters {
   if (typeof window === "undefined") return defaultFilters;
   const params = new URLSearchParams(window.location.search);
   return {
+    limit: params.get("limit") ?? DEFAULT_LIMIT,
+    request_id: params.get("request_id") ?? "",
     status: params.get("status") ?? "",
     project_id: params.get("project_id") ?? "",
+    api_key_id: params.get("api_key_id") ?? "",
     provider: params.get("provider") ?? "",
+    requested_model: params.get("requested_model") ?? "",
+    model: params.get("model") ?? "",
     model_search: params.get("model_search") ?? "",
     fallback_used: params.get("fallback_used") ?? "",
+    error_code: params.get("error_code") ?? "",
     created_from: params.get("created_from") ?? "",
     created_to: params.get("created_to") ?? "",
+    completed_from: params.get("completed_from") ?? "",
+    completed_to: params.get("completed_to") ?? "",
+    min_latency_ms: params.get("min_latency_ms") ?? "",
+    max_latency_ms: params.get("max_latency_ms") ?? "",
+    min_total_tokens: params.get("min_total_tokens") ?? "",
+    max_total_tokens: params.get("max_total_tokens") ?? "",
+    min_estimated_cost: params.get("min_estimated_cost") ?? "",
+    max_estimated_cost: params.get("max_estimated_cost") ?? "",
     sort_by: params.get("sort_by") ?? "created_at",
     sort_dir: params.get("sort_dir") ?? "desc",
-    request_id: params.get("request_id") ?? "",
   };
 }
 
 function toQuery(filters: Filters, offset: number) {
   const params = new URLSearchParams();
-  params.set("limit", String(DEFAULT_LIMIT));
+  params.set("limit", filters.limit || DEFAULT_LIMIT);
   params.set("offset", String(offset));
   for (const [key, value] of Object.entries(filters)) {
-    if (value) params.set(key, value);
+    if (key !== "limit" && value) params.set(key, value);
   }
   return params;
 }
@@ -156,7 +195,6 @@ export default function RequestsPage() {
       setResponse(body as RequestListResponse);
       setOffset(nextOffset);
       const visibleParams = toQuery(nextFilters, nextOffset);
-      visibleParams.delete("limit");
       visibleParams.delete("offset");
       const query = visibleParams.toString();
       window.history.replaceState(null, "", query ? `/requests?${query}` : "/requests");
@@ -204,13 +242,15 @@ export default function RequestsPage() {
 
   function applyFilters(event: FormEvent) {
     event.preventDefault();
-    const nextFilters = {
-      ...filters,
-      request_id: "",
-    };
+    const nextFilters = { ...filters };
     setFilters(nextFilters);
-    setSelectedRequestId("");
-    setDetail(null);
+    setSelectedRequestId(nextFilters.request_id);
+    if (nextFilters.request_id) {
+      void loadDetail(nextFilters.request_id);
+    } else {
+      setDetail(null);
+      setDetailError(null);
+    }
     void loadRequests(nextFilters, 0);
   }
 
@@ -227,7 +267,6 @@ export default function RequestsPage() {
     setSelectedRequestId(row.request_id);
     void loadDetail(row.request_id);
     const params = toQuery(nextFilters, offset);
-    params.delete("limit");
     params.delete("offset");
     window.history.replaceState(null, "", `/requests?${params.toString()}`);
   }
@@ -265,6 +304,26 @@ export default function RequestsPage() {
         />
         <form className="stack" onSubmit={applyFilters}>
           <FormRow>
+            <Field label="Request ID">
+              <Input
+                value={filters.request_id}
+                onChange={(e) => setFilters({ ...filters, request_id: e.target.value })}
+                placeholder="req_..."
+              />
+            </Field>
+            <Field label="Limit">
+              <Select
+                value={filters.limit}
+                onChange={(e) => setFilters({ ...filters, limit: e.target.value })}
+              >
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </Select>
+            </Field>
+          </FormRow>
+          <FormRow>
             <Field label="Status">
               <Select
                 value={filters.status}
@@ -291,6 +350,22 @@ export default function RequestsPage() {
             </Field>
           </FormRow>
           <FormRow>
+            <Field label="API key ID">
+              <Input
+                value={filters.api_key_id}
+                onChange={(e) => setFilters({ ...filters, api_key_id: e.target.value })}
+                placeholder="Project API key row ID"
+              />
+            </Field>
+            <Field label="Error code">
+              <Input
+                value={filters.error_code}
+                onChange={(e) => setFilters({ ...filters, error_code: e.target.value })}
+                placeholder="provider_timeout"
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
             <Field label="Actual served provider">
               <Input
                 value={filters.provider}
@@ -298,11 +373,27 @@ export default function RequestsPage() {
                 placeholder="openai"
               />
             </Field>
-            <Field label="Client requested or actual model">
+            <Field label="Model search">
               <Input
                 value={filters.model_search}
                 onChange={(e) => setFilters({ ...filters, model_search: e.target.value })}
-                placeholder="conexus-default or gpt-4o-mini"
+                placeholder="Matches client requested or actual model"
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
+            <Field label="Client requested model">
+              <Input
+                value={filters.requested_model}
+                onChange={(e) => setFilters({ ...filters, requested_model: e.target.value })}
+                placeholder="conexus-default"
+              />
+            </Field>
+            <Field label="Actual served model">
+              <Input
+                value={filters.model}
+                onChange={(e) => setFilters({ ...filters, model: e.target.value })}
+                placeholder="gpt-4o-mini"
               />
             </Field>
           </FormRow>
@@ -352,6 +443,78 @@ export default function RequestsPage() {
                 type="datetime-local"
                 value={filters.created_to}
                 onChange={(e) => setFilters({ ...filters, created_to: e.target.value })}
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
+            <Field label="Completed from">
+              <Input
+                type="datetime-local"
+                value={filters.completed_from}
+                onChange={(e) => setFilters({ ...filters, completed_from: e.target.value })}
+              />
+            </Field>
+            <Field label="Completed to">
+              <Input
+                type="datetime-local"
+                value={filters.completed_to}
+                onChange={(e) => setFilters({ ...filters, completed_to: e.target.value })}
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
+            <Field label="Min latency ms">
+              <Input
+                type="number"
+                min="0"
+                value={filters.min_latency_ms}
+                onChange={(e) => setFilters({ ...filters, min_latency_ms: e.target.value })}
+              />
+            </Field>
+            <Field label="Max latency ms">
+              <Input
+                type="number"
+                min="0"
+                value={filters.max_latency_ms}
+                onChange={(e) => setFilters({ ...filters, max_latency_ms: e.target.value })}
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
+            <Field label="Min total tokens">
+              <Input
+                type="number"
+                min="0"
+                value={filters.min_total_tokens}
+                onChange={(e) => setFilters({ ...filters, min_total_tokens: e.target.value })}
+              />
+            </Field>
+            <Field label="Max total tokens">
+              <Input
+                type="number"
+                min="0"
+                value={filters.max_total_tokens}
+                onChange={(e) => setFilters({ ...filters, max_total_tokens: e.target.value })}
+              />
+            </Field>
+          </FormRow>
+          <FormRow>
+            <Field label="Min estimated cost">
+              <Input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={filters.min_estimated_cost}
+                onChange={(e) => setFilters({ ...filters, min_estimated_cost: e.target.value })}
+              />
+            </Field>
+            <Field label="Max estimated cost">
+              <Input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={filters.max_estimated_cost}
+                onChange={(e) => setFilters({ ...filters, max_estimated_cost: e.target.value })}
               />
             </Field>
           </FormRow>
@@ -435,7 +598,9 @@ export default function RequestsPage() {
                 type="button"
                 variant="secondary"
                 disabled={offset === 0}
-                onClick={() => void loadRequests(filters, Math.max(0, offset - DEFAULT_LIMIT))}
+                onClick={() =>
+                  void loadRequests(filters, Math.max(0, offset - Number(filters.limit || DEFAULT_LIMIT)))
+                }
               >
                 Previous
               </Button>
@@ -445,8 +610,8 @@ export default function RequestsPage() {
               <Button
                 type="button"
                 variant="secondary"
-                disabled={!response || offset + DEFAULT_LIMIT >= response.total}
-                onClick={() => void loadRequests(filters, offset + DEFAULT_LIMIT)}
+                disabled={!response || offset + Number(filters.limit || DEFAULT_LIMIT) >= response.total}
+                onClick={() => void loadRequests(filters, offset + Number(filters.limit || DEFAULT_LIMIT))}
               >
                 Next
               </Button>
