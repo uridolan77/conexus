@@ -27,6 +27,25 @@ export type ProjectLimits = {
   updated_at: string | null;
 };
 
+export type ProjectLimitsUsage = {
+  project_id: string;
+  now: string;
+  daily: {
+    window: "utc_day";
+    start_at: string;
+    reset_at: string;
+    request_count: number;
+    total_tokens: number;
+  };
+  monthly: {
+    window: "utc_month";
+    start_at: string;
+    reset_at: string;
+    estimated_cost: number;
+    currency: "USD";
+  };
+};
+
 export type ProviderRow = {
   id: string;
   provider: "openai" | "anthropic";

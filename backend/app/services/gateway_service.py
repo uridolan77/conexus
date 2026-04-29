@@ -68,10 +68,26 @@ class GatewayUpstreamError(Exception):
 class GatewayLimitError(Exception):
     """Caller-visible 429 — project hard limit exceeded."""
 
-    def __init__(self, message: str, *, code: str, request_id: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        request_id: str,
+        limit_type: str,
+        current_value: float,
+        limit_value: float,
+        window: str,
+        reset_at: datetime | None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.request_id = request_id
+        self.limit_type = limit_type
+        self.current_value = current_value
+        self.limit_value = limit_value
+        self.window = window
+        self.reset_at = reset_at
 
 
 @dataclass(slots=True)
@@ -146,6 +162,11 @@ async def run_chat_completion(
                     blocked.error_message,
                     code=blocked.error_code,
                     request_id=request_id,
+                    limit_type=blocked.limit_type,
+                    current_value=blocked.current_value,
+                    limit_value=blocked.limit_value,
+                    window=blocked.window,
+                    reset_at=blocked.reset_at,
                 )
 
     async def _start(session: AsyncSession) -> None:

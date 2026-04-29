@@ -67,7 +67,7 @@ class ChatCompletionsResponse(BaseModel):
     usage: _Usage
 
 
-def _error_detail(code: str, message: str, request_id: str) -> dict[str, str]:
+def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]:
     return {"code": code, "message": message, "request_id": request_id}
 
 
@@ -101,7 +101,14 @@ async def chat_completions(
     except GatewayLimitError as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            detail={
+                **_error_detail(exc.code, str(exc), exc.request_id),
+                "limit_type": exc.limit_type,
+                "current_value": exc.current_value,
+                "limit_value": exc.limit_value,
+                "window": exc.window,
+                "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
+            },
             headers={REQUEST_ID_HEADER: exc.request_id},
         ) from exc
     except GatewayUpstreamError as exc:

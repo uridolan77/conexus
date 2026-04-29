@@ -20,7 +20,13 @@ import {
   Table,
 } from "@/components/ui";
 import { BACKEND_BASE, formatDate } from "@/lib/api";
-import type { ApiKeyCreated, ApiKeyRow, ProjectLimits, ProjectRow } from "@/lib/types";
+import type {
+  ApiKeyCreated,
+  ApiKeyRow,
+  ProjectLimits,
+  ProjectLimitsUsage,
+  ProjectRow,
+} from "@/lib/types";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -30,7 +36,9 @@ export default function ProjectsPage() {
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [latestIssuedKey, setLatestIssuedKey] = useState<ApiKeyCreated | null>(null);
   const [limits, setLimits] = useState<ProjectLimits | null>(null);
+  const [limitsUsage, setLimitsUsage] = useState<ProjectLimitsUsage | null>(null);
   const [loadingLimits, setLoadingLimits] = useState(false);
+  const [loadingLimitsUsage, setLoadingLimitsUsage] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
   const [limitMode, setLimitMode] = useState<ProjectLimits["limit_mode"]>("disabled");
   const [monthlyCostLimit, setMonthlyCostLimit] = useState("");
@@ -116,6 +124,30 @@ export default function ProjectsPage() {
     }
   }
 
+  async function fetchLimitsUsage(projectId: string) {
+    setLoadingLimitsUsage(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${BACKEND_BASE}/admin/projects/${projectId}/limits/usage`,
+        {
+          credentials: "include",
+        },
+      );
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        setError("Unable to load project limit usage.");
+        return;
+      }
+      setLimitsUsage((await res.json()) as ProjectLimitsUsage);
+    } finally {
+      setLoadingLimitsUsage(false);
+    }
+  }
+
   useEffect(() => {
     void fetchProjects();
   }, []);
@@ -125,9 +157,11 @@ export default function ProjectsPage() {
       setLatestIssuedKey(null);
       void fetchKeys(selectedProjectId);
       void fetchLimits(selectedProjectId);
+      void fetchLimitsUsage(selectedProjectId);
     } else {
       setKeys([]);
       setLimits(null);
+      setLimitsUsage(null);
     }
   }, [selectedProjectId]);
 
@@ -303,9 +337,27 @@ export default function ProjectsPage() {
       setDailyTokenLimit(body.daily_token_limit == null ? "" : String(body.daily_token_limit));
       setSuccess("Project limits updated.");
       await fetchProjects();
+      await fetchLimitsUsage(selectedProjectId);
     } finally {
       setSavingLimits(false);
     }
+  }
+
+  function _formatNumber(value: number) {
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  }
+
+  function _formatUsd(value: number) {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 4,
+    }).format(value);
+  }
+
+  function _percent(current: number, limit: number | null) {
+    if (!limit || limit <= 0) return null;
+    return Math.min(999, (current / limit) * 100);
   }
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -450,6 +502,130 @@ export default function ProjectsPage() {
                 title="Project Limits"
                 description="Configure protective limits to prevent accidental runaway usage. Hard limits block before provider calls; soft limits are visible-only for now."
               />
+              {loadingLimitsUsage ? (
+                <LoadingState label="Loading usage..." />
+              ) : limitsUsage ? (
+                <div className="stack" style={{ marginBottom: 12 }}>
+                  <div className="muted">
+                    Usage windows use UTC boundaries. Daily reset:{" "}
+                    {formatDate(limitsUsage.daily.reset_at)}. Monthly reset:{" "}
+                    {formatDate(limitsUsage.monthly.reset_at)}.
+                  </div>
+
+                  <div className="stack">
+                    {(() => {
+                      const current = limitsUsage.daily.request_count;
+                      const limit = limits?.daily_request_limit ?? null;
+                      const pct = _percent(current, limit);
+                      return (
+                        <div>
+                          <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+                            <strong>Daily requests</strong>
+                            <span className="muted">
+                              {_formatNumber(current)} / {limit == null ? "unlimited" : _formatNumber(limit)}
+                              {pct == null ? "" : ` (${pct.toFixed(0)}%)`}
+                            </span>
+                          </div>
+                          {pct != null ? (
+                            <div
+                              style={{
+                                height: 8,
+                                background: "var(--color-border)",
+                                borderRadius: 999,
+                                overflow: "hidden",
+                                marginTop: 6,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, pct)}%`,
+                                  height: "100%",
+                                  background:
+                                    pct >= 100 ? "var(--color-danger)" : "var(--color-primary)",
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+
+                    {(() => {
+                      const current = limitsUsage.daily.total_tokens;
+                      const limit = limits?.daily_token_limit ?? null;
+                      const pct = _percent(current, limit);
+                      return (
+                        <div>
+                          <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+                            <strong>Daily tokens</strong>
+                            <span className="muted">
+                              {_formatNumber(current)} / {limit == null ? "unlimited" : _formatNumber(limit)}
+                              {pct == null ? "" : ` (${pct.toFixed(0)}%)`}
+                            </span>
+                          </div>
+                          {pct != null ? (
+                            <div
+                              style={{
+                                height: 8,
+                                background: "var(--color-border)",
+                                borderRadius: 999,
+                                overflow: "hidden",
+                                marginTop: 6,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, pct)}%`,
+                                  height: "100%",
+                                  background:
+                                    pct >= 100 ? "var(--color-danger)" : "var(--color-primary)",
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+
+                    {(() => {
+                      const current = limitsUsage.monthly.estimated_cost;
+                      const limit = limits?.monthly_cost_limit ?? null;
+                      const pct = _percent(current, limit);
+                      return (
+                        <div>
+                          <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+                            <strong>Monthly cost (USD)</strong>
+                            <span className="muted">
+                              {_formatUsd(current)} / {limit == null ? "unlimited" : _formatUsd(limit)}
+                              {pct == null ? "" : ` (${pct.toFixed(0)}%)`}
+                            </span>
+                          </div>
+                          {pct != null ? (
+                            <div
+                              style={{
+                                height: 8,
+                                background: "var(--color-border)",
+                                borderRadius: 999,
+                                overflow: "hidden",
+                                marginTop: 6,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, pct)}%`,
+                                  height: "100%",
+                                  background:
+                                    pct >= 100 ? "var(--color-danger)" : "var(--color-primary)",
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              ) : null}
               {loadingLimits ? (
                 <LoadingState label="Loading limits..." />
               ) : (

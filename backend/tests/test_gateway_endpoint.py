@@ -337,6 +337,11 @@ async def test_hard_daily_request_limit_blocks_before_provider_call(
     assert stub.calls == []
     body = response.json()
     assert body["detail"]["code"] == "daily_request_limit_exceeded"
+    assert body["detail"]["limit_type"] == "daily_request_limit"
+    assert body["detail"]["current_value"] == 1.0
+    assert body["detail"]["limit_value"] == 1.0
+    assert body["detail"]["window"] == "utc_day"
+    assert body["detail"]["reset_at"]
     request_id = body["detail"]["request_id"]
     assert response.headers[REQUEST_ID_HEADER] == request_id
 
@@ -391,7 +396,13 @@ async def test_hard_daily_token_limit_blocks_before_provider_call(
 
     assert response.status_code == 429
     assert stub.calls == []
-    assert response.json()["detail"]["code"] == "daily_token_limit_exceeded"
+    body = response.json()
+    assert body["detail"]["code"] == "daily_token_limit_exceeded"
+    assert body["detail"]["limit_type"] == "daily_token_limit"
+    assert body["detail"]["current_value"] == 15.0
+    assert body["detail"]["limit_value"] == 10.0
+    assert body["detail"]["window"] == "utc_day"
+    assert body["detail"]["reset_at"]
 
 
 @pytest.mark.asyncio
@@ -433,7 +444,13 @@ async def test_hard_monthly_cost_limit_blocks_before_provider_call(
 
     assert response.status_code == 429
     assert stub.calls == []
-    assert response.json()["detail"]["code"] == "monthly_cost_limit_exceeded"
+    body = response.json()
+    assert body["detail"]["code"] == "monthly_cost_limit_exceeded"
+    assert body["detail"]["limit_type"] == "monthly_cost_limit"
+    assert body["detail"]["current_value"] == 1.5
+    assert body["detail"]["limit_value"] == 1.0
+    assert body["detail"]["window"] == "utc_month"
+    assert body["detail"]["reset_at"]
 
 
 @pytest.mark.asyncio

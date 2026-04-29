@@ -132,3 +132,23 @@ async def test_unknown_project_returns_404(client: AsyncClient) -> None:
     response = await client.get("/admin/projects/does-not-exist/limits")
     assert response.status_code == 404
 
+
+@pytest.mark.asyncio
+async def test_get_limits_usage_returns_daily_and_monthly_windows(
+    client: AsyncClient,
+) -> None:
+    await _login(client)
+    created = await client.post("/admin/projects", json={"name": "p"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/admin/projects/{project_id}/limits/usage")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == project_id
+    assert body["daily"]["window"] == "utc_day"
+    assert body["daily"]["request_count"] == 0
+    assert body["daily"]["total_tokens"] == 0
+    assert body["monthly"]["window"] == "utc_month"
+    assert body["monthly"]["estimated_cost"] == 0.0
+    assert body["monthly"]["currency"] == "USD"
+
