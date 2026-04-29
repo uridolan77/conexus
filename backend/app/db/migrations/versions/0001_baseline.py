@@ -32,8 +32,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("email"),
         sa.UniqueConstraint("username"),
     )
-    op.create_index(op.f("ix_admin_users_email"), "admin_users", ["email"], unique=False)
-    op.create_index(op.f("ix_admin_users_username"), "admin_users", ["username"], unique=False)
 
     op.create_table(
         "projects",
@@ -80,12 +78,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("prefix"),
     )
     op.create_index(
-        op.f("ix_project_api_keys_prefix"),
-        "project_api_keys",
-        ["prefix"],
-        unique=False,
-    )
-    op.create_index(
         op.f("ix_project_api_keys_project_id"),
         "project_api_keys",
         ["project_id"],
@@ -105,12 +97,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("project_id"),
-    )
-    op.create_index(
-        op.f("ix_project_limits_project_id"),
-        "project_limits",
-        ["project_id"],
-        unique=False,
     )
 
     op.create_table(
@@ -142,12 +128,6 @@ def upgrade() -> None:
         op.f("ix_gateway_requests_project_id"),
         "gateway_requests",
         ["project_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_gateway_requests_request_id"),
-        "gateway_requests",
-        ["request_id"],
         unique=False,
     )
 
@@ -211,15 +191,12 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_audit_logs_action"), table_name="audit_logs")
     op.drop_table("audit_logs")
 
-    op.drop_index(op.f("ix_gateway_requests_request_id"), table_name="gateway_requests")
     op.drop_index(op.f("ix_gateway_requests_project_id"), table_name="gateway_requests")
     op.drop_table("gateway_requests")
 
-    op.drop_index(op.f("ix_project_limits_project_id"), table_name="project_limits")
     op.drop_table("project_limits")
 
     op.drop_index(op.f("ix_project_api_keys_project_id"), table_name="project_api_keys")
-    op.drop_index(op.f("ix_project_api_keys_prefix"), table_name="project_api_keys")
     op.drop_table("project_api_keys")
 
     op.drop_index(op.f("ix_provider_configs_provider"), table_name="provider_configs")
@@ -227,6 +204,4 @@ def downgrade() -> None:
 
     op.drop_table("projects")
 
-    op.drop_index(op.f("ix_admin_users_username"), table_name="admin_users")
-    op.drop_index(op.f("ix_admin_users_email"), table_name="admin_users")
     op.drop_table("admin_users")
