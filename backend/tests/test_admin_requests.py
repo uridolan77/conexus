@@ -225,6 +225,35 @@ async def test_list_filters(client: AsyncClient, db_sessionmaker) -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_search_matches_served_model(client: AsyncClient, db_sessionmaker) -> None:
+    await _seed_requests(db_sessionmaker)
+    await _login(client)
+
+    response = await client.get("/admin/requests", params={"model_search": "gpt"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["request_id"] for item in body["items"]] == ["req_completed"]
+    assert body["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_model_search_matches_requested_model(client: AsyncClient, db_sessionmaker) -> None:
+    await _seed_requests(db_sessionmaker)
+    await _login(client)
+
+    response = await client.get("/admin/requests", params={"model_search": "conexus"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["request_id"] for item in body["items"]] == [
+        "req_started",
+        "req_completed",
+    ]
+    assert body["total"] == 2
+
+
+@pytest.mark.asyncio
 async def test_detail_returns_one_request(client: AsyncClient, db_sessionmaker) -> None:
     await _seed_requests(db_sessionmaker)
     await _login(client)

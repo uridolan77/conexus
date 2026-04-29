@@ -275,6 +275,8 @@ async def list_requests(
         ProjectApiKey.prefix.label("api_key_prefix"),
     )
     list_stmt = _with_safe_joins(list_stmt)
+    # Count filters intentionally use only GatewayRequest columns today.
+    # Join Project/ProjectApiKey here before adding future filters on joined fields.
     count_stmt = select(func.count()).select_from(GatewayRequest)
 
     list_stmt = _apply_filters(
