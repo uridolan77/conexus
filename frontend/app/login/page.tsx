@@ -1,13 +1,19 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:8000";
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  PageHeader,
+} from "@/components/ui";
+import { BACKEND_BASE } from "@/lib/api";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -35,27 +41,35 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="card auth-card">
-      <h2>Admin login</h2>
-      <p className="muted">Sign in to manage providers and gateway settings.</p>
-      <form className="stack" onSubmit={onSubmit}>
-        <label>
-          Username
-          <input value={username} onChange={(e) => setUsername(e.target.value)} />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={loading}>
-          {loading ? "Signing in..." : "Sign in"}
-        </button>
-      </form>
-      {error && <p className="error">{error}</p>}
+    <div className="auth-page">
+      <Card className="auth-card">
+        <PageHeader
+          eyebrow="Conexus"
+          title="Admin login"
+          description="Sign in to manage upstream providers, project API keys, smoke tests, and gateway operations."
+        />
+        <form className="stack" onSubmit={onSubmit}>
+          <Field label="Username">
+            <Input
+              value={username}
+              autoComplete="username"
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </Field>
+          <Field label="Password">
+            <Input
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+          </Button>
+        </form>
+        {error && <Alert tone="danger">{error}</Alert>}
+      </Card>
     </div>
   );
 }

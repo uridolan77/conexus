@@ -1,33 +1,51 @@
-async function fetchHealth(): Promise<{ status: string } | null> {
-  // Server component: prefer the in-cluster URL (BACKEND_BASE_URL,
-  // e.g. http://backend:8000 inside docker-compose) over the public URL
-  // that the browser would use. NEXT_PUBLIC_BACKEND_BASE_URL is the
-  // fallback for any client-rendered usage.
-  const base =
-    process.env.BACKEND_BASE_URL ??
-    process.env.NEXT_PUBLIC_BACKEND_BASE_URL ??
-    "http://localhost:8000";
-  try {
-    const res = await fetch(`${base}/health`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as { status: string };
-  } catch {
-    return null;
-  }
-}
+"use client";
 
-export async function HealthCard() {
-  const health = await fetchHealth();
+import { useEffect, useState } from "react";
+import { Card, KeyValueGrid, SectionHeader, StatusBadge } from "@/components/ui";
+import { BACKEND_BASE } from "@/lib/api";
+
+export function HealthCard() {
+  const [health, setHealth] = useState<{ status: string } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    async function fetchHealth() {
+      try {
+        const res = await fetch(`${BACKEND_BASE}/health`, { cache: "no-store" });
+        if (res.ok) setHealth((await res.json()) as { status: string });
+      } finally {
+        setLoaded(true);
+      }
+    }
+    void fetchHealth();
+  }, []);
+
   return (
-    <div className="card">
-      <h3>Backend health</h3>
-      {health ? (
-        <p>
-          Status: <strong>{health.status}</strong>
-        </p>
+    <Card>
+      <SectionHeader
+        title="Backend Health"
+        description="Checks the FastAPI service that powers auth, provider setup, projects, and gateway calls."
+      />
+      {!loaded ? (
+        <p className="state-text">Checking backend...</p>
+      ) : health ? (
+        <KeyValueGrid
+          items={[
+            {
+              label: "Status",
+              value: <StatusBadge status={health.status === "ok" ? "ok" : "failed"} />,
+            },
+            { label: "Endpoint", value: <code>/health</code> },
+          ]}
+        />
       ) : (
-        <p className="muted">Backend not reachable.</p>
+        <KeyValueGrid
+          items={[
+            { label: "Status", value: <StatusBadge status="failed" /> },
+            { label: "Next step", value: "Start the backend and refresh this page." },
+          ]}
+        />
       )}
-    </div>
+    </Card>
   );
 }

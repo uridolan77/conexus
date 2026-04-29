@@ -1,58 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:8000";
-
-type ProjectRow = {
-  id: string;
-  name: string;
-  created_at: string;
-  active_key_count: number;
-  total_request_count: number;
-};
-
-type ApiKeyCreated = {
-  id: string;
-  project_id: string;
-  label: string | null;
-  prefix: string;
-  created_at: string;
-  revoked_at: string | null;
-  plaintext: string;
-};
-
-type ChatCompletionsResponse = {
-  id: string;
-  model: string;
-  provider: string;
-  fallback_used: boolean;
-  choices: Array<{
-    index: number;
-    message: { role: string; content: string };
-    finish_reason: string;
-  }>;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-};
-
-type StepResult =
-  | { ok: true; data: unknown }
-  | { ok: false; status?: number; error: unknown };
-
-async function readJsonSafe(res: Response): Promise<unknown> {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
+import {
+  Alert,
+  Button,
+  Card,
+  CopyButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormRow,
+  Input,
+  JsonBlock,
+  KeyValueGrid,
+  PageHeader,
+  SectionHeader,
+  Select,
+  Stepper,
+  Textarea,
+} from "@/components/ui";
+import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
+import type {
+  ApiKeyCreated,
+  ChatCompletionsResponse,
+  ProjectRow,
+  StepResult,
+  StepStatus,
+} from "@/lib/types";
 
 async function runStep(
   input: RequestInfo | URL,
@@ -76,9 +50,11 @@ export default function SmokeTestsPage() {
   const [projects, setProjects] = useState<StepResult | null>(null);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [runningStep, setRunningStep] = useState<string | null>(null);
   // Project API key plaintext is intentionally kept in-memory only (React state)
   // and never persisted or logged. It is displayed once immediately after issuance.
   const [issuedKey, setIssuedKey] = useState<ApiKeyCreated | null>(null);
+  const [keyError, setKeyError] = useState<StepResult | null>(null);
 
   const [chatPrompt, setChatPrompt] = useState("Say hello in one sentence.");
   const [chatModel, setChatModel] = useState("conexus-default");
@@ -94,25 +70,37 @@ export default function SmokeTestsPage() {
 
   useEffect(() => {
     setIssuedKey(null);
+    setKeyError(null);
     setChat(null);
   }, [selectedProjectId]);
 
+  function statusFor(result: StepResult | null, stepId: string): StepStatus {
+    if (runningStep === stepId) return "running";
+    if (!result) return "not-run";
+    return result.ok ? "passed" : "failed";
+  }
+
   async function checkHealth() {
+    setRunningStep("health");
     setHealth(null);
     const result = await runStep(`${BACKEND_BASE}/health`, { cache: "no-store" });
     setHealth(result);
+    setRunningStep(null);
   }
 
   async function checkSession() {
+    setRunningStep("session");
     setSession(null);
     const result = await runStep(`${BACKEND_BASE}/admin/auth/session`, {
       credentials: "include",
       cache: "no-store",
     });
     setSession(result);
+    setRunningStep(null);
   }
 
   async function loadProjects() {
+    setRunningStep("projects");
     setProjects(null);
     const result = await runStep(`${BACKEND_BASE}/admin/projects`, {
       credentials: "include",
@@ -126,11 +114,14 @@ export default function SmokeTestsPage() {
         setSelectedProjectId(rows[0].id);
       }
     }
+    setRunningStep(null);
   }
 
   async function issueProjectKey() {
     if (!selectedProjectId) return;
+    setRunningStep("key");
     setIssuedKey(null);
+    setKeyError(null);
     const result = await runStep(
       `${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`,
       {
@@ -141,33 +132,40 @@ export default function SmokeTestsPage() {
       },
     );
     if (!result.ok) {
-      setChat(result);
+      setKeyError(result);
+      setRunningStep(null);
       return;
     }
     setIssuedKey(result.data as ApiKeyCreated);
+    setRunningStep(null);
   }
 
   async function runChatCompletion() {
     if (!issuedKey?.plaintext) return;
+    setRunningStep("chat");
     setChat(null);
-    const res = await fetch(`${BACKEND_BASE}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${issuedKey.plaintext}`,
-      },
-      body: JSON.stringify({
-        model: chatModel,
-        messages: [{ role: "user", content: chatPrompt }],
-      }),
-    });
-    const requestId = res.headers.get("X-Conexus-Request-Id") ?? undefined;
-    const data = await readJsonSafe(res);
-    if (!res.ok) {
-      setChat({ ok: false, status: res.status, error: data, requestId });
-      return;
+    try {
+      const res = await fetch(`${BACKEND_BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${issuedKey.plaintext}`,
+        },
+        body: JSON.stringify({
+          model: chatModel,
+          messages: [{ role: "user", content: chatPrompt }],
+        }),
+      });
+      const requestId = res.headers.get("X-Conexus-Request-Id") ?? undefined;
+      const data = await readJsonSafe(res);
+      if (!res.ok) {
+        setChat({ ok: false, status: res.status, error: data, requestId });
+        return;
+      }
+      setChat({ ok: true, data, requestId });
+    } finally {
+      setRunningStep(null);
     }
-    setChat({ ok: true, data, requestId });
   }
 
   const chatSummary = useMemo(() => {
@@ -184,59 +182,89 @@ export default function SmokeTestsPage() {
     };
   }, [chat]);
 
+  const steps = [
+    {
+      label: "Backend health",
+      status: statusFor(health, "health"),
+      detail: "Confirms FastAPI is reachable.",
+    },
+    {
+      label: "Admin session",
+      status: statusFor(session, "session"),
+      detail: "Confirms the BO auth cookie is valid.",
+    },
+    {
+      label: "Load projects",
+      status: statusFor(projects, "projects"),
+      detail: "Finds a gateway client project.",
+    },
+    {
+      label: "Select project",
+      status: selectedProjectId ? "passed" : "not-run",
+      detail: selectedProjectId || "Required before issuing a key.",
+    },
+    {
+      label: "Issue temporary project API key",
+      status: runningStep === "key" ? "running" : issuedKey ? "passed" : keyError ? "failed" : "not-run",
+      detail: "Key remains only in memory in this page.",
+    },
+    {
+      label: "Send chat completion",
+      status: statusFor(chat, "chat"),
+      detail: "Calls /v1/chat/completions with the issued key.",
+    },
+    {
+      label: "View response summary",
+      status: chatSummary ? "passed" : chat?.ok === false ? "failed" : "not-run",
+      detail: "Shows request, provider, model, tokens, and text.",
+    },
+  ] satisfies Array<{ label: string; status: StepStatus; detail: string }>;
+
   return (
     <>
-      <h2>Smoke Tests</h2>
-      <p className="muted">
-        Run a quick end-to-end check from the BO. Project API keys are shown
-        only immediately after issuing and are kept in-memory only.
-      </p>
+      <PageHeader
+        eyebrow="Diagnostics"
+        title="Smoke Tests"
+        description="Run a guided end-to-end check from backend health through a real chat completion. Temporary project API keys are shown once and kept in memory only."
+      />
 
-      <div className="card">
-        <h3>1) Backend health</h3>
-        <div className="inline-actions">
-          <button type="button" onClick={checkHealth}>
-            Check /health
-          </button>
-        </div>
-        {health && (
-          <pre className={health.ok ? "ok" : "error"}>
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        )}
-      </div>
+      <Card>
+        <SectionHeader
+          title="Diagnostic Checklist"
+          description="Run the steps in order. Later steps stay disabled until their dependencies are ready."
+        />
+        <Stepper steps={steps} />
+      </Card>
 
-      <div className="card">
-        <h3>2) Admin session</h3>
-        <div className="inline-actions">
-          <button type="button" onClick={checkSession}>
-            Check /admin/auth/session
-          </button>
-        </div>
-        {session && (
-          <pre className={session.ok ? "ok" : "error"}>
-            {JSON.stringify(session, null, 2)}
-          </pre>
-        )}
-      </div>
+      <Card>
+        <SectionHeader title="1. Backend Health" description="Checks the public health endpoint." />
+        <Button type="button" onClick={checkHealth} disabled={runningStep === "health"}>
+          {runningStep === "health" ? "Checking..." : "Check backend health"}
+        </Button>
+        {health?.ok === false && <ErrorState message={formatApiError(health.error)} />}
+        {health && <JsonBlock value={health} />}
+      </Card>
 
-      <div className="card">
-        <h3>3) Projects</h3>
-        <div className="inline-actions">
-          <button type="button" onClick={loadProjects}>
-            Load projects
-          </button>
-        </div>
-        {projects && (
-          <pre className={projects.ok ? "ok" : "error"}>
-            {JSON.stringify(projects, null, 2)}
-          </pre>
-        )}
+      <Card>
+        <SectionHeader title="2. Admin Session" description="Verifies the current admin session cookie." />
+        <Button type="button" onClick={checkSession} disabled={runningStep === "session"}>
+          {runningStep === "session" ? "Checking..." : "Check admin session"}
+        </Button>
+        {session?.ok === false && <ErrorState message={formatApiError(session.error)} />}
+        {session && <JsonBlock value={session} />}
+      </Card>
 
-        {sortedProjects.length > 0 && (
-          <label>
-            Select project
-            <select
+      <Card>
+        <SectionHeader title="3. Projects" description="Loads existing projects so the smoke test can issue a project API key." />
+        <Button type="button" onClick={loadProjects} disabled={runningStep === "projects"}>
+          {runningStep === "projects" ? "Loading..." : "Load projects"}
+        </Button>
+        {projects?.ok === false && <ErrorState message={formatApiError(projects.error)} />}
+        {projects && <JsonBlock value={projects} />}
+
+        {sortedProjects.length > 0 ? (
+          <Field label="Select project" hint="A temporary key will be issued for this project.">
+            <Select
               value={selectedProjectId}
               onChange={(e) => setSelectedProjectId(e.target.value)}
             >
@@ -245,93 +273,97 @@ export default function SmokeTestsPage() {
                   {p.name} ({p.id.slice(0, 8)})
                 </option>
               ))}
-            </select>
-          </label>
-        )}
-      </div>
-
-      <div className="card">
-        <h3>4) Issue project API key</h3>
-        <div className="inline-actions">
-          <button
-            type="button"
-            onClick={issueProjectKey}
-            disabled={!selectedProjectId}
-          >
-            Issue key
-          </button>
-        </div>
-        {issuedKey ? (
-          <div className="stack">
-            <p className="muted">
-              Copy this key now. It won’t be shown again.
-            </p>
-            <pre className="ok">{issuedKey.plaintext}</pre>
-          </div>
+            </Select>
+          </Field>
         ) : (
-          <p className="muted">No key issued yet.</p>
+          projects?.ok && (
+            <EmptyState title="No projects found">
+              Create a project before running the gateway chat completion smoke test.
+            </EmptyState>
+          )
         )}
-      </div>
+      </Card>
 
-      <div className="card">
-        <h3>5) Test /v1/chat/completions</h3>
+      <Card>
+        <SectionHeader
+          title="4. Issue Temporary Project API Key"
+          description="The key is intentionally short-lived operationally: copy it for this test, then revoke it from Projects if needed."
+        />
+        <Button
+          type="button"
+          onClick={issueProjectKey}
+          disabled={!selectedProjectId || runningStep === "key"}
+        >
+          {runningStep === "key" ? "Issuing..." : "Issue temporary key"}
+        </Button>
+        {keyError?.ok === false && <ErrorState message={formatApiError(keyError.error)} />}
+        {issuedKey ? (
+          <Alert tone="warning" title="Project API key shown once">
+            <div className="stack">
+              <p>Copy this key now. It is only stored in React state on this page and will not be shown again.</p>
+              <pre>{issuedKey.plaintext}</pre>
+              <div className="inline-actions">
+                <CopyButton value={issuedKey.plaintext} label="Copy key" />
+              </div>
+            </div>
+          </Alert>
+        ) : (
+          <p className="muted">No temporary key issued yet.</p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionHeader
+          title="5. Send Chat Completion"
+          description="Calls the gateway using the temporary project API key."
+        />
         <div className="stack">
-          <label>
-            Model
-            <input value={chatModel} onChange={(e) => setChatModel(e.target.value)} />
-          </label>
-          <label>
-            Prompt
-            <textarea
+          <FormRow>
+            <Field label="Model">
+              <Input value={chatModel} onChange={(e) => setChatModel(e.target.value)} />
+            </Field>
+          </FormRow>
+          <Field label="Prompt">
+            <Textarea
               value={chatPrompt}
               onChange={(e) => setChatPrompt(e.target.value)}
               rows={3}
             />
-          </label>
+          </Field>
           <div className="inline-actions">
-            <button
+            <Button
               type="button"
               onClick={runChatCompletion}
-              disabled={!issuedKey?.plaintext}
+              disabled={!issuedKey?.plaintext || runningStep === "chat"}
             >
-              Send test request
-            </button>
+              {runningStep === "chat" ? "Sending..." : "Send test request"}
+            </Button>
           </div>
         </div>
 
-        {chat && (
-          <>
-            <h4>Result</h4>
-            <pre className={chat.ok ? "ok" : "error"}>
-              {JSON.stringify(chat, null, 2)}
-            </pre>
-          </>
+        {!issuedKey && (
+          <Alert tone="info">Issue a temporary project API key before sending a chat completion.</Alert>
         )}
-
+        {chat?.ok === false && <ErrorState message={formatApiError(chat.error)} />}
         {chatSummary && (
-          <>
-            <h4>Summary</h4>
-            <dl className="kv">
-              <dt>request_id</dt>
-              <dd>{chatSummary.request_id}</dd>
-              <dt>provider</dt>
-              <dd>{chatSummary.provider}</dd>
-              <dt>model</dt>
-              <dd>{chatSummary.model}</dd>
-              <dt>fallback_used</dt>
-              <dd>{String(chatSummary.fallback_used)}</dd>
-              <dt>usage</dt>
-              <dd>
-                <pre className="muted">{JSON.stringify(chatSummary.usage, null, 2)}</pre>
-              </dd>
-              <dt>text</dt>
-              <dd>
-                <pre className="muted">{chatSummary.text}</pre>
-              </dd>
-            </dl>
-          </>
+          <Card className="card-muted">
+            <SectionHeader title="Response Summary" />
+            <KeyValueGrid
+              items={[
+                { label: "request_id", value: <code>{chatSummary.request_id}</code> },
+                { label: "provider", value: chatSummary.provider },
+                { label: "model", value: chatSummary.model },
+                { label: "fallback_used", value: String(chatSummary.fallback_used) },
+                { label: "prompt_tokens", value: chatSummary.usage.prompt_tokens },
+                { label: "completion_tokens", value: chatSummary.usage.completion_tokens },
+                { label: "total_tokens", value: chatSummary.usage.total_tokens },
+                { label: "response text", value: <pre>{chatSummary.text}</pre> },
+              ]}
+            />
+          </Card>
         )}
-      </div>
+        {chat && <JsonBlock value={chat} title="Raw chat result" />}
+      </Card>
     </>
   );
 }
