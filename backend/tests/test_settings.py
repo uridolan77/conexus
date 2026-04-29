@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.core.config import Settings
 
 
@@ -41,4 +43,48 @@ def test_effective_cors_origins_does_not_add_local_origins_in_prod() -> None:
         cors_allowed_origins="https://bo.example.com",
     )
     assert s.effective_cors_origins == ["https://bo.example.com"]
+
+
+def test_cookie_samesite_normalized_to_lowercase() -> None:
+    s = Settings.model_validate(
+        {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "COOKIE_SAMESITE": "StRiCt"}
+    )
+    assert s.cookie_samesite == "strict"
+
+
+@pytest.mark.parametrize("value", ["lax", "strict", "none", " LAX "])
+def test_cookie_samesite_allowed_values(value: str) -> None:
+    s = Settings.model_validate(
+        {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "COOKIE_SAMESITE": value}
+    )
+    assert s.cookie_samesite in {"lax", "strict", "none"}
+
+
+def test_cookie_samesite_invalid_value_rejected() -> None:
+    with pytest.raises(ValueError):
+        Settings.model_validate(
+            {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "COOKIE_SAMESITE": "invalid"}
+        )
+
+
+def test_prod_cookie_samesite_none_requires_secure_true() -> None:
+    with pytest.raises(ValueError):
+        Settings.model_validate(
+            {
+                "APP_ENV": "prod",
+                "ENCRYPTION_KEY": "x",
+                "COOKIE_SAMESITE": "none",
+                "COOKIE_SECURE": False,
+            }
+        )
+
+    ok = Settings.model_validate(
+        {
+            "APP_ENV": "prod",
+            "ENCRYPTION_KEY": "x",
+            "COOKIE_SAMESITE": "none",
+            "COOKIE_SECURE": True,
+        }
+    )
+    assert ok.cookie_samesite == "none"
 

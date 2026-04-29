@@ -113,7 +113,8 @@ Notes:
 - Schema: `create_all` can be used for local/dev convenience, but it is not a migration system. Use Alembic for deployments.
 - Do not rotate `ENCRYPTION_KEY` casually; existing encrypted provider secrets require coordinated re-encryption.
 - In prod, CORS must allow the frontend origin(s) explicitly (no `*`).
-- Cookies default to `SameSite=Lax`. In prod, admin session cookies default to `Secure=true`.
+- Cookies default to `SameSite=Lax`. In many `bo.<domain>` + `api.<domain>` deployments this works because they are typically **same-site**.
+- If browser login/session fails across subdomains, try `COOKIE_SAMESITE=none` with `COOKIE_SECURE=true` after validating CORS is correct.
 - If deploying on `bo.<domain>` (frontend) and `api.<domain>` (backend), the BO must call the API with `credentials: "include"` and CORS must allow the BO origin.
 
 ## Admin bootstrap (production)

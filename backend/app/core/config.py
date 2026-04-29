@@ -6,7 +6,7 @@ Keep settings flat for v1; nest them once we have many provider/budget knobs.
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,33 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
     llm_provider: str = Field(default="gateway", alias="LLM_PROVIDER")
+
+    @field_validator("cookie_samesite", mode="before")
+    @classmethod
+    def _normalize_cookie_samesite(cls, value: object) -> str:
+        if value is None:
+            return "lax"
+        if not isinstance(value, str):
+            raise TypeError("COOKIE_SAMESITE must be a string")
+        return value.strip().lower()
+
+    @field_validator("cookie_samesite")
+    @classmethod
+    def _validate_cookie_samesite(cls, value: str) -> str:
+        allowed = {"lax", "strict", "none"}
+        if value not in allowed:
+            raise ValueError("COOKIE_SAMESITE must be one of: lax, strict, none")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_cookie_policy(self) -> "Settings":
+        # Browsers require SameSite=None cookies to also be Secure.
+        if self.app_env.lower() == "prod" and self.cookie_samesite == "none":
+            if not self.effective_cookie_secure:
+                raise ValueError(
+                    "In APP_ENV=prod, COOKIE_SAMESITE=none requires COOKIE_SECURE=true"
+                )
+        return self
 
     @property
     def effective_allow_env_admin_fallback(self) -> bool:
