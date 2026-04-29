@@ -20,6 +20,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,6 +39,10 @@ from app.services.request_log_service import (
     new_request_id,
     start_request,
 )
+from app.services.project_limits_service import (
+    check_hard_limits,
+    get_project_limits,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,15 @@ class GatewayClientError(Exception):
 
 class GatewayUpstreamError(Exception):
     """Caller-visible 502/503 — all providers failed."""
+
+    def __init__(self, message: str, *, code: str, request_id: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.request_id = request_id
+
+
+class GatewayLimitError(Exception):
+    """Caller-visible 429 — project hard limit exceeded."""
 
     def __init__(self, message: str, *, code: str, request_id: str) -> None:
         super().__init__(message)
@@ -99,6 +114,39 @@ async def run_chat_completion(
     temperature: float,
 ) -> GatewayResponse:
     request_id = new_request_id()
+
+    async with sessionmaker() as session:
+        limits = await get_project_limits(session, project_id=project.id)
+        if limits is not None and limits.limit_mode == "hard":
+            blocked = await check_hard_limits(
+                session,
+                project_id=project.id,
+                limits=limits,
+                now=datetime.now(timezone.utc),
+            )
+            if blocked is not None:
+                async def _log_blocked(log_session: AsyncSession) -> None:
+                    row = await start_request(
+                        log_session,
+                        request_id=request_id,
+                        project_id=project.id,
+                        api_key_id=api_key.id,
+                        requested_model=model,
+                    )
+                    await finish_request_failure(
+                        log_session,
+                        row,
+                        latency_ms=0,
+                        error_code=blocked.error_code,
+                        error_message=blocked.error_message,
+                    )
+
+                await _with_log_session(sessionmaker, _log_blocked)
+                raise GatewayLimitError(
+                    blocked.error_message,
+                    code=blocked.error_code,
+                    request_id=request_id,
+                )
 
     async def _start(session: AsyncSession) -> None:
         await start_request(

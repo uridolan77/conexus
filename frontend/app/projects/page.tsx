@@ -20,7 +20,7 @@ import {
   Table,
 } from "@/components/ui";
 import { BACKEND_BASE, formatDate } from "@/lib/api";
-import type { ApiKeyCreated, ApiKeyRow, ProjectRow } from "@/lib/types";
+import type { ApiKeyCreated, ApiKeyRow, ProjectLimits, ProjectRow } from "@/lib/types";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -29,6 +29,13 @@ export default function ProjectsPage() {
   const [keys, setKeys] = useState<ApiKeyRow[]>([]);
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [latestIssuedKey, setLatestIssuedKey] = useState<ApiKeyCreated | null>(null);
+  const [limits, setLimits] = useState<ProjectLimits | null>(null);
+  const [loadingLimits, setLoadingLimits] = useState(false);
+  const [savingLimits, setSavingLimits] = useState(false);
+  const [limitMode, setLimitMode] = useState<ProjectLimits["limit_mode"]>("disabled");
+  const [monthlyCostLimit, setMonthlyCostLimit] = useState("");
+  const [dailyRequestLimit, setDailyRequestLimit] = useState("");
+  const [dailyTokenLimit, setDailyTokenLimit] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -83,6 +90,32 @@ export default function ProjectsPage() {
     }
   }
 
+  async function fetchLimits(projectId: string) {
+    setLoadingLimits(true);
+    setError(null);
+    try {
+      const res = await fetch(`${BACKEND_BASE}/admin/projects/${projectId}/limits`, {
+        credentials: "include",
+      });
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        setError("Unable to load project limits.");
+        return;
+      }
+      const body = (await res.json()) as ProjectLimits;
+      setLimits(body);
+      setLimitMode(body.limit_mode);
+      setMonthlyCostLimit(body.monthly_cost_limit == null ? "" : String(body.monthly_cost_limit));
+      setDailyRequestLimit(body.daily_request_limit == null ? "" : String(body.daily_request_limit));
+      setDailyTokenLimit(body.daily_token_limit == null ? "" : String(body.daily_token_limit));
+    } finally {
+      setLoadingLimits(false);
+    }
+  }
+
   useEffect(() => {
     void fetchProjects();
   }, []);
@@ -91,8 +124,10 @@ export default function ProjectsPage() {
     if (selectedProjectId) {
       setLatestIssuedKey(null);
       void fetchKeys(selectedProjectId);
+      void fetchLimits(selectedProjectId);
     } else {
       setKeys([]);
+      setLimits(null);
     }
   }, [selectedProjectId]);
 
@@ -194,6 +229,82 @@ export default function ProjectsPage() {
       await fetchProjects();
     } finally {
       setRevokingKeyId(null);
+    }
+  }
+
+  function _parseOptionalInt(value: string): number | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+      throw new Error("Invalid non-negative integer.");
+    }
+    return parsed;
+  }
+
+  function _parseOptionalFloat(value: string): number | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+      throw new Error("Invalid non-negative number.");
+    }
+    return parsed;
+  }
+
+  async function saveLimits(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedProjectId) return;
+    setError(null);
+    setSuccess(null);
+
+    let payload: {
+      limit_mode: ProjectLimits["limit_mode"];
+      monthly_cost_limit: number | null;
+      daily_request_limit: number | null;
+      daily_token_limit: number | null;
+    };
+    try {
+      payload = {
+        limit_mode: limitMode,
+        monthly_cost_limit: _parseOptionalFloat(monthlyCostLimit),
+        daily_request_limit: _parseOptionalInt(dailyRequestLimit),
+        daily_token_limit: _parseOptionalInt(dailyTokenLimit),
+      };
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Invalid limits.");
+      return;
+    }
+
+    setSavingLimits(true);
+    try {
+      const res = await fetch(
+        `${BACKEND_BASE}/admin/projects/${selectedProjectId}/limits`,
+        {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        setError("Unable to save project limits.");
+        return;
+      }
+      const body = (await res.json()) as ProjectLimits;
+      setLimits(body);
+      setLimitMode(body.limit_mode);
+      setMonthlyCostLimit(body.monthly_cost_limit == null ? "" : String(body.monthly_cost_limit));
+      setDailyRequestLimit(body.daily_request_limit == null ? "" : String(body.daily_request_limit));
+      setDailyTokenLimit(body.daily_token_limit == null ? "" : String(body.daily_token_limit));
+      setSuccess("Project limits updated.");
+      await fetchProjects();
+    } finally {
+      setSavingLimits(false);
     }
   }
 
@@ -334,6 +445,86 @@ export default function ProjectsPage() {
                 ]}
               />
             )}
+            <Card className="card-muted">
+              <SectionHeader
+                title="Project Limits"
+                description="Configure protective limits to prevent accidental runaway usage. Hard limits block before provider calls; soft limits are visible-only for now."
+              />
+              {loadingLimits ? (
+                <LoadingState label="Loading limits..." />
+              ) : (
+                <form className="stack" onSubmit={saveLimits}>
+                  <FormRow>
+                    <Field
+                      label="Limit mode"
+                      hint="disabled = no enforcement, soft = visible-only (M8A), hard = blocks before provider call"
+                    >
+                      <select
+                        className="input"
+                        value={limitMode}
+                        onChange={(e) =>
+                          setLimitMode(e.target.value as ProjectLimits["limit_mode"])
+                        }
+                      >
+                        <option value="disabled">disabled</option>
+                        <option value="soft">soft</option>
+                        <option value="hard">hard</option>
+                      </select>
+                    </Field>
+                  </FormRow>
+
+                  <FormRow>
+                    <Field
+                      label="Monthly cost limit (USD)"
+                      hint="Nullable. Uses UTC calendar month boundaries."
+                    >
+                      <Input
+                        value={monthlyCostLimit}
+                        onChange={(e) => setMonthlyCostLimit(e.target.value)}
+                        placeholder="e.g. 25"
+                      />
+                    </Field>
+                  </FormRow>
+
+                  <FormRow>
+                    <Field
+                      label="Daily request limit"
+                      hint="Nullable. Counts all gateway requests, including failed. UTC day boundaries."
+                    >
+                      <Input
+                        value={dailyRequestLimit}
+                        onChange={(e) => setDailyRequestLimit(e.target.value)}
+                        placeholder="e.g. 1000"
+                      />
+                    </Field>
+                  </FormRow>
+
+                  <FormRow>
+                    <Field
+                      label="Daily token limit"
+                      hint="Nullable. Sums total_tokens for the UTC day; null token rows are ignored."
+                    >
+                      <Input
+                        value={dailyTokenLimit}
+                        onChange={(e) => setDailyTokenLimit(e.target.value)}
+                        placeholder="e.g. 500000"
+                      />
+                    </Field>
+                  </FormRow>
+
+                  <div className="inline-actions">
+                    <Button type="submit" disabled={savingLimits || !selectedProjectId}>
+                      {savingLimits ? "Saving..." : "Save limits"}
+                    </Button>
+                    {limits?.updated_at ? (
+                      <span className="muted">
+                        Last updated: {formatDate(limits.updated_at)}
+                      </span>
+                    ) : null}
+                  </div>
+                </form>
+              )}
+            </Card>
             {loadingKeys ? (
               <LoadingState label="Loading project keys..." />
             ) : keys.length === 0 ? (

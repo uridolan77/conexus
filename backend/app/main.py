@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     admin_auth,
+    admin_project_limits,
     admin_projects,
     admin_providers,
     admin_requests,
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_auth.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
+    app.include_router(admin_project_limits.router)
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
     app.include_router(admin_routing.router)

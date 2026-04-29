@@ -17,6 +17,16 @@ export type ApiKeyRow = {
 
 export type ApiKeyCreated = ApiKeyRow & { plaintext: string };
 
+export type ProjectLimits = {
+  project_id: string;
+  limit_mode: "disabled" | "soft" | "hard";
+  monthly_cost_limit: number | null;
+  daily_request_limit: number | null;
+  daily_token_limit: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 export type ProviderRow = {
   id: string;
   provider: "openai" | "anthropic";

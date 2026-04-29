@@ -22,6 +22,7 @@ from app.llm import LLMProvider
 from app.llm.dependencies import get_provider
 from app.services.gateway_service import (
     GatewayClientError,
+    GatewayLimitError,
     GatewayUpstreamError,
     run_chat_completion,
 )
@@ -94,6 +95,12 @@ async def chat_completions(
     except GatewayClientError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            headers={REQUEST_ID_HEADER: exc.request_id},
+        ) from exc
+    except GatewayLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=_error_detail(exc.code, str(exc), exc.request_id),
             headers={REQUEST_ID_HEADER: exc.request_id},
         ) from exc

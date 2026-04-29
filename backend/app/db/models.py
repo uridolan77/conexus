@@ -57,6 +57,37 @@ class Project(Base):
     )
 
 
+class ProjectLimit(Base):
+    """Optional per-project limits/budgets (M8A).
+
+    A row may not exist for older projects; callers should treat missing rows
+    as limit_mode="disabled".
+    """
+
+    __tablename__ = "project_limits"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("projects.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    monthly_cost_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    daily_request_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    limit_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="disabled"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ProjectApiKey(Base):
     __tablename__ = "project_api_keys"
 

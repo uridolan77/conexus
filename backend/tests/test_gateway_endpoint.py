@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import uuid
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -246,6 +249,255 @@ async def test_chat_completions_happy_path(
         assert log.fallback_used is False
         assert log.completed_at is not None
 
+
+# ── Limit enforcement (M8A) ────────────────────────────────────────────
+
+
+async def _set_project_limits(
+    db_sessionmaker,
+    *,
+    project_id: str,
+    limit_mode: str,
+    monthly_cost_limit: float | None = None,
+    daily_request_limit: int | None = None,
+    daily_token_limit: int | None = None,
+) -> None:
+    async with db_sessionmaker() as session:
+        row = models.ProjectLimit(
+            project_id=project_id,
+            limit_mode=limit_mode,
+            monthly_cost_limit=monthly_cost_limit,
+            daily_request_limit=daily_request_limit,
+            daily_token_limit=daily_token_limit,
+        )
+        session.add(row)
+        await session.commit()
+
+
+async def _seed_request(
+    db_sessionmaker,
+    *,
+    project_id: str,
+    created_at: datetime,
+    total_tokens: int | None = None,
+    estimated_cost: float | None = None,
+) -> None:
+    async with db_sessionmaker() as session:
+        row = models.GatewayRequest(
+            request_id=f"seed-{uuid.uuid4().hex}",
+            project_id=project_id,
+            api_key_id=None,
+            requested_model="seed",
+            status="failed",
+            created_at=created_at,
+            completed_at=created_at,
+            total_tokens=total_tokens,
+            estimated_cost=estimated_cost,
+            latency_ms=0,
+            error_code="seed",
+            error_message="seed",
+        )
+        session.add(row)
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_hard_daily_request_limit_blocks_before_provider_call(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=1,
+    )
+    now = datetime.now(timezone.utc)
+    await _seed_request(db_sessionmaker, project_id=project.id, created_at=now)
+
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 429
+    assert stub.calls == []
+    body = response.json()
+    assert body["detail"]["code"] == "daily_request_limit_exceeded"
+    request_id = body["detail"]["request_id"]
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "daily_request_limit_exceeded"
+        assert log.provider is None
+        assert log.model is None
+
+
+@pytest.mark.asyncio
+async def test_hard_daily_token_limit_blocks_before_provider_call(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_token_limit=10,
+    )
+    now = datetime.now(timezone.utc)
+    await _seed_request(
+        db_sessionmaker,
+        project_id=project.id,
+        created_at=now,
+        total_tokens=15,
+    )
+
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 429
+    assert stub.calls == []
+    assert response.json()["detail"]["code"] == "daily_token_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_hard_monthly_cost_limit_blocks_before_provider_call(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        monthly_cost_limit=1.0,
+    )
+    now = datetime.now(timezone.utc)
+    await _seed_request(
+        db_sessionmaker,
+        project_id=project.id,
+        created_at=now,
+        estimated_cost=1.5,
+    )
+
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 429
+    assert stub.calls == []
+    assert response.json()["detail"]["code"] == "monthly_cost_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_disabled_limits_allow_provider_call(client, seeded, db_sessionmaker) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="disabled",
+        daily_request_limit=0,
+        daily_token_limit=0,
+        monthly_cost_limit=0.0,
+    )
+    stub = _StubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+    assert response.status_code == 200
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_soft_limits_allow_provider_call(client, seeded, db_sessionmaker) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="soft",
+        daily_request_limit=0,
+        daily_token_limit=0,
+        monthly_cost_limit=0.0,
+    )
+    stub = _StubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+    assert response.status_code == 200
+    assert len(stub.calls) == 1
 
 # ── Error path ────────────────────────────────────────────────────────
 
