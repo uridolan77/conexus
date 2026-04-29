@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     frontend_base_url: str = Field(
         default="http://localhost:3000", alias="FRONTEND_BASE_URL"
     )
+    adaptation_api_base_url: str | None = Field(
+        default=None, alias="ADAPTATION_API_BASE_URL"
+    )
 
     auth_secret: str = Field(default="replace-me-local", alias="AUTH_SECRET")
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")

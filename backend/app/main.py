@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    admin_adaptation,
     admin_auth,
     admin_project_limits,
     admin_projects,
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(gateway.router)
     app.include_router(admin_auth.router)
+    app.include_router(admin_adaptation.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
     app.include_router(admin_project_limits.router)
