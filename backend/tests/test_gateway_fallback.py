@@ -147,6 +147,28 @@ async def test_alias_resolves_to_provider_models() -> None:
 
 
 @pytest.mark.asyncio
+async def test_conexus_fast_falls_back_to_openai_and_uses_alias_openai_model() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        raises=ProviderRateLimitError("429", provider="anthropic"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o-mini")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="conexus-fast",
+    )
+
+    assert result.provider == "openai"
+    assert result.fallback_used is True
+    assert primary.calls and fallback.calls
+    assert fallback.calls[0]["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
 async def test_both_providers_fail_raises_all_providers_failed() -> None:
     primary = _StubProvider(
         provider="anthropic",
@@ -217,3 +239,27 @@ async def test_concrete_anthropic_model_name_is_accepted() -> None:
     )
     assert result.provider == "anthropic"
     assert primary.calls[0]["model"] == "claude-sonnet-4-20250514"
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_concrete_openai_model_routes_to_openai_only() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o-mini")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="gpt-4o-mini",
+    )
+
+    assert result.provider == "openai"
+    assert result.fallback_used is False
+    assert primary.calls == []
+    assert len(fallback.calls) == 1
+    assert fallback.calls[0]["model"] == "gpt-4o-mini"

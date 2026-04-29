@@ -20,6 +20,7 @@ from app.services.provider_config_service import (
     revoke_provider_config,
     test_provider_config,
 )
+from app.llm.gateway_router import DEFAULT_PRIMARY_MODEL
 
 router = APIRouter(prefix="/admin/providers", tags=["admin"])
 
@@ -73,7 +74,7 @@ def _to_view(row: ProviderConfig) -> ProviderConfigView:
 def _default_model(provider: str) -> str:
     if provider == "openai":
         return "gpt-4o-mini"
-    return "claude-3-5-haiku-latest"
+    return DEFAULT_PRIMARY_MODEL
 
 
 @router.get("", response_model=list[ProviderConfigView])

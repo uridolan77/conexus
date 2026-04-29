@@ -167,7 +167,7 @@ async def test_provider_test_endpoint_uses_fake_provider(client: AsyncClient) ->
 
     tested = await client.post(
         f"/admin/providers/{provider_id}/test",
-        json={"model": "claude-3-5-haiku-latest"},
+        json={},
     )
     assert tested.status_code == 200
     assert tested.json()["status"] == "ok"

@@ -52,19 +52,26 @@ _KNOWN_ANTHROPIC_PREFIXES = ("claude-", "anthropic-")
 _KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
 
 
-def _resolve_models(model: str) -> tuple[str, str]:
-    """Resolve a Conexus alias or concrete model name to (anthropic, openai).
+_Route = str  # "gateway" | "anthropic_only" | "openai_only"
+
+
+def _resolve_models(model: str) -> tuple[_Route, str, str]:
+    """Resolve a Conexus alias or concrete model name.
 
     Raises :class:`UnknownModelError` when *model* matches neither a known
     alias nor a recognised provider prefix — typos must not silently fall
     through to default models.
     """
     if model in _MODEL_ALIASES:
-        return _MODEL_ALIASES[model]
+        anthropic_model, openai_model = _MODEL_ALIASES[model]
+        return "gateway", anthropic_model, openai_model
     if model.startswith(_KNOWN_ANTHROPIC_PREFIXES):
-        return model, DEFAULT_FALLBACK_MODEL
+        # Concrete Anthropic model: do not attempt OpenAI unless the client
+        # explicitly asked for a Conexus alias.
+        return "anthropic_only", model, DEFAULT_FALLBACK_MODEL
     if model.startswith(_KNOWN_OPENAI_PREFIXES):
-        return DEFAULT_PRIMARY_MODEL, model
+        # Concrete OpenAI model: bypass Anthropic entirely.
+        return "openai_only", DEFAULT_PRIMARY_MODEL, model
     raise UnknownModelError(model, known_aliases=list(_MODEL_ALIASES))
 
 
@@ -73,25 +80,27 @@ class GatewayProvider(LLMProvider):
 
     provider_name = "gateway"
 
+    _UNSET = object()
+
     def __init__(
         self,
         *,
-        primary: LLMProvider | None = None,
-        fallback: LLMProvider | None = None,
+        primary: LLMProvider | None | object = _UNSET,
+        fallback: LLMProvider | None | object = _UNSET,
     ) -> None:
         # Lazily build the underlying providers from settings, but only when
         # the corresponding API key is configured. A missing key disables that
         # provider entirely; if both are missing the first ``chat`` call will
         # raise ``AllProvidersFailedError``.
-        if primary is not None:
-            self._primary: LLMProvider | None = primary
+        if primary is not self._UNSET:
+            self._primary = primary  # type: ignore[assignment]
         elif settings.anthropic_api_key:
             self._primary = AnthropicProvider()
         else:
             self._primary = None
 
-        if fallback is not None:
-            self._fallback: LLMProvider | None = fallback
+        if fallback is not self._UNSET:
+            self._fallback = fallback  # type: ignore[assignment]
         elif settings.openai_api_key:
             self._fallback = OpenAIProvider()
         else:
@@ -105,7 +114,31 @@ class GatewayProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> ChatResult:
-        anthropic_model, openai_model = _resolve_models(model)
+        route, anthropic_model, openai_model = _resolve_models(model)
+
+        if route == "openai_only":
+            if self._fallback is None:
+                raise AllProvidersFailedError(
+                    "All configured LLM providers failed or are not configured."
+                )
+            return await self._fallback.chat(
+                messages,
+                model=openai_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+        if route == "anthropic_only":
+            if self._primary is None:
+                raise AllProvidersFailedError(
+                    "All configured LLM providers failed or are not configured."
+                )
+            return await self._primary.chat(
+                messages,
+                model=anthropic_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
         # ── Primary: Anthropic ───────────────────────────────────────
         if self._primary is not None:

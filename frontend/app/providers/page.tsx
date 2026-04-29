@@ -116,13 +116,11 @@ export default function ProvidersPage() {
   }
 
   async function testProvider(id: string, providerName: "openai" | "anthropic") {
-    const model =
-      providerName === "openai" ? "gpt-4o-mini" : "claude-3-5-haiku-latest";
     const res = await fetch(`${BACKEND_BASE}/admin/providers/${id}/test`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify({}),
     });
     if (res.status === 401) {
       window.location.href = "/login";
