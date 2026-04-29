@@ -15,6 +15,7 @@ from app.db.models import GatewayRequest, Project, ProjectApiKey
 from app.db.session import get_session
 from app.services.admin_auth_service import AdminSession
 from app.services.project_key_service import create_api_key, revoke_api_key
+from app.services.audit_service import log_admin_action
 
 router = APIRouter(prefix="/admin/projects", tags=["admin"])
 
@@ -112,7 +113,7 @@ async def list_projects(
 @router.post("", response_model=ProjectView, status_code=status.HTTP_201_CREATED)
 async def create_project(
     body: ProjectCreateBody,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProjectView:
     name = body.name.strip()
@@ -124,6 +125,14 @@ async def create_project(
     project = Project(name=name)
     session.add(project)
     await session.flush()
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="project.create",
+        resource_type="project",
+        resource_id=project.id,
+        metadata={"name": project.name},
+    )
     return ProjectView(
         id=project.id,
         name=project.name,
@@ -149,7 +158,7 @@ async def list_project_keys(
 async def create_project_key(
     project_id: str,
     body: ApiKeyCreateBody,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApiKeyCreatedView:
     project = await _project_or_404(session, project_id)
@@ -158,6 +167,18 @@ async def create_project_key(
         label = None
     issued = await create_api_key(session, project=project, label=label)
     key = issued.api_key
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="project_api_key.issue",
+        resource_type="project_api_key",
+        resource_id=key.id,
+        metadata={
+            "project_id": key.project_id,
+            "label": key.label,
+            "prefix": key.prefix,
+        },
+    )
     return ApiKeyCreatedView(
         id=key.id,
         project_id=key.project_id,
@@ -173,7 +194,7 @@ async def create_project_key(
 async def revoke_project_key(
     project_id: str,
     key_id: str,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApiKeyView:
     await _project_or_404(session, project_id)
@@ -181,4 +202,17 @@ async def revoke_project_key(
     if key is None or key.project_id != project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found")
     await revoke_api_key(session, key)
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="project_api_key.revoke",
+        resource_type="project_api_key",
+        resource_id=key.id,
+        metadata={
+            "project_id": key.project_id,
+            "label": key.label,
+            "prefix": key.prefix,
+            "revoked_at": key.revoked_at,
+        },
+    )
     return _to_key_view(key)

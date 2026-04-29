@@ -20,6 +20,7 @@ from app.services.provider_config_service import (
     revoke_provider_config,
     test_provider_config,
 )
+from app.services.audit_service import log_admin_action
 from app.llm.gateway_router import DEFAULT_PRIMARY_MODEL
 
 router = APIRouter(prefix="/admin/providers", tags=["admin"])
@@ -93,7 +94,7 @@ async def get_provider_configs(
 )
 async def add_provider_config(
     body: ProviderConfigBody,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProviderConfigView:
     row = await create_provider_config(
@@ -102,13 +103,25 @@ async def add_provider_config(
         api_key=body.api_key,
         label=body.label,
     )
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="provider.create",
+        resource_type="provider_config",
+        resource_id=row.id,
+        metadata={
+            "provider": row.provider,
+            "label": row.label,
+            "key_mask": row.key_mask,
+        },
+    )
     return _to_view(row)
 
 
 @router.post("/{provider_id}/revoke", response_model=ProviderConfigView)
 async def revoke_provider(
     provider_id: str,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProviderConfigView:
     row = await session.get(ProviderConfig, provider_id)
@@ -118,6 +131,18 @@ async def revoke_provider(
             detail="provider config not found",
         )
     await revoke_provider_config(session, row)
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="provider.revoke",
+        resource_type="provider_config",
+        resource_id=row.id,
+        metadata={
+            "provider": row.provider,
+            "label": row.label,
+            "key_mask": row.key_mask,
+        },
+    )
     return _to_view(row)
 
 
@@ -125,7 +150,7 @@ async def revoke_provider(
 async def test_provider(
     provider_id: str,
     body: ProviderTestBody,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProviderTestView:
     row = await session.get(ProviderConfig, provider_id)
@@ -141,6 +166,20 @@ async def test_provider(
         )
     model = body.model or _default_model(row.provider)
     result: ProviderTestResult = await test_provider_config(session, row, model=model)
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="provider.test",
+        resource_type="provider_config",
+        resource_id=row.id,
+        metadata={
+            "provider": row.provider,
+            "model": model,
+            "status": result.status,
+            "latency_ms": result.latency_ms,
+            "error": result.error,
+        },
+    )
     return ProviderTestView(
         status=result.status,
         latency_ms=result.latency_ms,

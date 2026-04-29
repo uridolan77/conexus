@@ -10,6 +10,11 @@ const links = [
     description: "Operational home",
   },
   {
+    href: "/audit",
+    label: "Audit",
+    description: "Sensitive admin actions",
+  },
+  {
     href: "/projects",
     label: "Projects",
     description: "Gateway clients and keys",
