@@ -29,7 +29,7 @@ aliases:
 
 
 def test_model_alias_config_missing_file_fails_clearly(tmp_path) -> None:
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ModelAliasConfigError):
         load_model_alias_config(tmp_path / "missing.yaml")
 
 

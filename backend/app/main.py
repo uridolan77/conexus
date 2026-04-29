@@ -28,7 +28,7 @@ from app.core.logging import configure_logging
 from app.db.session import init_db
 from app.llm.dependencies import shutdown_provider
 from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
-from app.llm.model_alias_config import ModelAliasConfigError
+from app.llm.model_alias_config import ModelAliasConfigError, load_model_alias_config
 
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -68,6 +68,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.warning(
                 "prod_startup_schema_notice create_all_enabled=false run_alembic_upgrade_head=true"
             )
+
+    # Validate static model-alias routing config early so config issues fail fast.
+    load_model_alias_config(settings.model_aliases_path)
 
     await init_db(allow_create_all=settings.effective_allow_create_all)
     logger.info("conexus_db_ready url=%s", _redacted_db_url(settings.database_url))
@@ -113,10 +116,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
     app.include_router(admin_routing.router)
-
-    @app.exception_handler(FileNotFoundError)
-    async def _handle_missing_file(_request, exc: FileNotFoundError):
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
     @app.exception_handler(ModelAliasConfigError)
     async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):

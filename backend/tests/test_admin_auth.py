@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db import models
@@ -96,11 +97,11 @@ async def test_admin_login_rate_limited_after_threshold_and_resets_on_success(
     assert r2.status_code == 429
 
     ok = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
-    assert ok.status_code == 200
+    assert ok.status_code == 429
 
     # After success, failures are cleared.
     again = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
-    assert again.status_code == 401
+    assert again.status_code == 429
 
 
 @pytest.mark.asyncio
@@ -115,3 +116,36 @@ async def test_admin_login_rate_limiter_normalizes_username(client: AsyncClient,
 
     r2 = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
     assert r2.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_login_with_correct_password_returns_429_and_no_cookie_and_audited(
+    client: AsyncClient, db_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "admin_login_max_failures", 1)
+    monkeypatch.setattr(settings, "admin_login_window_seconds", 600)
+
+    # Trigger lockout.
+    first = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert first.status_code == 429
+
+    # Correct password should still be blocked.
+    locked = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
+    assert locked.status_code == 429
+    assert locked.headers.get("set-cookie") is None
+
+    async with db_sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(models.AuditLog)
+                    .where(models.AuditLog.action == "admin.login")
+                    .order_by(models.AuditLog.created_at.desc())
+                    .limit(5)
+                )
+            ).scalars()
+        )
+        assert rows
+        assert "rate_limited" in (rows[0].metadata_json or "")

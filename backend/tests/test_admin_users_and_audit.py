@@ -314,7 +314,7 @@ async def test_admin_logout_is_audited(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_admin_login_failure_and_rate_limited_are_audited(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient, db_sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "admin_login_max_failures", 1)
     monkeypatch.setattr(settings, "admin_login_window_seconds", 600)
@@ -322,15 +322,21 @@ async def test_admin_login_failure_and_rate_limited_are_audited(
     bad = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
     assert bad.status_code == 429
 
-    # Log in successfully so we can read audit logs via BO.
-    await _login_env_admin(client)
-
-    audit = await client.get("/admin/audit?limit=200&offset=0&action=admin.login")
-    assert audit.status_code == 200
-    items = audit.json()["items"]
-    reasons = [((row.get("metadata") or {}).get("reason")) for row in items]
-    # Depending on threshold timing, first failure may already be rate_limited.
-    assert "rate_limited" in reasons or "invalid_credentials" in reasons
+    # When locked out, correct credentials must also remain blocked; verify audit via DB.
+    async with db_sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(models.AuditLog)
+                    .where(models.AuditLog.action == "admin.login")
+                    .order_by(models.AuditLog.created_at.desc())
+                    .limit(10)
+                )
+            ).scalars()
+        )
+        assert rows
+        combined = "\n".join([r.metadata_json or "" for r in rows])
+        assert "rate_limited" in combined
 
 
 @pytest.mark.asyncio

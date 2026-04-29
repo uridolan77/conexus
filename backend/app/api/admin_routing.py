@@ -11,7 +11,7 @@ from app.api.admin_auth import get_admin_session
 from app.db.session import get_session
 from app.services.admin_auth_service import AdminSession
 from app.core.config import settings
-from app.llm.gateway_router import get_known_provider_prefixes, get_model_aliases
+from app.llm.gateway_router import get_known_provider_prefixes
 from app.llm.model_alias_config import load_model_alias_config
 from app.services.provider_candidate_service import (
     ProviderCandidate,
@@ -44,7 +44,7 @@ async def get_model_aliases_endpoint(
     cfg = load_model_alias_config(settings.model_aliases_path)
     aliases = {
         name: {"anthropic": models[0], "openai": models[1]}
-        for name, models in get_model_aliases().items()
+        for name, models in cfg.aliases.items()
     }
     known_prefixes = get_known_provider_prefixes()
     return {

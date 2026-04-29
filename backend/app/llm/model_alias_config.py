@@ -30,7 +30,7 @@ def _require_non_blank(value: Any, *, field_name: str) -> str:
 def load_model_alias_config(path: str | Path) -> ModelAliasConfig:
     config_path = Path(path)
     if not config_path.exists():
-        raise FileNotFoundError(f"model aliases config not found: {config_path}")
+        raise ModelAliasConfigError(f"model aliases config not found: {config_path}")
 
     raw_text = config_path.read_text(encoding="utf-8")
     try:

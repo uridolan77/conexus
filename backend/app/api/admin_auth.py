@@ -42,6 +42,80 @@ class SessionResponse(BaseModel):
     admin_user_id: str | None = None
 
 
+async def _audit_login(
+    session: AsyncSession,
+    *,
+    username: str,
+    reason: str,
+    admin_user_id: str | None = None,
+    client_ip_present: bool,
+) -> None:
+    actor = (
+        AdminSession(username=username, admin_user_id=admin_user_id)
+        if reason == "success"
+        else None
+    )
+    await log_admin_action(
+        session,
+        actor=actor,
+        action="admin.login",
+        resource_type="admin_auth",
+        metadata={
+            "username": username,
+            "admin_user_id": admin_user_id,
+            "reason": reason,
+            "client_ip_present": client_ip_present,
+        },
+    )
+    # Ensure audit rows persist even when we raise HTTPException afterwards.
+    await session.commit()
+
+
+async def _raise_rate_limited(
+    session: AsyncSession, *, username: str, client_ip_present: bool
+) -> None:
+    await _audit_login(
+        session,
+        username=username,
+        reason="rate_limited",
+        client_ip_present=client_ip_present,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="too many login attempts",
+    )
+
+
+async def _raise_invalid_credentials(
+    session: AsyncSession, *, username: str, client_ip_present: bool
+) -> None:
+    await _audit_login(
+        session,
+        username=username,
+        reason="invalid_credentials",
+        client_ip_present=client_ip_present,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="invalid credentials",
+    )
+
+
+async def _raise_bootstrap_required(
+    session: AsyncSession, *, username: str, client_ip_present: bool
+) -> None:
+    await _audit_login(
+        session,
+        username=username,
+        reason="bootstrap_required",
+        client_ip_present=client_ip_present,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="admin bootstrap required",
+    )
+
+
 async def get_admin_session(
     session_cookie: Annotated[str | None, Cookie(alias=ADMIN_SESSION_COOKIE)] = None,
 ) -> AdminSession:
@@ -63,62 +137,24 @@ async def login(
         max_failures=settings.admin_login_max_failures,
         window_seconds=settings.admin_login_window_seconds,
     )
-    was_rate_limited = limiter.is_rate_limited(username=username, client_ip=client_ip)
+    if limiter.is_rate_limited(username=username, client_ip=client_ip):
+        await _raise_rate_limited(
+            session,
+            username=username,
+            client_ip_present=bool(client_ip),
+        )
 
     admin_user_id: str | None = None
     if await any_admin_users_exist(session):
         user = await authenticate_admin_user(session, username=username, password=password)
         if user is None:
-            if was_rate_limited:
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
-                )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
             limiter.record_failure(username=username, client_ip=client_ip)
             if limiter.is_rate_limited(username=username, client_ip=client_ip):
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
+                await _raise_rate_limited(
+                    session, username=username, client_ip_present=bool(client_ip)
                 )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
-            await log_admin_action(
-                session,
-                actor=None,
-                action="admin.login",
-                resource_type="admin_auth",
-                metadata={
-                    "username": username,
-                    "reason": "invalid_credentials",
-                    "client_ip_present": bool(client_ip),
-                },
-            )
-            await session.commit()
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid credentials",
+            await _raise_invalid_credentials(
+                session, username=username, client_ip_present=bool(client_ip)
             )
         user.last_login_at = datetime.now(timezone.utc)
         await session.flush()
@@ -126,121 +162,30 @@ async def login(
         username = user.username
     else:
         if not settings.effective_allow_env_admin_fallback:
-            if was_rate_limited:
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
-                )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
             limiter.record_failure(username=username, client_ip=client_ip)
             if limiter.is_rate_limited(username=username, client_ip=client_ip):
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
+                await _raise_rate_limited(
+                    session, username=username, client_ip_present=bool(client_ip)
                 )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
-            await log_admin_action(
-                session,
-                actor=None,
-                action="admin.login",
-                resource_type="admin_auth",
-                metadata={
-                    "username": username,
-                    "reason": "bootstrap_required",
-                    "client_ip_present": bool(client_ip),
-                },
-            )
-            await session.commit()
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="admin bootstrap required",
+            await _raise_bootstrap_required(
+                session, username=username, client_ip_present=bool(client_ip)
             )
         if not validate_admin_credentials(username, password):
-            if was_rate_limited:
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
-                )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
             limiter.record_failure(username=username, client_ip=client_ip)
             if limiter.is_rate_limited(username=username, client_ip=client_ip):
-                await log_admin_action(
-                    session,
-                    actor=None,
-                    action="admin.login",
-                    resource_type="admin_auth",
-                    metadata={
-                        "username": username,
-                        "reason": "rate_limited",
-                        "client_ip_present": bool(client_ip),
-                    },
+                await _raise_rate_limited(
+                    session, username=username, client_ip_present=bool(client_ip)
                 )
-                await session.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="too many login attempts",
-                )
-            await log_admin_action(
-                session,
-                actor=None,
-                action="admin.login",
-                resource_type="admin_auth",
-                metadata={
-                    "username": username,
-                    "reason": "invalid_credentials",
-                    "client_ip_present": bool(client_ip),
-                },
-            )
-            await session.commit()
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid credentials",
+            await _raise_invalid_credentials(
+                session, username=username, client_ip_present=bool(client_ip)
             )
 
-    await log_admin_action(
+    await _audit_login(
         session,
-        actor=AdminSession(username=username, admin_user_id=admin_user_id),
-        action="admin.login",
-        resource_type="admin_auth",
-        metadata={
-            "username": username,
-            "admin_user_id": admin_user_id,
-            "reason": "success",
-            "client_ip_present": bool(client_ip),
-        },
+        username=username,
+        admin_user_id=admin_user_id,
+        reason="success",
+        client_ip_present=bool(client_ip),
     )
 
     limiter.clear(username=username, client_ip=client_ip)
