@@ -76,6 +76,8 @@ export default function SmokeTestsPage() {
   const [projects, setProjects] = useState<StepResult | null>(null);
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  // Project API key plaintext is intentionally kept in-memory only (React state)
+  // and never persisted or logged. It is displayed once immediately after issuance.
   const [issuedKey, setIssuedKey] = useState<ApiKeyCreated | null>(null);
 
   const [chatPrompt, setChatPrompt] = useState("Say hello in one sentence.");

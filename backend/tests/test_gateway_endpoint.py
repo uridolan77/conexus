@@ -16,8 +16,10 @@ from app.llm.dependencies import get_provider
 from app.llm.errors import (
     AllProvidersFailedError,
     ProviderRateLimitError,
+    ProviderUnavailableError,
     UnknownModelError,
 )
+from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, TokenUsage
 from app.main import app
 from app.services.project_key_service import create_api_key
@@ -358,3 +360,59 @@ async def test_chat_completions_provider_rate_limit_logs_failure(
         ).scalar_one()
         assert log.status == "failed"
         assert log.error_code == "ProviderRateLimitError"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ProviderRateLimitError("429", provider="openai"),
+        ProviderUnavailableError("503", provider="openai"),
+    ],
+)
+async def test_chat_completions_direct_openai_model_failure_is_logged(
+    client, seeded, db_sessionmaker, exc
+) -> None:
+    """Concrete OpenAI model should still map provider failure to 502 + DB log.
+
+    This specifically exercises the gateway's OpenAI-only routing path while
+    still verifying structured upstream error responses and durable request
+    logging.
+    """
+    plaintext, _project, _api_key = seeded
+
+    openai_stub = _StubProvider(raises=exc)
+    gateway = GatewayProvider(primary=None, fallback=openai_stub)
+    _set_provider(gateway)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 502
+    assert REQUEST_ID_HEADER in response.headers
+    body = response.json()
+    assert body["detail"]["code"] == type(exc).__name__
+    assert body["detail"]["message"]
+    request_id = body["detail"]["request_id"]
+    assert request_id
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == type(exc).__name__
+        assert log.requested_model == "gpt-4o-mini"
