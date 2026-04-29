@@ -25,6 +25,11 @@ const links = [
     description: "Gateway activity",
   },
   {
+    href: "/usage",
+    label: "Usage",
+    description: "Costs and rollups",
+  },
+  {
     href: "/smoke-tests",
     label: "Smoke Tests",
     description: "End-to-end checks",

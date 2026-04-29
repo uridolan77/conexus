@@ -55,6 +55,37 @@ export type UsageSummary = {
   avg_latency_ms: number | null;
 };
 
+export type UsageProjectRow = UsageSummaryMetrics & {
+  project_id: string | null;
+  project_name: string | null;
+};
+
+export type UsageProviderRow = UsageSummaryMetrics & {
+  provider: string | null;
+};
+
+export type UsageBreakdownResponse<T> = {
+  window: "24h" | "7d" | "30d";
+  created_from: string;
+  created_to: string;
+  currency: "USD";
+  items: T[];
+};
+
+type UsageSummaryMetrics = {
+  total_requests: number;
+  completed_requests: number;
+  failed_requests: number;
+  success_rate: number;
+  fallback_count: number;
+  fallback_rate: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  avg_latency_ms: number | null;
+};
+
 export type ChatCompletionsResponse = {
   id: string;
   model: string;

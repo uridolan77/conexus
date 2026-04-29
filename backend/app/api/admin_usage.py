@@ -62,6 +62,18 @@ class ProjectUsageResponse(BaseModel):
     items: list[ProjectUsageRow]
 
 
+class ProviderUsageRow(UsageMetrics):
+    provider: str | None
+
+
+class ProviderUsageResponse(BaseModel):
+    window: Window
+    created_from: datetime
+    created_to: datetime
+    currency: Literal["USD"] = "USD"
+    items: list[ProviderUsageRow]
+
+
 def _window_start(window: Window, now: datetime) -> datetime:
     if window == "24h":
         return now - timedelta(hours=24)
@@ -205,6 +217,43 @@ async def get_usage_by_project(
             ProjectUsageRow(
                 project_id=row._mapping["project_id"],
                 project_name=row._mapping["project_name"],
+                **_metrics_from_mapping(row).model_dump(),
+            )
+            for row in rows
+        ],
+    )
+
+
+@router.get("/by-provider", response_model=ProviderUsageResponse)
+async def get_usage_by_provider(
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    window: Annotated[Window, Query()] = "30d",
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+) -> ProviderUsageResponse:
+    bounds = _time_bounds(
+        window=window,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    stmt = (
+        select(
+            GatewayRequest.provider.label("provider"),
+            *_metric_columns(),
+        )
+        .group_by(GatewayRequest.provider)
+        .order_by(func.coalesce(func.sum(GatewayRequest.estimated_cost), 0.0).desc())
+    )
+    stmt = _apply_time_bounds(stmt, bounds)
+    rows = (await session.execute(stmt)).all()
+    return ProviderUsageResponse(
+        window=bounds.window,
+        created_from=bounds.created_from,
+        created_to=bounds.created_to,
+        items=[
+            ProviderUsageRow(
+                provider=row._mapping["provider"],
                 **_metrics_from_mapping(row).model_dump(),
             )
             for row in rows

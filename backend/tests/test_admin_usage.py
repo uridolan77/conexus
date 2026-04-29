@@ -1,4 +1,4 @@
-"""Tests for M7A admin usage analytics APIs."""
+"""Tests for admin usage analytics APIs."""
 
 from __future__ import annotations
 
@@ -151,9 +151,11 @@ async def _seed_usage_requests(db_sessionmaker) -> dict[str, Any]:
 async def test_usage_routes_require_admin_auth(client: AsyncClient) -> None:
     summary_response = await client.get("/admin/usage/summary")
     by_project_response = await client.get("/admin/usage/by-project")
+    by_provider_response = await client.get("/admin/usage/by-provider")
 
     assert summary_response.status_code == 401
     assert by_project_response.status_code == 401
+    assert by_provider_response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -219,6 +221,37 @@ async def test_usage_by_project_groups_metadata(
     assert items[seed["project_b"]]["project_name"] == "Project B"
     assert items[seed["project_b"]]["total_requests"] == 1
     assert items[seed["project_b"]]["total_tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_by_provider_groups_metadata(
+    client: AsyncClient,
+    db_sessionmaker,
+) -> None:
+    seed = await _seed_usage_requests(db_sessionmaker)
+    created = seed["created"]
+    await _login(client)
+
+    response = await client.get(
+        "/admin/usage/by-provider",
+        params={
+            "created_from": (created - timedelta(minutes=1)).isoformat(),
+            "created_to": (created + timedelta(hours=3)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    items = {item["provider"]: item for item in body["items"]}
+    assert set(items) == {"openai", "anthropic", None}
+    assert items["openai"]["total_requests"] == 1
+    assert items["openai"]["completed_requests"] == 1
+    assert items["openai"]["estimated_cost"] == pytest.approx(0.01)
+    assert items["anthropic"]["total_requests"] == 1
+    assert items["anthropic"]["failed_requests"] == 1
+    assert items["anthropic"]["fallback_count"] == 1
+    assert items[None]["total_requests"] == 1
+    assert items[None]["total_tokens"] == 0
 
 
 @pytest.mark.asyncio
