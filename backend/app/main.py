@@ -9,7 +9,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin_auth, admin_projects, admin_providers, admin_requests, gateway, health
+from app.api import (
+    admin_auth,
+    admin_projects,
+    admin_providers,
+    admin_requests,
+    admin_usage,
+    gateway,
+    health,
+)
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
@@ -81,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
     app.include_router(admin_requests.router)
+    app.include_router(admin_usage.router)
     logger.info("conexus_app_started env=%s", settings.app_env)
     return app
 

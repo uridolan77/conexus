@@ -12,12 +12,25 @@ import {
   StatCard,
 } from "@/components/ui";
 import { BACKEND_BASE } from "@/lib/api";
-import type { ProjectRow, ProviderRow } from "@/lib/types";
+import type { ProjectRow, ProviderRow, UsageSummary } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
+
+function formatCost(value: number | null | undefined) {
+  if (value === null || value === undefined) return "Unavailable";
+  if (value === 0) return "$0";
+  if (value < 0.0001) return "<$0.0001";
+  return `$${value.toFixed(4)}`;
+}
+
+function formatRate(value: number | null | undefined) {
+  if (value === null || value === undefined) return "Unavailable";
+  return `${(value * 100).toFixed(1)}%`;
+}
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [providers, setProviders] = useState<ProviderRow[] | null>(null);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -26,11 +39,15 @@ export default function DashboardPage() {
       setSummaryLoading(true);
       setSummaryError(null);
       try {
-        const [projectRes, providerRes] = await Promise.all([
+        const [projectRes, providerRes, usageRes] = await Promise.all([
           fetch(`${BACKEND_BASE}/admin/projects`, { credentials: "include" }),
           fetch(`${BACKEND_BASE}/admin/providers`, { credentials: "include" }),
+          fetch(`${BACKEND_BASE}/admin/usage/summary?window=30d`, {
+            credentials: "include",
+            cache: "no-store",
+          }),
         ]);
-        if (projectRes.status === 401 || providerRes.status === 401) {
+        if (projectRes.status === 401 || providerRes.status === 401 || usageRes.status === 401) {
           window.location.href = "/login";
           return;
         }
@@ -50,12 +67,20 @@ export default function DashboardPage() {
           failures.push("providers");
         }
 
+        if (usageRes.ok) {
+          setUsage((await usageRes.json()) as UsageSummary);
+        } else {
+          setUsage(null);
+          failures.push("usage");
+        }
+
         if (failures.length > 0) {
           setSummaryError(`Unable to load dashboard summary for ${failures.join(" and ")}.`);
         }
       } catch {
         setProjects(null);
         setProviders(null);
+        setUsage(null);
         setSummaryError("Unable to load dashboard summary. Check that the backend is reachable.");
       } finally {
         setSummaryLoading(false);
@@ -73,7 +98,7 @@ export default function DashboardPage() {
     (total, project) => total + project.active_key_count,
     0,
   );
-  const totalRequests = projectRows.reduce(
+  const projectRequestCount = projectRows.reduce(
     (total, project) => total + project.total_request_count,
     0,
   );
@@ -96,7 +121,7 @@ export default function DashboardPage() {
       },
       {
         label: "Run smoke test",
-        done: totalRequests > 0,
+        done: projectRequestCount > 0,
         href: "/smoke-tests",
       },
       {
@@ -105,7 +130,7 @@ export default function DashboardPage() {
         href: "/requests",
       },
     ],
-    [activeKeys, activeProviders, projectRows.length, totalRequests],
+    [activeKeys, activeProviders, projectRequestCount, projectRows.length],
   );
 
   return (
@@ -124,7 +149,7 @@ export default function DashboardPage() {
           <LoadingState label="Loading dashboard summary..." />
         </Card>
       ) : (
-        <div className="grid grid-3">
+        <div className="grid grid-4">
           <StatCard
             label="Projects"
             value={projects ? projects.length : "Unavailable"}
@@ -136,9 +161,19 @@ export default function DashboardPage() {
             hint="Upstream credentials"
           />
           <StatCard
-            label="Logged Requests"
-            value={projects ? totalRequests : "Unavailable"}
-            hint="Persisted by the gateway"
+            label="Requests (30d)"
+            value={usage ? usage.total_requests.toLocaleString() : "Unavailable"}
+            hint="From request logs"
+          />
+          <StatCard
+            label="Estimated Cost (30d)"
+            value={formatCost(usage?.estimated_cost)}
+            hint="USD from logged usage"
+          />
+          <StatCard
+            label="Success Rate (30d)"
+            value={formatRate(usage?.success_rate)}
+            hint={usage ? `${usage.completed_requests} completed` : "From request logs"}
           />
         </div>
       )}
