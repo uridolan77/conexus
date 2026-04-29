@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from app.core.config import settings
 from app.llm.anthropic_adapter import (
@@ -54,7 +55,7 @@ _KNOWN_ANTHROPIC_PREFIXES = ("claude-", "anthropic-")
 _KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
 
 
-_Route = str  # "gateway" | "anthropic_only" | "openai_only"
+_Route = Literal["gateway", "anthropic_only", "openai_only"]
 
 
 def get_model_aliases() -> dict[str, tuple[str, str]]:

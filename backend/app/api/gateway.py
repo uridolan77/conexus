@@ -9,6 +9,7 @@ production usage.
 
 from __future__ import annotations
 
+import logging
 import time
 import json
 from typing import Annotated, Any, Literal
@@ -30,6 +31,9 @@ from app.services.gateway_service import (
     run_chat_completion_stream,
 )
 from app.services.request_log_service import new_request_id
+from app.llm.types import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["gateway"])
 
@@ -61,6 +65,10 @@ class ChatCompletionsBody(BaseModel):
     top_logprobs: int | None = Field(default=None, ge=0, le=20)
     presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+
+
+def _to_chat_messages(messages: list[ChatMessageBody]) -> list[ChatMessage]:
+    return [{"role": m.role, "content": m.content} for m in messages]
 
 
 def _raise_compat_error(*, code: str, message: str) -> None:
@@ -127,6 +135,35 @@ def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]
     return {"code": code, "message": message, "request_id": request_id}
 
 
+def _raise_gateway_http(exc: Exception) -> None:
+    if isinstance(exc, GatewayClientError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            headers={REQUEST_ID_HEADER: exc.request_id},
+        ) from exc
+    if isinstance(exc, GatewayLimitError):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                **_error_detail(exc.code, str(exc), exc.request_id),
+                "limit_type": exc.limit_type,
+                "current_value": exc.current_value,
+                "limit_value": exc.limit_value,
+                "window": exc.window,
+                "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
+            },
+            headers={REQUEST_ID_HEADER: exc.request_id},
+        ) from exc
+    if isinstance(exc, GatewayUpstreamError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            headers={REQUEST_ID_HEADER: exc.request_id},
+        ) from exc
+    raise exc
+
+
 @router.post("/chat/completions", response_model=ChatCompletionsResponse)
 async def chat_completions(
     body: ChatCompletionsBody,
@@ -136,8 +173,9 @@ async def chat_completions(
         async_sessionmaker[AsyncSession], Depends(get_db_sessionmaker)
     ],
     provider: Annotated[LLMProvider, Depends(get_provider)],
-) -> ChatCompletionsResponse:
+) -> ChatCompletionsResponse | StreamingResponse:
     _validate_compat(body)
+    created = int(time.time())
     if body.stream:
         try:
             stream_result = await run_chat_completion_stream(
@@ -146,40 +184,14 @@ async def chat_completions(
                 project=auth.project,
                 api_key=auth.api_key,
                 model=body.model,
-                messages=[m.model_dump() for m in body.messages],  # type: ignore[arg-type]
+                messages=_to_chat_messages(body.messages),
                 max_tokens=body.max_tokens,
                 temperature=body.temperature,
             )
-        except GatewayClientError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_error_detail(exc.code, str(exc), exc.request_id),
-                headers={REQUEST_ID_HEADER: exc.request_id},
-            ) from exc
-        except GatewayLimitError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    **_error_detail(exc.code, str(exc), exc.request_id),
-                    "limit_type": exc.limit_type,
-                    "current_value": exc.current_value,
-                    "limit_value": exc.limit_value,
-                    "window": exc.window,
-                    "reset_at": exc.reset_at.isoformat()
-                    if exc.reset_at is not None
-                    else None,
-                },
-                headers={REQUEST_ID_HEADER: exc.request_id},
-            ) from exc
-        except GatewayUpstreamError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=_error_detail(exc.code, str(exc), exc.request_id),
-                headers={REQUEST_ID_HEADER: exc.request_id},
-            ) from exc
+        except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
+            _raise_gateway_http(exc)
 
         request_id = stream_result.request_id
-        created = int(time.time())
         chat_id = f"chatcmpl-{request_id}"
 
         async def _event_stream():
@@ -208,6 +220,9 @@ async def chat_completions(
                     }
                     yield f"data: {json.dumps(payload)}\n\n".encode("utf-8")
             except Exception:
+                logger.exception(
+                    "gateway_stream_interrupted request_id=%s", request_id
+                )
                 # Best-effort SSE error. The DB log is written by the stream wrapper.
                 err_payload = {
                     "error": {
@@ -232,41 +247,18 @@ async def chat_completions(
             project=auth.project,
             api_key=auth.api_key,
             model=body.model,
-            messages=[m.model_dump() for m in body.messages],  # type: ignore[arg-type]
+            messages=_to_chat_messages(body.messages),
             max_tokens=body.max_tokens,
             temperature=body.temperature,
         )
-    except GatewayClientError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_error_detail(exc.code, str(exc), exc.request_id),
-            headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
-    except GatewayLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                **_error_detail(exc.code, str(exc), exc.request_id),
-                "limit_type": exc.limit_type,
-                "current_value": exc.current_value,
-                "limit_value": exc.limit_value,
-                "window": exc.window,
-                "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
-            },
-            headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
-    except GatewayUpstreamError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=_error_detail(exc.code, str(exc), exc.request_id),
-            headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
+    except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
+        _raise_gateway_http(exc)
 
     chat_result = result.result
     response.headers[REQUEST_ID_HEADER] = result.request_id
     return ChatCompletionsResponse(
         id=f"chatcmpl-{result.request_id}",
-        created=int(time.time()),
+        created=created,
         model=chat_result.model,
         provider=chat_result.provider,
         fallback_used=chat_result.fallback_used,

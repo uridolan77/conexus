@@ -26,6 +26,7 @@ from app.llm.errors import (
 from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
+from app.services.gateway_service import GatewayClientError
 from app.services.project_key_service import create_api_key
 
 
@@ -685,6 +686,8 @@ async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
         app.dependency_overrides.pop(get_provider, None)
 
     assert "data: [DONE]" in payload
+    assert "\"error\"" in payload
+    assert "Stream interrupted." in payload
 
     async with db_sessionmaker() as session:
         log = (
@@ -1062,6 +1065,93 @@ async def test_soft_limits_allow_provider_call(client, seeded, db_sessionmaker) 
     assert len(stub.calls) == 1
 
 # ── Error path ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_gateway_client_error_returns_400_with_request_id(
+    client, seeded, monkeypatch
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="should not happen",
+                model="gpt-4o-mini",
+                provider="openai",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+
+    request_id = "req_test_gateway_client_error"
+
+    async def _raise(*args, **kwargs):
+        raise GatewayClientError(
+            "bad input",
+            code="bad_input",
+            request_id=request_id,
+        )
+
+    monkeypatch.setattr("app.api.gateway.run_chat_completion", _raise)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+    body = response.json()
+    assert body["detail"]["code"] == "bad_input"
+    assert body["detail"]["message"] == "bad input"
+    assert body["detail"]["request_id"] == request_id
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_gateway_client_error_returns_400_with_request_id(
+    client, seeded, monkeypatch
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            stream_chunks=[
+                ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="nope")
+            ]
+        )
+    )
+
+    request_id = "req_test_gateway_client_error_stream"
+
+    async def _raise(*args, **kwargs):
+        raise GatewayClientError(
+            "bad input",
+            code="bad_input",
+            request_id=request_id,
+        )
+
+    monkeypatch.setattr("app.api.gateway.run_chat_completion_stream", _raise)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+    body = response.json()
+    assert body["detail"]["code"] == "bad_input"
+    assert body["detail"]["message"] == "bad input"
+    assert body["detail"]["request_id"] == request_id
 
 
 @pytest.mark.asyncio
