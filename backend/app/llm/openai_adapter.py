@@ -74,6 +74,12 @@ async def _retried_openai_create(
     return await client.chat.completions.create(**kwargs)
 
 
+@_openai_retry
+async def _retried_openai_stream(client: openai.AsyncOpenAI, **kwargs: Any) -> Any:
+    """Same retry policy as ``_retried_openai_create``, for stream creation only."""
+    return await client.chat.completions.create(**kwargs)
+
+
 class OpenAIProvider(LLMProvider):
     """Async OpenAI provider with retry on 429/5xx."""
 
@@ -134,7 +140,8 @@ class OpenAIProvider(LLMProvider):
         temperature: float = 0.2,
     ) -> AsyncIterator[ChatStreamChunk]:
         try:
-            stream = await self._client.chat.completions.create(
+            stream = await _retried_openai_stream(
+                self._client,
                 model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,

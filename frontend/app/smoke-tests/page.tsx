@@ -20,7 +20,7 @@ import {
   Stepper,
   Textarea,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 import type {
   ApiKeyCreated,
   ChatCompletionsResponse,
@@ -34,7 +34,7 @@ async function runStep(
   init?: RequestInit,
 ): Promise<StepResult> {
   try {
-    const res = await fetch(input, init);
+    const res = await adminSessionFetch(input, init);
     const data = await readJsonSafe(res);
     if (!res.ok) {
       return { ok: false, status: res.status, error: data };

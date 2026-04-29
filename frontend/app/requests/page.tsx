@@ -21,7 +21,7 @@ import {
   StatCard,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
 const DEFAULT_LIMIT = "50";
@@ -161,14 +161,9 @@ export default function RequestsPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
 
   async function loadProjects() {
-    const res = await fetch(`${BACKEND_BASE}/admin/projects`, {
-      credentials: "include",
+    const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`, {
       cache: "no-store",
     });
-    if (res.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
     if (res.ok) {
       setProjects((await res.json()) as ProjectRow[]);
     }
@@ -179,15 +174,10 @@ export default function RequestsPage() {
     setError(null);
     try {
       const params = toQuery(nextFilters, nextOffset);
-      const res = await fetch(`${BACKEND_BASE}/admin/requests?${params.toString()}`, {
-        credentials: "include",
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/requests?${params.toString()}`, {
         cache: "no-store",
       });
       const body = await readJsonSafe(res);
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError(formatApiError(body));
         return;
@@ -209,15 +199,13 @@ export default function RequestsPage() {
     setDetailError(null);
     setSelectedRequestId(requestId);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/requests/${encodeURIComponent(requestId)}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await adminSessionFetch(
+        `${BACKEND_BASE}/admin/requests/${encodeURIComponent(requestId)}`,
+        {
+          cache: "no-store",
+        },
+      );
       const body = await readJsonSafe(res);
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setDetail(null);
         setDetailError(formatApiError(body));

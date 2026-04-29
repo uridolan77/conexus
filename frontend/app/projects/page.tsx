@@ -19,7 +19,7 @@ import {
   StatusBadge,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatDate } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatDate } from "@/lib/api";
 import type {
   ApiKeyCreated,
   ApiKeyRow,
@@ -56,13 +56,7 @@ export default function ProjectsPage() {
     setLoadingProjects(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`);
       if (!res.ok) {
         setError("Unable to load projects.");
         return;
@@ -81,13 +75,7 @@ export default function ProjectsPage() {
     setLoadingKeys(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${projectId}/keys`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${projectId}/keys`);
       if (!res.ok) {
         setError("Unable to load project keys.");
         return;
@@ -102,13 +90,7 @@ export default function ProjectsPage() {
     setLoadingLimits(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${projectId}/limits`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${projectId}/limits`);
       if (!res.ok) {
         setError("Unable to load project limits.");
         return;
@@ -128,16 +110,9 @@ export default function ProjectsPage() {
     setLoadingLimitsUsage(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${projectId}/limits/usage`,
-        {
-          credentials: "include",
-        },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to load project limit usage.");
         return;
@@ -176,16 +151,11 @@ export default function ProjectsPage() {
     }
     setCreatingProject(true);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to create project.");
         return;
@@ -210,16 +180,11 @@ export default function ProjectsPage() {
     setSuccess(null);
     const label = newKeyLabel.trim();
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: label || null }),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to issue project key.");
         return;
@@ -243,17 +208,12 @@ export default function ProjectsPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys/${keyId}/revoke`,
         {
           method: "POST",
-          credentials: "include",
         },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to revoke project key.");
         return;
@@ -312,19 +272,14 @@ export default function ProjectsPage() {
 
     setSavingLimits(true);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${selectedProjectId}/limits`,
         {
           method: "PUT",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to save project limits.");
         return;

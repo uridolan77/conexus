@@ -11,7 +11,7 @@ import {
   SectionHeader,
   StatCard,
 } from "@/components/ui";
-import { BACKEND_BASE } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
 import type { ProjectRow, ProviderRow, UsageSummary } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
 
@@ -40,17 +40,12 @@ export default function DashboardPage() {
       setSummaryError(null);
       try {
         const [projectRes, providerRes, usageRes] = await Promise.all([
-          fetch(`${BACKEND_BASE}/admin/projects`, { credentials: "include" }),
-          fetch(`${BACKEND_BASE}/admin/providers`, { credentials: "include" }),
-          fetch(`${BACKEND_BASE}/admin/usage/summary?window=30d`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/projects`),
+          adminSessionFetch(`${BACKEND_BASE}/admin/providers`),
+          adminSessionFetch(`${BACKEND_BASE}/admin/usage/summary?window=30d`, {
             cache: "no-store",
           }),
         ]);
-        if (projectRes.status === 401 || providerRes.status === 401 || usageRes.status === 401) {
-          window.location.href = "/login";
-          return;
-        }
 
         const failures: string[] = [];
         if (projectRes.ok) {

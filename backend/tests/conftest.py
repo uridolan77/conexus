@@ -38,6 +38,7 @@ def _no_retry_wait():
 
     targets = (
         openai_adapter._retried_openai_create,
+        openai_adapter._retried_openai_stream,
         anthropic_adapter._retried_anthropic_create,
     )
     originals = [t.retry.wait for t in targets]

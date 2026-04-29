@@ -20,7 +20,7 @@ import type {
   AdapterProfileListItem,
   ProblemDetailsLike,
 } from "@/lib/adaptationTypes";
-import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 
 export type AdaptationResult<T> =
   | { ok: true; data: T }
@@ -45,9 +45,8 @@ async function requestAdaptation<T>(
   init?: RequestInit,
 ): Promise<AdaptationResult<T>> {
   try {
-    const res = await fetch(adminUrl(path), {
+    const res = await adminSessionFetch(adminUrl(path), {
       ...init,
-      credentials: "include",
       cache: "no-store",
       headers: {
         "content-type": "application/json",
@@ -55,9 +54,6 @@ async function requestAdaptation<T>(
       },
     });
     if (res.status === 401) {
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
-      }
       return { ok: false, status: 401, error: "unauthorized" };
     }
     const body = await readJsonSafe(res);

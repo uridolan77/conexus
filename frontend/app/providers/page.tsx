@@ -19,7 +19,7 @@ import {
   StatusBadge,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatDate } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatDate } from "@/lib/api";
 import type { ProviderRow, ProviderTestResult } from "@/lib/types";
 
 export default function ProvidersPage() {
@@ -45,13 +45,7 @@ export default function ProvidersPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/providers`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers`);
       if (!res.ok) {
         setError("Failed to load provider configs.");
         return;
@@ -78,9 +72,8 @@ export default function ProvidersPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/providers`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider,
@@ -88,10 +81,6 @@ export default function ProvidersPage() {
           api_key: apiKey,
         }),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Failed to save provider config.");
         return;
@@ -110,14 +99,9 @@ export default function ProvidersPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/providers/${id}/revoke`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers/${id}/revoke`, {
         method: "POST",
-        credentials: "include",
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Failed to revoke provider config.");
         return;
@@ -133,16 +117,11 @@ export default function ProvidersPage() {
     setTestingId(id);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/providers/${id}/test`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers/${id}/test`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setTestResults((prev) => ({
           ...prev,

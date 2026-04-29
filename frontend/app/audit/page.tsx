@@ -14,7 +14,7 @@ import {
   PageHeader,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
 import type { AuditListResponse, AuditLogItem } from "@/lib/types";
 
 type Filters = {
@@ -71,9 +71,8 @@ export default function AuditPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${BACKEND_BASE}/admin/audit?${query}`, {
+        const res = await adminSessionFetch(`${BACKEND_BASE}/admin/audit?${query}`, {
           method: "GET",
-          credentials: "include",
         });
         const body = (await readJsonSafe(res)) as unknown;
         if (!res.ok) {

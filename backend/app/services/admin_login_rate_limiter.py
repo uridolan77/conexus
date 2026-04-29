@@ -43,7 +43,6 @@ class AdminLoginRateLimiter:
             self._failures[key] = q
         self._prune(now_ts, q)
         q.append(now_ts)
-        self._prune(now_ts, q)
 
     def clear(self, *, username: str, client_ip: str | None) -> None:
         key = self._key(username=username, client_ip=client_ip)
@@ -51,19 +50,33 @@ class AdminLoginRateLimiter:
 
 
 _rate_limiter: AdminLoginRateLimiter | None = None
+# Config tuple (max_failures, window_seconds) used when the singleton was created.
+_limiter_config: tuple[int, int] | None = None
 
 
 def get_admin_login_rate_limiter(*, max_failures: int, window_seconds: int) -> AdminLoginRateLimiter:
-    global _rate_limiter
+    """Return the process-wide limiter.
+
+    In-memory state is **single-process only** (not shared across workers or hosts).
+    """
+    global _rate_limiter, _limiter_config
+    cfg = (max_failures, window_seconds)
     if _rate_limiter is None:
         _rate_limiter = AdminLoginRateLimiter(
             max_failures=max_failures,
             window_seconds=window_seconds,
         )
+        _limiter_config = cfg
+        return _rate_limiter
+    if _limiter_config != cfg:
+        raise RuntimeError(
+            "admin login rate limiter was already initialized with different settings; "
+            "this in-memory limiter is single-process — align callers with one config."
+        )
     return _rate_limiter
 
 
 def reset_admin_login_rate_limiter_for_tests() -> None:
-    global _rate_limiter
+    global _rate_limiter, _limiter_config
     _rate_limiter = None
-
+    _limiter_config = None
