@@ -98,3 +98,27 @@ async def test_create_project_and_issue_revoke_key(client: AsyncClient) -> None:
     )
     assert revoked.status_code == 200
     assert revoked.json()["revoked_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_create_project_rejects_whitespace_name(client: AsyncClient) -> None:
+    await _login(client)
+
+    response = await client.post("/admin/projects", json={"name": "   "})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "project name cannot be blank"
+
+
+@pytest.mark.asyncio
+async def test_create_key_strips_blank_label_to_none(client: AsyncClient) -> None:
+    await _login(client)
+
+    created_project = await client.post("/admin/projects", json={"name": "billing"})
+    project_id = created_project.json()["id"]
+
+    created_key = await client.post(
+        f"/admin/projects/{project_id}/keys",
+        json={"label": "   "},
+    )
+    assert created_key.status_code == 201
+    assert created_key.json()["label"] is None

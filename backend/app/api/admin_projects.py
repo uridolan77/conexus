@@ -115,7 +115,13 @@ async def create_project(
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProjectView:
-    project = Project(name=body.name.strip())
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project name cannot be blank",
+        )
+    project = Project(name=name)
     session.add(project)
     await session.flush()
     return ProjectView(
@@ -147,7 +153,10 @@ async def create_project_key(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ApiKeyCreatedView:
     project = await _project_or_404(session, project_id)
-    issued = await create_api_key(session, project=project, label=body.label)
+    label = body.label.strip() if body.label is not None else None
+    if label == "":
+        label = None
+    issued = await create_api_key(session, project=project, label=label)
     key = issued.api_key
     return ApiKeyCreatedView(
         id=key.id,

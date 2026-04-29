@@ -20,8 +20,22 @@ configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 
+def _ensure_prod_secret_hardening() -> None:
+    if settings.app_env.lower() != "prod":
+        return
+    problems: list[str] = []
+    if settings.auth_secret == "replace-me-local":
+        problems.append("AUTH_SECRET uses default")
+    if settings.admin_password == "admin":
+        problems.append("ADMIN_PASSWORD uses default")
+    if problems:
+        details = ", ".join(problems)
+        raise RuntimeError(f"unsafe production config: {details}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    _ensure_prod_secret_hardening()
     try:
         ensure_encryption_ready()
     except SecretCryptoError as exc:
