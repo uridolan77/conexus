@@ -15,6 +15,7 @@ from app.db.models import Project, ProjectLimit
 from app.db.session import get_session
 from app.services.admin_auth_service import AdminSession
 from app.services.project_limits_service import get_project_limit_usage
+from app.services.project_limit_reservations_query import load_project_limit_reservations_snapshot
 from app.services.audit_service import log_admin_action
 
 router = APIRouter(prefix="/admin/projects", tags=["admin"])
@@ -60,6 +61,29 @@ class ProjectLimitsUsageView(BaseModel):
     now: datetime
     daily: _ProjectLimitsUsageDaily
     monthly: _ProjectLimitsUsageMonthly
+
+
+class _ProjectLimitsReservationsDaily(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    request_count_reserved: int
+    request_count_completed: int
+    token_count_reserved: int
+    token_count_completed: int
+
+
+class _ProjectLimitsReservationsMonthly(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    cost_reserved: float
+    cost_completed: float
+
+
+class ProjectLimitsReservationsView(BaseModel):
+    project_id: str
+    now: datetime
+    daily: _ProjectLimitsReservationsDaily | None
+    monthly: _ProjectLimitsReservationsMonthly | None
 
 
 async def _project_or_404(session: AsyncSession, project_id: str) -> Project:
@@ -168,5 +192,44 @@ async def get_project_limits_usage(
             reset_at=usage.month_end,
             estimated_cost=usage.monthly_estimated_cost,
         ),
+    )
+
+
+@router.get("/{project_id}/limits/reservations", response_model=ProjectLimitsReservationsView)
+async def get_project_limits_reservations(
+    project_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProjectLimitsReservationsView:
+    await _project_or_404(session, project_id)
+    now = datetime.now(timezone.utc)
+    snap = await load_project_limit_reservations_snapshot(session, project_id=project_id, now=now)
+    daily = (
+        _ProjectLimitsReservationsDaily(
+            window_start=snap.daily.window_start,
+            window_end=snap.daily.window_end,
+            request_count_reserved=snap.daily.request_count_reserved,
+            request_count_completed=snap.daily.request_count_completed,
+            token_count_reserved=snap.daily.token_count_reserved,
+            token_count_completed=snap.daily.token_count_completed,
+        )
+        if snap.daily is not None
+        else None
+    )
+    monthly = (
+        _ProjectLimitsReservationsMonthly(
+            window_start=snap.monthly.window_start,
+            window_end=snap.monthly.window_end,
+            cost_reserved=snap.monthly.cost_reserved,
+            cost_completed=snap.monthly.cost_completed,
+        )
+        if snap.monthly is not None
+        else None
+    )
+    return ProjectLimitsReservationsView(
+        project_id=project_id,
+        now=now,
+        daily=daily,
+        monthly=monthly,
     )
 

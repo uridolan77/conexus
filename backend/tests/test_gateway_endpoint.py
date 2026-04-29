@@ -12,6 +12,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.api.gateway import REQUEST_ID_HEADER
 from app.db import models
@@ -121,7 +122,11 @@ class _SlowProvider(LLMProvider):
 
 @pytest_asyncio.fixture
 async def db_engine():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
     try:
@@ -966,14 +971,14 @@ class _DelayedStubProvider(_StubProvider):
 
 
 @pytest.mark.asyncio
-async def test_hard_daily_request_limit_preflight_is_best_effort_under_concurrency(
+async def test_hard_daily_request_limit_under_concurrent_burst(
     client, seeded, db_sessionmaker
 ) -> None:
-    """Documents race: preflight counts committed rows only.
+    """With daily_request_limit=1, at most one request should succeed per strict admission.
 
-    With daily_request_limit=1 and zero prior rows, concurrent requests each
-    see count 0 and may all proceed. Not a strict cap until reservation/locking.
-    See docs/hard-limit-concurrency.md.
+    PostgreSQL (CI with a real DB URL) must allow exactly one 200. SQLite ``:memory:``
+    pools may isolate connections; we still require at least one 429 and no 5xx.
+    See docs/strict-limit-reservations.md.
     """
     plaintext, project, _api_key = seeded
     await _set_project_limits(
@@ -1010,7 +1015,11 @@ async def test_hard_daily_request_limit_preflight_is_best_effort_under_concurren
         app.dependency_overrides.pop(get_provider, None)
 
     oks = sum(1 for c in codes if c == 200)
-    assert oks >= 2, "expected concurrent burst to exceed strict daily_request_limit=1"
+    rate429 = sum(1 for c in codes if c == 429)
+    assert all(c in (200, 429) for c in codes)
+    assert oks + rate429 == n
+    assert oks == 1
+    assert rate429 == n - 1
     assert len(stub.calls) == oks
 
 

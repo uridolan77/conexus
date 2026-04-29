@@ -268,7 +268,14 @@ class AnthropicProvider(LLMProvider):
             ) from exc
         finally:
             if stream_cm is not None:
-                await stream_cm.__aexit__(*sys.exc_info())
+                try:
+                    await stream_cm.__aexit__(*sys.exc_info())
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "anthropic_stream_context_cleanup_failed error_type=%s",
+                        type(cleanup_exc).__name__,
+                        exc_info=True,
+                    )
 
     async def aclose(self) -> None:
         try:

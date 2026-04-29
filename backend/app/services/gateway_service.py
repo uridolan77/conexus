@@ -3,9 +3,11 @@
 Flow (docs/04_GATEWAY.md):
 
     create request_id
+    reserve hard limits (v0.7+, separate commit when applicable)
     insert gateway_requests row (own session, commits before provider call)
     call provider
     insert finish row update (own session)
+    reconcile limit reservation (same session as finish when possible)
     return normalized response
 
 Request-log writes own their own short-lived sessions so a provider failure
@@ -44,12 +46,85 @@ from app.services.request_log_service import (
     new_request_id,
     start_request,
 )
-from app.services.project_limits_service import (
-    check_hard_limits,
-    get_project_limits,
+from app.services.project_limits_service import LimitBlock, get_project_limits
+from app.services.project_limit_reservation_service import (
+    reconcile_gateway_request,
+    reserve_gateway_request,
 )
 
 logger = logging.getLogger(__name__)
+
+# Serialize hard-limit reservation per project so concurrent asyncio tasks cannot
+# interleave between reserve and start_request (SQLite has no row lock; Postgres
+# still benefits from fewer aborted transactions).
+_project_reserve_locks: dict[str, asyncio.Lock] = {}
+
+
+def _project_reserve_lock(project_id: str) -> asyncio.Lock:
+    lock = _project_reserve_locks.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _project_reserve_locks[project_id] = lock
+    return lock
+
+
+class _LimitReservedBlocked(Exception):
+    __slots__ = ("block",)
+
+    def __init__(self, block: LimitBlock) -> None:
+        self.block = block
+
+
+async def _reserve_hard_limit_or_raise(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    project_id: str,
+    model: str,
+    max_tokens: int,
+    estimated_prompt_tokens: int | None,
+) -> str | None:
+    """Return reservation id when hard limits apply and reservation succeeds."""
+    async with _project_reserve_lock(project_id):
+        async with sessionmaker() as session:
+            async with session.begin():
+                limits = await get_project_limits(session, project_id=project_id)
+                if limits is None or limits.limit_mode != "hard":
+                    return None
+                r = await reserve_gateway_request(
+                    session,
+                    project_id=project_id,
+                    limits=limits,
+                    model=model,
+                    requested_max_tokens=max_tokens,
+                    estimated_prompt_tokens=estimated_prompt_tokens,
+                    now=datetime.now(timezone.utc),
+                )
+                if not r.allowed:
+                    assert r.block is not None
+                    raise _LimitReservedBlocked(r.block)
+                assert r.reservation_id is not None
+                return r.reservation_id
+
+
+async def _reconcile_reservation(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    limit_reservation_id: str | None,
+    actual_tokens: int,
+    actual_cost: float,
+    status: str,
+) -> None:
+    if not limit_reservation_id:
+        return
+    async with sessionmaker() as session:
+        async with session.begin():
+            await reconcile_gateway_request(
+                session,
+                reservation_id=limit_reservation_id,
+                actual_tokens=actual_tokens,
+                actual_cost=actual_cost,
+                status=status,
+            )
 
 
 class GatewayClientError(Exception):
@@ -142,45 +217,44 @@ async def run_chat_completion(
 ) -> GatewayResponse:
     request_id = new_request_id()
 
-    # Hard limits: preflight aggregate check (best-effort under concurrency;
-    # see check_hard_limits docstring and docs/hard-limit-concurrency.md).
-    async with sessionmaker() as session:
-        limits = await get_project_limits(session, project_id=project.id)
-        if limits is not None and limits.limit_mode == "hard":
-            blocked = await check_hard_limits(
-                session,
-                project_id=project.id,
-                limits=limits,
-                now=datetime.now(timezone.utc),
-            )
-            if blocked is not None:
-                async def _log_blocked(log_session: AsyncSession) -> None:
-                    row = await start_request(
-                        log_session,
-                        request_id=request_id,
-                        project_id=project.id,
-                        api_key_id=api_key.id,
-                        requested_model=model,
-                    )
-                    await finish_request_failure(
-                        log_session,
-                        row,
-                        latency_ms=0,
-                        error_code=blocked.error_code,
-                        error_message=blocked.error_message,
-                    )
+    try:
+        limit_reservation_id = await _reserve_hard_limit_or_raise(
+            sessionmaker=sessionmaker,
+            project_id=project.id,
+            model=model,
+            max_tokens=max_tokens,
+            estimated_prompt_tokens=None,
+        )
+    except _LimitReservedBlocked as exc:
+        blocked = exc.block
 
-                await _with_log_session(sessionmaker, _log_blocked)
-                raise GatewayLimitError(
-                    blocked.error_message,
-                    code=blocked.error_code,
-                    request_id=request_id,
-                    limit_type=blocked.limit_type,
-                    current_value=blocked.current_value,
-                    limit_value=blocked.limit_value,
-                    window=blocked.window,
-                    reset_at=blocked.reset_at,
-                )
+        async def _log_blocked(log_session: AsyncSession) -> None:
+            row = await start_request(
+                log_session,
+                request_id=request_id,
+                project_id=project.id,
+                api_key_id=api_key.id,
+                requested_model=model,
+            )
+            await finish_request_failure(
+                log_session,
+                row,
+                latency_ms=0,
+                error_code=blocked.error_code,
+                error_message=blocked.error_message,
+            )
+
+        await _with_log_session(sessionmaker, _log_blocked)
+        raise GatewayLimitError(
+            blocked.error_message,
+            code=blocked.error_code,
+            request_id=request_id,
+            limit_type=blocked.limit_type,
+            current_value=blocked.current_value,
+            limit_value=blocked.limit_value,
+            window=blocked.window,
+            reset_at=blocked.reset_at,
+        ) from None
 
     async def _start(session: AsyncSession) -> None:
         await start_request(
@@ -189,9 +263,20 @@ async def run_chat_completion(
             project_id=project.id,
             api_key_id=api_key.id,
             requested_model=model,
+            limit_reservation_id=limit_reservation_id,
         )
 
-    await _with_log_session(sessionmaker, _start)
+    try:
+        await _with_log_session(sessionmaker, _start)
+    except BaseException:
+        await _reconcile_reservation(
+            sessionmaker,
+            limit_reservation_id=limit_reservation_id,
+            actual_tokens=0,
+            actual_cost=0.0,
+            status="failed",
+        )
+        raise
 
     started = time.monotonic()
     try:
@@ -204,6 +289,14 @@ async def run_chat_completion(
                     temperature=temperature,
                 )
         except TimeoutError as exc:
+            await _record_failure(
+                sessionmaker,
+                request_id=request_id,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code="ProviderUnavailableError",
+                error_message="Upstream request timed out.",
+                limit_reservation_id=limit_reservation_id,
+            )
             raise ProviderUnavailableError(
                 "Upstream request timed out.",
                 provider=getattr(provider, "provider_name", "unknown"),
@@ -215,6 +308,7 @@ async def run_chat_completion(
             latency_ms=int((time.monotonic() - started) * 1000),
             error_code="unknown_model",
             error_message=str(exc),
+            limit_reservation_id=limit_reservation_id,
         )
         raise GatewayClientError(
             str(exc), code="unknown_model", request_id=request_id
@@ -226,6 +320,7 @@ async def run_chat_completion(
             latency_ms=int((time.monotonic() - started) * 1000),
             error_code="all_providers_failed",
             error_message=str(exc),
+            limit_reservation_id=limit_reservation_id,
         )
         raise GatewayUpstreamError(
             str(exc), code="all_providers_failed", request_id=request_id
@@ -238,6 +333,7 @@ async def run_chat_completion(
             latency_ms=int((time.monotonic() - started) * 1000),
             error_code=code,
             error_message=str(exc),
+            limit_reservation_id=limit_reservation_id,
         )
         raise GatewayUpstreamError(
             str(exc), code=code, request_id=request_id
@@ -247,6 +343,7 @@ async def run_chat_completion(
     cost = get_cost(
         result.model, result.usage.input_tokens, result.usage.output_tokens
     )
+    total_tokens = result.usage.input_tokens + result.usage.output_tokens
 
     async def _finish(session: AsyncSession) -> None:
         row = await _load_row(session, request_id=request_id)
@@ -260,14 +357,23 @@ async def run_chat_completion(
             estimated_cost=cost,
             fallback_used=result.fallback_used,
         )
+        if limit_reservation_id:
+            await reconcile_gateway_request(
+                session,
+                reservation_id=limit_reservation_id,
+                actual_tokens=total_tokens,
+                actual_cost=cost,
+                status="completed",
+            )
 
     await _with_log_session(sessionmaker, _finish)
 
     logger.info(
-        "gateway_request_ok request_id=%s project_id=%s provider=%s model=%s "
-        "latency_ms=%d tokens_in=%d tokens_out=%d cost_usd=%.6f fallback=%s",
+        "gateway_request_ok request_id=%s project_id=%s limit_reservation_id=%s "
+        "provider=%s model=%s latency_ms=%d tokens_in=%d tokens_out=%d cost_usd=%.6f fallback=%s",
         request_id,
         project.id,
+        limit_reservation_id or "",
         result.provider,
         result.model,
         latency_ms,
@@ -292,45 +398,44 @@ async def run_chat_completion_stream(
 ) -> GatewayStreamResponse:
     request_id = new_request_id()
 
-    # Hard limits: preflight aggregate check (best-effort under concurrency).
-    async with sessionmaker() as session:
-        limits = await get_project_limits(session, project_id=project.id)
-        if limits is not None and limits.limit_mode == "hard":
-            blocked = await check_hard_limits(
-                session,
+    try:
+        limit_reservation_id = await _reserve_hard_limit_or_raise(
+            sessionmaker=sessionmaker,
+            project_id=project.id,
+            model=model,
+            max_tokens=max_tokens,
+            estimated_prompt_tokens=None,
+        )
+    except _LimitReservedBlocked as exc:
+        blocked = exc.block
+
+        async def _log_blocked(log_session: AsyncSession) -> None:
+            row = await start_request(
+                log_session,
+                request_id=request_id,
                 project_id=project.id,
-                limits=limits,
-                now=datetime.now(timezone.utc),
+                api_key_id=api_key.id,
+                requested_model=model,
             )
-            if blocked is not None:
+            await finish_request_failure(
+                log_session,
+                row,
+                latency_ms=0,
+                error_code=blocked.error_code,
+                error_message=blocked.error_message,
+            )
 
-                async def _log_blocked(log_session: AsyncSession) -> None:
-                    row = await start_request(
-                        log_session,
-                        request_id=request_id,
-                        project_id=project.id,
-                        api_key_id=api_key.id,
-                        requested_model=model,
-                    )
-                    await finish_request_failure(
-                        log_session,
-                        row,
-                        latency_ms=0,
-                        error_code=blocked.error_code,
-                        error_message=blocked.error_message,
-                    )
-
-                await _with_log_session(sessionmaker, _log_blocked)
-                raise GatewayLimitError(
-                    blocked.error_message,
-                    code=blocked.error_code,
-                    request_id=request_id,
-                    limit_type=blocked.limit_type,
-                    current_value=blocked.current_value,
-                    limit_value=blocked.limit_value,
-                    window=blocked.window,
-                    reset_at=blocked.reset_at,
-                )
+        await _with_log_session(sessionmaker, _log_blocked)
+        raise GatewayLimitError(
+            blocked.error_message,
+            code=blocked.error_code,
+            request_id=request_id,
+            limit_type=blocked.limit_type,
+            current_value=blocked.current_value,
+            limit_value=blocked.limit_value,
+            window=blocked.window,
+            reset_at=blocked.reset_at,
+        ) from None
 
     async def _start(session: AsyncSession) -> None:
         await start_request(
@@ -339,9 +444,20 @@ async def run_chat_completion_stream(
             project_id=project.id,
             api_key_id=api_key.id,
             requested_model=model,
+            limit_reservation_id=limit_reservation_id,
         )
 
-    await _with_log_session(sessionmaker, _start)
+    try:
+        await _with_log_session(sessionmaker, _start)
+    except BaseException:
+        await _reconcile_reservation(
+            sessionmaker,
+            limit_reservation_id=limit_reservation_id,
+            actual_tokens=0,
+            actual_cost=0.0,
+            status="failed",
+        )
+        raise
 
     started = time.monotonic()
     upstream_stream = provider.stream_chat(
@@ -367,6 +483,14 @@ async def run_chat_completion_stream(
                 except StopAsyncIteration:
                     break
                 except TimeoutError as exc:
+                    await _record_failure(
+                        sessionmaker,
+                        request_id=request_id,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        error_code="ProviderUnavailableError",
+                        error_message="Upstream stream timed out.",
+                        limit_reservation_id=limit_reservation_id,
+                    )
                     raise ProviderUnavailableError(
                         "Upstream stream timed out.",
                         provider=getattr(provider, "provider_name", "unknown"),
@@ -389,6 +513,12 @@ async def run_chat_completion_stream(
                 if final_usage is not None
                 else None
             )
+            total_tokens = (
+                final_usage.input_tokens + final_usage.output_tokens
+                if final_usage is not None
+                else 0
+            )
+            actual_cost = float(cost or 0.0)
 
             async def _finish(session: AsyncSession) -> None:
                 row = await _load_row(session, request_id=request_id)
@@ -403,6 +533,14 @@ async def run_chat_completion_stream(
                     estimated_cost=cost,
                     fallback_used=seen_fallback_used,
                 )
+                if limit_reservation_id:
+                    await reconcile_gateway_request(
+                        session,
+                        reservation_id=limit_reservation_id,
+                        actual_tokens=total_tokens,
+                        actual_cost=actual_cost,
+                        status="completed",
+                    )
 
             await _with_log_session(sessionmaker, _finish)
         except UnknownModelError as exc:
@@ -412,6 +550,7 @@ async def run_chat_completion_stream(
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code="unknown_model",
                 error_message=str(exc),
+                limit_reservation_id=limit_reservation_id,
             )
             raise GatewayClientError(
                 str(exc), code="unknown_model", request_id=request_id
@@ -423,6 +562,7 @@ async def run_chat_completion_stream(
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code="all_providers_failed",
                 error_message=str(exc),
+                limit_reservation_id=limit_reservation_id,
             )
             raise GatewayUpstreamError(
                 str(exc), code="all_providers_failed", request_id=request_id
@@ -435,6 +575,7 @@ async def run_chat_completion_stream(
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code=code,
                 error_message=str(exc),
+                limit_reservation_id=limit_reservation_id,
             )
             raise GatewayUpstreamError(
                 str(exc), code=code, request_id=request_id
@@ -447,6 +588,7 @@ async def run_chat_completion_stream(
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code=code,
                 error_message="stream failed",
+                limit_reservation_id=limit_reservation_id,
             )
             raise
 
@@ -460,6 +602,7 @@ async def _record_failure(
     latency_ms: int,
     error_code: str,
     error_message: str,
+    limit_reservation_id: str | None = None,
 ) -> None:
     async def _do(session: AsyncSession) -> None:
         row = await _load_row(session, request_id=request_id)
@@ -469,5 +612,13 @@ async def _record_failure(
             error_code=error_code,
             error_message=error_message,
         )
+        if limit_reservation_id:
+            await reconcile_gateway_request(
+                session,
+                reservation_id=limit_reservation_id,
+                actual_tokens=0,
+                actual_cost=0.0,
+                status="failed",
+            )
 
     await _with_log_session(sessionmaker, _do)

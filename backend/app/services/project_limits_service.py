@@ -132,12 +132,13 @@ async def check_hard_limits(
     - Token and cost sums ignore NULLs via COALESCE(SUM(...), 0).
     - Windows use UTC boundaries.
 
-    Concurrency (v0.6):
-    This check reads aggregates only. The gateway commits the new
-    ``gateway_requests`` row in a separate transaction after this returns.
-    Under concurrent bursts, multiple requests can pass this check before any
-    row exists — **best-effort hard limit**, not a strict serial guarantee.
-    See ``docs/hard-limit-concurrency.md``.
+    Gateway **hard** mode (v0.7+) uses :mod:`app.services.project_limit_reservation_service`
+    instead of this function for admission. This helper remains for reporting,
+    tests, and any future soft-mode preflight.
+
+    Historical note (v0.6): aggregate-only preflight was **best-effort** under
+    concurrency; see ``docs/hard-limit-concurrency.md`` and
+    ``docs/strict-limit-reservations.md``.
     """
 
     if limits.limit_mode != "hard":

@@ -22,7 +22,7 @@ from app.llm.errors import (
 )
 from app.llm.gateway_router import GatewayProvider
 from app.llm.openai_adapter import OpenAIProvider
-from app.llm.pricing import get_cost
+from app.llm.pricing import estimate_reservation_cost_usd, get_cost, model_has_explicit_rates
 from app.llm.types import ChatMessage, ChatResult, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,8 @@ __all__ = [
     "ProviderUnavailableError",
     "TokenUsage",
     "UnknownModelError",
+    "estimate_reservation_cost_usd",
     "get_cost",
+    "model_has_explicit_rates",
     "make_provider",
 ]

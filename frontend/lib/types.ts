@@ -46,6 +46,26 @@ export type ProjectLimitsUsage = {
   };
 };
 
+/** Current UTC usage-window counters (v0.7 admission). */
+export type ProjectLimitsReservations = {
+  project_id: string;
+  now: string;
+  daily: {
+    window_start: string;
+    window_end: string;
+    request_count_reserved: number;
+    request_count_completed: number;
+    token_count_reserved: number;
+    token_count_completed: number;
+  } | null;
+  monthly: {
+    window_start: string;
+    window_end: string;
+    cost_reserved: number;
+    cost_completed: number;
+  } | null;
+};
+
 export type ProviderRow = {
   id: string;
   provider: "openai" | "anthropic";

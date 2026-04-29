@@ -24,6 +24,7 @@ import type {
   ApiKeyCreated,
   ApiKeyRow,
   ProjectLimits,
+  ProjectLimitsReservations,
   ProjectLimitsUsage,
   ProjectRow,
 } from "@/lib/types";
@@ -37,8 +38,12 @@ export default function ProjectsPage() {
   const [latestIssuedKey, setLatestIssuedKey] = useState<ApiKeyCreated | null>(null);
   const [limits, setLimits] = useState<ProjectLimits | null>(null);
   const [limitsUsage, setLimitsUsage] = useState<ProjectLimitsUsage | null>(null);
+  const [limitsReservations, setLimitsReservations] = useState<ProjectLimitsReservations | null>(
+    null,
+  );
   const [loadingLimits, setLoadingLimits] = useState(false);
   const [loadingLimitsUsage, setLoadingLimitsUsage] = useState(false);
+  const [loadingLimitsReservations, setLoadingLimitsReservations] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
   const [limitMode, setLimitMode] = useState<ProjectLimits["limit_mode"]>("disabled");
   const [monthlyCostLimit, setMonthlyCostLimit] = useState("");
@@ -123,6 +128,23 @@ export default function ProjectsPage() {
     }
   }
 
+  async function fetchLimitsReservations(projectId: string) {
+    setLoadingLimitsReservations(true);
+    setError(null);
+    try {
+      const res = await adminSessionFetch(
+        `${BACKEND_BASE}/admin/projects/${projectId}/limits/reservations`,
+      );
+      if (!res.ok) {
+        setError("Unable to load reservation counters.");
+        return;
+      }
+      setLimitsReservations((await res.json()) as ProjectLimitsReservations);
+    } finally {
+      setLoadingLimitsReservations(false);
+    }
+  }
+
   useEffect(() => {
     void fetchProjects();
   }, []);
@@ -133,10 +155,12 @@ export default function ProjectsPage() {
       void fetchKeys(selectedProjectId);
       void fetchLimits(selectedProjectId);
       void fetchLimitsUsage(selectedProjectId);
+      void fetchLimitsReservations(selectedProjectId);
     } else {
       setKeys([]);
       setLimits(null);
       setLimitsUsage(null);
+      setLimitsReservations(null);
     }
   }, [selectedProjectId]);
 
@@ -293,6 +317,7 @@ export default function ProjectsPage() {
       setSuccess("Project limits updated.");
       await fetchProjects();
       await fetchLimitsUsage(selectedProjectId);
+      await fetchLimitsReservations(selectedProjectId);
     } finally {
       setSavingLimits(false);
     }
@@ -466,6 +491,42 @@ export default function ProjectsPage() {
                     {formatDate(limitsUsage.daily.reset_at)}. Monthly reset:{" "}
                     {formatDate(limitsUsage.monthly.reset_at)}.
                   </div>
+
+                  {loadingLimitsReservations ? (
+                    <LoadingState label="Loading reservation counters..." />
+                  ) : limitsReservations ? (
+                    <div className="stack" style={{ marginBottom: 12 }}>
+                      <div className="muted">
+                        Admission counters (UTC): reserved slots vs completed for the active
+                        windows. Empty until the first hard-limit gateway call creates rows.
+                      </div>
+                      <KeyValueGrid
+                        items={[
+                          {
+                            label: "Daily requests (reserved / completed)",
+                            value:
+                              limitsReservations.daily == null
+                                ? "—"
+                                : `${_formatNumber(limitsReservations.daily.request_count_reserved)} / ${_formatNumber(limitsReservations.daily.request_count_completed)}`,
+                          },
+                          {
+                            label: "Daily tokens (reserved / completed)",
+                            value:
+                              limitsReservations.daily == null
+                                ? "—"
+                                : `${_formatNumber(limitsReservations.daily.token_count_reserved)} / ${_formatNumber(limitsReservations.daily.token_count_completed)}`,
+                          },
+                          {
+                            label: "Monthly cost (reserved / completed)",
+                            value:
+                              limitsReservations.monthly == null
+                                ? "—"
+                                : `${_formatUsd(limitsReservations.monthly.cost_reserved)} / ${_formatUsd(limitsReservations.monthly.cost_completed)}`,
+                          },
+                        ]}
+                      />
+                    </div>
+                  ) : null}
 
                   <div className="stack">
                     {(() => {

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -90,6 +91,70 @@ class Project(Base):
 
     api_keys: Mapped[list[ProjectApiKey]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectUsageWindow(Base):
+    """Aggregated reserved/completed usage per UTC window for strict limit admission."""
+
+    __tablename__ = "project_usage_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "window_kind",
+            "window_start_utc",
+            name="uq_project_usage_windows_project_kind_start",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    window_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    window_start_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    window_end_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    request_count_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_count_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_reserved: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cost_completed: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ProjectGatewayLimitReservation(Base):
+    """Per-gateway-call reservation snapshot for reconcile after provider completes."""
+
+    __tablename__ = "project_gateway_limit_reservations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    daily_window_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_usage_windows.id"), nullable=False
+    )
+    monthly_window_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("project_usage_windows.id"), nullable=True
+    )
+    request_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tokens_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_reserved: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
 
@@ -183,6 +248,9 @@ class GatewayRequest(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    limit_reservation_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("project_gateway_limit_reservations.id"), nullable=True
     )
 
 

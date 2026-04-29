@@ -79,3 +79,23 @@ def get_cost(model: str, input_tokens: int, output_tokens: int) -> float:
         model, (_FALLBACK_INPUT_PER_1M, _FALLBACK_OUTPUT_PER_1M)
     )
     return (input_tokens * inp_price + output_tokens * out_price) / 1_000_000
+
+
+def model_has_explicit_rates(model: str) -> bool:
+    """True if *model* appears in the loaded pricing table (not only fallback defaults)."""
+    _ensure_loaded()
+    return model in _pricing_cache
+
+
+def estimate_reservation_cost_usd(model: str, reserved_total_tokens: int) -> float | None:
+    """Upper-bound style USD estimate for admission when *reserved_total_tokens* is a budget cap.
+
+    Uses known rates only. Returns ``None`` if the model is not in the pricing table
+    (hard monthly cost limits must then block — see gateway reservation policy).
+    """
+    if reserved_total_tokens <= 0:
+        return 0.0
+    if not model_has_explicit_rates(model):
+        return None
+    # Conservative: price all reserved tokens at output-token rates.
+    return get_cost(model, 0, reserved_total_tokens)

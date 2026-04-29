@@ -15,6 +15,11 @@ describe("shouldProtectPathname", () => {
     expect(shouldProtectPathname("/")).toBe(true);
     expect(shouldProtectPathname("/adaptation")).toBe(true);
     expect(shouldProtectPathname("/adaptation/plans")).toBe(true);
+    expect(shouldProtectPathname("/adaptation/plans/abc123")).toBe(true);
+    expect(shouldProtectPathname("/adaptation/runs")).toBe(true);
+    expect(shouldProtectPathname("/adaptation/runs/run-1")).toBe(true);
+    expect(shouldProtectPathname("/adaptation/profiles")).toBe(true);
+    expect(shouldProtectPathname("/adaptation/profiles/prof-9")).toBe(true);
     expect(shouldProtectPathname("/requests")).toBe(true);
     expect(shouldProtectPathname("/loginfo")).toBe(true);
   });

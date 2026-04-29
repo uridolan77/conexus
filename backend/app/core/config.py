@@ -68,9 +68,12 @@ class Settings(BaseSettings):
     admin_login_window_seconds: int = Field(
         default=600, alias="ADMIN_LOGIN_WINDOW_SECONDS", ge=30
     )
-    # Process-local only today. Future: ``redis`` for distributed limiting (not implemented).
+    # Only ``in_memory`` is implemented; values other than ``in_memory`` are rejected at
+    # validation time. Redis/distributed limiting is not wired yet.
     admin_login_rate_limit_backend: str = Field(
-        default="in_memory", alias="ADMIN_LOGIN_RATE_LIMIT_BACKEND"
+        default="in_memory",
+        alias="ADMIN_LOGIN_RATE_LIMIT_BACKEND",
+        description='Login rate limit store: only "in_memory" is supported today.',
     )
 
     model_aliases_path: str = Field(

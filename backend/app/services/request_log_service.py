@@ -33,6 +33,7 @@ async def start_request(
     project_id: str | None,
     api_key_id: str | None,
     requested_model: str,
+    limit_reservation_id: str | None = None,
 ) -> GatewayRequest:
     row = GatewayRequest(
         request_id=request_id,
@@ -40,6 +41,7 @@ async def start_request(
         api_key_id=api_key_id,
         requested_model=requested_model,
         status="started",
+        limit_reservation_id=limit_reservation_id,
     )
     session.add(row)
     await session.flush()

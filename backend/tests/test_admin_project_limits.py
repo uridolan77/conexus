@@ -152,3 +152,19 @@ async def test_get_limits_usage_returns_daily_and_monthly_windows(
     assert body["monthly"]["estimated_cost"] == 0.0
     assert body["monthly"]["currency"] == "USD"
 
+
+@pytest.mark.asyncio
+async def test_get_limits_reservations_null_when_no_usage_windows(
+    client: AsyncClient,
+) -> None:
+    await _login(client)
+    created = await client.post("/admin/projects", json={"name": "p"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/admin/projects/{project_id}/limits/reservations")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == project_id
+    assert body["daily"] is None
+    assert body["monthly"] is None
+
