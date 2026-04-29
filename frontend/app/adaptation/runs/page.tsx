@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   EmptyState,
-  ErrorState,
   Field,
   FormRow,
   Input,
@@ -16,8 +15,9 @@ import {
   SectionHeader,
   Table,
 } from "@/components/ui";
+import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { formatDate } from "@/lib/api";
-import { adaptationApi, formatAdaptationError } from "@/lib/adaptationApi";
+import { adaptationApi, type AdaptationResult, type AdaptationRunListItem } from "@/lib/adaptationApi";
 
 type Filters = {
   domainKey: string;
@@ -48,30 +48,22 @@ function buildParams(filters: Filters) {
   return params;
 }
 
-function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && "items" in value && Array.isArray((value as any).items)) {
-    return (value as any).items as any[];
-  }
-  return [];
-}
-
 export default function AdaptationRunsPage() {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<AdaptationRunListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
 
   async function load(next: Filters) {
     setLoading(true);
-    setError(null);
+    setLastError(null);
     const params = buildParams(next);
     const res = await adaptationApi.listRuns(params);
     if (!res.ok) {
       setItems([]);
-      setError(formatAdaptationError(res));
+      setLastError(res);
     } else {
-      setItems(asArray(res.data));
+      setItems(res.data);
       const query = params.toString();
       window.history.replaceState(null, "", query ? `/adaptation/runs?${query}` : "/adaptation/runs");
     }
@@ -102,7 +94,7 @@ export default function AdaptationRunsPage() {
         description="Inspect adaptation runs, manifests, and produced adapter profiles."
       />
 
-      {error && <ErrorState message={error} />}
+      {lastError && <AdaptationErrorBanner result={lastError} />}
 
       <Card>
         <SectionHeader title="Filters" description="Filters are passed through to the adaptation service." />
@@ -172,28 +164,36 @@ export default function AdaptationRunsPage() {
             </thead>
             <tbody>
               {items.map((run) => {
-                const id = run?.runId ?? run?.id ?? run?.run_id;
-                const statusValue = run?.status ?? "—";
+                const id = run.runId ?? run.id ?? "";
+                const statusValue = run.status ?? "—";
                 const lower = typeof statusValue === "string" ? statusValue.toLowerCase() : "";
                 const tone =
                   lower === "failed" ? "danger" : lower === "completed" ? "success" : lower === "running" ? "info" : "neutral";
-                const planId = run?.planId ?? run?.plan_id ?? "—";
-                const recipeKey = run?.recipeKey ?? run?.recipe_key ?? "—";
-                const domainKey = run?.domainKey ?? run?.domain_key ?? "—";
-                const stepCount = run?.stepCount ?? run?.step_count ?? "—";
+                const planId = run.planId ?? "—";
+                const recipeKey = run.recipeKey ?? "—";
+                const domainKey = run.domainKey ?? "—";
+                const stepCount = run.stepCount;
                 return (
-                  <tr key={id ?? JSON.stringify(run)} className={lower === "failed" ? "row-warning" : undefined}>
-                    <td>{formatDate(run?.createdAt ?? run?.created_at)}</td>
-                    <td><code className="wrap-anywhere">{domainKey}</code></td>
-                    <td><code className="wrap-anywhere">{planId}</code></td>
-                    <td><code className="wrap-anywhere">{recipeKey}</code></td>
-                    <td><Badge tone={tone as any}>{statusValue}</Badge></td>
-                    <td>{typeof stepCount === "number" ? stepCount.toLocaleString() : stepCount}</td>
-                    <td>{formatDate(run?.startedAt ?? run?.started_at)}</td>
-                    <td>{formatDate(run?.completedAt ?? run?.completed_at)}</td>
-                    <td>{formatDate(run?.failedAt ?? run?.failed_at)}</td>
+                  <tr key={id || JSON.stringify(run)} className={lower === "failed" ? "row-warning" : undefined}>
+                    <td>{formatDate(run.createdAt)}</td>
                     <td>
-                      {typeof id === "string" && id ? (
+                      <code className="wrap-anywhere">{domainKey}</code>
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{planId}</code>
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{recipeKey}</code>
+                    </td>
+                    <td>
+                      <Badge tone={tone}>{statusValue}</Badge>
+                    </td>
+                    <td>{typeof stepCount === "number" ? stepCount.toLocaleString() : "—"}</td>
+                    <td>{formatDate(run.startedAt)}</td>
+                    <td>{formatDate(run.completedAt)}</td>
+                    <td>{formatDate(run.failedAt)}</td>
+                    <td>
+                      {id ? (
                         <div className="inline-actions">
                           <Link className="button button-secondary" href={`/adaptation/runs/${encodeURIComponent(id)}`}>
                             View
@@ -216,4 +216,3 @@ export default function AdaptationRunsPage() {
     </>
   );
 }
-

@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   EmptyState,
-  ErrorState,
   Field,
   FormRow,
   Input,
@@ -17,8 +16,10 @@ import {
   Select,
   Table,
 } from "@/components/ui";
+import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
+import { ScoreBadge } from "@/components/adaptation/ScoreBadge";
 import { formatDate } from "@/lib/api";
-import { adaptationApi, formatAdaptationError } from "@/lib/adaptationApi";
+import { adaptationApi, type AdapterProfileListItem, type AdaptationResult } from "@/lib/adaptationApi";
 
 type Filters = {
   domainKey: string;
@@ -58,30 +59,28 @@ function buildParams(filters: Filters) {
   return params;
 }
 
-function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && "items" in value && Array.isArray((value as any).items)) {
-    return (value as any).items as any[];
-  }
-  return [];
+function blockingFailedGate(profile: AdapterProfileListItem): boolean {
+  const gates = profile.gateResults;
+  if (!gates?.length) return false;
+  return gates.some((g) => g.blocking === true && g.passed === false);
 }
 
 export default function AdapterProfilesPage() {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<AdapterProfileListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
 
   async function load(next: Filters) {
     setLoading(true);
-    setError(null);
+    setLastError(null);
     const params = buildParams(next);
     const res = await adaptationApi.listProfiles(params);
     if (!res.ok) {
       setItems([]);
-      setError(formatAdaptationError(res));
+      setLastError(res);
     } else {
-      setItems(asArray(res.data));
+      setItems(res.data);
       const query = params.toString();
       window.history.replaceState(null, "", query ? `/adaptation/profiles?${query}` : "/adaptation/profiles");
     }
@@ -112,7 +111,7 @@ export default function AdapterProfilesPage() {
         description="Review adapter profiles produced by adaptation runs, including composite score and gate outcomes."
       />
 
-      {error && <ErrorState message={error} />}
+      {lastError && <AdaptationErrorBanner result={lastError} />}
 
       <Card>
         <SectionHeader title="Filters" description="Filters are passed through to the adaptation service." />
@@ -194,36 +193,50 @@ export default function AdapterProfilesPage() {
             </thead>
             <tbody>
               {items.map((profile) => {
-                const id = profile?.profileId ?? profile?.id ?? profile?.profile_id;
-                const domainKey = profile?.domainKey ?? profile?.domain_key ?? "—";
-                const statusValue = profile?.status ?? "—";
+                const id = profile.profileId ?? profile.id ?? "";
+                const domainKey = profile.domainKey ?? "—";
+                const statusValue = profile.status ?? "—";
                 const statusLower = typeof statusValue === "string" ? statusValue.toLowerCase() : "";
-                const approved = profile?.approvedForRuntime ?? profile?.approved_for_runtime ?? false;
-                const composite = profile?.compositeScore ?? profile?.composite_score ?? "—";
-                const tone = approved ? "success" : statusLower === "rejected" ? "danger" : "neutral";
+                const approved = profile.approvedForRuntime ?? false;
+                const composite = profile.compositeScore;
+                const gateIssue = blockingFailedGate(profile);
                 return (
-                  <tr key={id ?? JSON.stringify(profile)}>
-                    <td>{formatDate(profile?.createdAt ?? profile?.created_at)}</td>
-                    <td><code className="wrap-anywhere">{domainKey}</code></td>
-                    <td><Badge tone={statusLower === "rejected" ? "danger" : "neutral"}>{statusValue}</Badge></td>
-                    <td>{approved ? <Badge tone="success">true</Badge> : "—"}</td>
-                    <td>{typeof composite === "number" ? composite.toFixed(4) : composite}</td>
-                    <td><code className="wrap-anywhere">{profile?.modelProfile ?? profile?.model_profile ?? "—"}</code></td>
-                    <td><code className="wrap-anywhere">{profile?.promptProfile ?? profile?.prompt_profile ?? "—"}</code></td>
-                    <td><code className="wrap-anywhere">{profile?.retrievalProfile ?? profile?.retrieval_profile ?? "—"}</code></td>
-                    <td><code className="wrap-anywhere">{profile?.safetyProfile ?? profile?.safety_profile ?? "—"}</code></td>
+                  <tr key={id || JSON.stringify(profile)} className={gateIssue ? "row-warning" : undefined}>
+                    <td>{formatDate(profile.createdAt)}</td>
                     <td>
-                      {typeof id === "string" && id ? (
+                      <code className="wrap-anywhere">{domainKey}</code>
+                    </td>
+                    <td>
+                      <Badge tone={statusLower === "rejected" ? "danger" : "neutral"}>{statusValue}</Badge>
+                    </td>
+                    <td>{approved ? <Badge tone="success">true</Badge> : "—"}</td>
+                    <td>
+                      <ScoreBadge score={composite ?? null} />
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{profile.modelProfile ?? "—"}</code>
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{profile.promptProfile ?? "—"}</code>
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{profile.retrievalProfile ?? "—"}</code>
+                    </td>
+                    <td>
+                      <code className="wrap-anywhere">{profile.safetyProfile ?? "—"}</code>
+                    </td>
+                    <td>
+                      {id ? (
                         <div className="inline-actions">
                           <Link className="button button-secondary" href={`/adaptation/profiles/${encodeURIComponent(id)}`}>
                             View
                           </Link>
-                          {profile?.runId && (
+                          {profile.runId && (
                             <Link className="button button-ghost" href={`/adaptation/runs/${encodeURIComponent(profile.runId)}`}>
                               Run
                             </Link>
                           )}
-                          {profile?.planId && (
+                          {profile.planId && (
                             <Link className="button button-ghost" href={`/adaptation/plans/${encodeURIComponent(profile.planId)}`}>
                               Plan
                             </Link>
@@ -243,4 +256,3 @@ export default function AdapterProfilesPage() {
     </>
   );
 }
-

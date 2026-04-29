@@ -6,7 +6,6 @@ import {
   Badge,
   Card,
   EmptyState,
-  ErrorState,
   JsonBlock,
   KeyValueGrid,
   LinkButton,
@@ -15,44 +14,51 @@ import {
   SectionHeader,
   Table,
 } from "@/components/ui";
+import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
+import { CopyableId } from "@/components/adaptation/CopyableId";
 import { formatDate } from "@/lib/api";
-import { adaptationApi, formatAdaptationError } from "@/lib/adaptationApi";
-
-function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && "items" in value && Array.isArray((value as any).items)) {
-    return (value as any).items as any[];
-  }
-  return [];
-}
+import {
+  adaptationApi,
+  type AdaptationResult,
+  type AdaptationRun,
+  type AdaptationRunManifest,
+  type AdapterProfile,
+} from "@/lib/adaptationApi";
 
 export default function AdaptationRunDetailPage({ params }: { params: { id: string } }) {
   const runId = params.id;
-  const [run, setRun] = useState<any | null>(null);
-  const [manifest, setManifest] = useState<any | null>(null);
-  const [profile, setProfile] = useState<any | null>(null);
+  const [run, setRun] = useState<AdaptationRun | null>(null);
+  const [manifest, setManifest] = useState<AdaptationRunManifest | null>(null);
+  const [profile, setProfile] = useState<AdapterProfile | null>(null);
+  const [profileUnavailable, setProfileUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
+    setLastError(null);
+    setProfileUnavailable(false);
     const [runRes, manifestRes, profileRes] = await Promise.all([
       adaptationApi.getRun(runId),
       adaptationApi.getRunManifest(runId),
       adaptationApi.getAdapterProfileByRunId(runId),
     ]);
     if (!runRes.ok) {
-      setError(formatAdaptationError(runRes));
+      setLastError(runRes);
       setRun(null);
       setManifest(null);
       setProfile(null);
       setLoading(false);
       return;
     }
-    setRun(runRes.data as any);
-    setManifest(manifestRes.ok ? (manifestRes.data as any) : null);
-    setProfile(profileRes.ok ? (profileRes.data as any) : null);
+    setRun(runRes.data);
+    setManifest(manifestRes.ok ? manifestRes.data : null);
+    if (profileRes.ok) {
+      setProfile(profileRes.data);
+    } else {
+      setProfile(null);
+      setProfileUnavailable(profileRes.status === 404);
+    }
     setLoading(false);
   }
 
@@ -64,18 +70,9 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
   const statusLower = typeof statusValue === "string" ? statusValue.toLowerCase() : "";
   const statusTone = statusLower === "failed" ? "danger" : statusLower === "completed" ? "success" : statusLower === "running" ? "info" : "neutral";
 
-  const steps = useMemo(() => {
-    const candidates =
-      run?.steps ??
-      run?.stepTimeline ??
-      run?.step_timeline ??
-      run?.stepResults ??
-      run?.step_results ??
-      [];
-    return asArray(candidates);
-  }, [run]);
+  const steps = useMemo(() => run?.steps ?? [], [run]);
 
-  const profileId = profile?.profileId ?? profile?.id ?? profile?.profile_id ?? null;
+  const profileId = profile?.profileId ?? profile?.id ?? null;
 
   return (
     <>
@@ -91,7 +88,7 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
         }
       />
 
-      {error && <ErrorState message={error} />}
+      {lastError && <AdaptationErrorBanner result={lastError} />}
 
       {loading ? (
         <Card>
@@ -107,16 +104,16 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
             <SectionHeader title="Run Summary" />
             <KeyValueGrid
               items={[
-                { label: "runId", value: <code className="wrap-anywhere">{runId}</code> },
-                { label: "planId", value: <code className="wrap-anywhere">{run?.planId ?? run?.plan_id ?? "—"}</code> },
-                { label: "domainKey", value: <code className="wrap-anywhere">{run?.domainKey ?? run?.domain_key ?? "—"}</code> },
-                { label: "recipeKey", value: <code className="wrap-anywhere">{run?.recipeKey ?? run?.recipe_key ?? "—"}</code> },
-                { label: "recipeVersion", value: run?.recipeVersion ?? run?.recipe_version ?? "—" },
-                { label: "status", value: <Badge tone={statusTone as any}>{statusValue}</Badge> },
-                { label: "createdAt", value: formatDate(run?.createdAt ?? run?.created_at) },
-                { label: "startedAt", value: formatDate(run?.startedAt ?? run?.started_at) },
-                { label: "completedAt", value: formatDate(run?.completedAt ?? run?.completed_at) },
-                { label: "failedAt", value: formatDate(run?.failedAt ?? run?.failed_at) },
+                { label: "runId", value: <CopyableId value={runId} /> },
+                { label: "planId", value: <CopyableId value={run.planId ?? ""} /> },
+                { label: "domainKey", value: <code className="wrap-anywhere">{run.domainKey ?? "—"}</code> },
+                { label: "recipeKey", value: <code className="wrap-anywhere">{run.recipeKey ?? "—"}</code> },
+                { label: "recipeVersion", value: run.recipeVersion ?? "—" },
+                { label: "status", value: <Badge tone={statusTone}>{statusValue}</Badge> },
+                { label: "createdAt", value: formatDate(run.createdAt) },
+                { label: "startedAt", value: formatDate(run.startedAt) },
+                { label: "completedAt", value: formatDate(run.completedAt) },
+                { label: "failedAt", value: formatDate(run.failedAt) },
               ]}
             />
           </Card>
@@ -139,21 +136,36 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
                   </tr>
                 </thead>
                 <tbody>
-                  {steps.map((step) => {
-                    const key = step?.stepKey ?? step?.key ?? step?.step_key ?? "—";
-                    const executor = step?.executorKey ?? step?.executor_key ?? step?.executor ?? "—";
-                    const st = step?.status ?? "—";
+                  {steps.map((step, idx) => {
+                    const key = step.stepKey ?? "—";
+                    const executor = step.executorKey ?? "—";
+                    const st = step.status ?? "—";
                     const stLower = typeof st === "string" ? st.toLowerCase() : "";
-                    const tone = stLower === "failed" ? "danger" : stLower === "completed" || stLower === "passed" ? "success" : stLower === "running" ? "info" : "neutral";
+                    const tone =
+                      stLower === "failed"
+                        ? "danger"
+                        : stLower === "completed" || stLower === "passed"
+                          ? "success"
+                          : stLower === "running"
+                            ? "info"
+                            : "neutral";
                     return (
-                      <tr key={`${key}-${executor}-${JSON.stringify(step).slice(0, 20)}`}>
-                        <td><code className="wrap-anywhere">{key}</code></td>
-                        <td><code className="wrap-anywhere">{executor}</code></td>
-                        <td><Badge tone={tone as any}>{st}</Badge></td>
-                        <td>{formatDate(step?.startedAt ?? step?.started_at)}</td>
-                        <td>{formatDate(step?.completedAt ?? step?.completed_at)}</td>
-                        <td><code className="wrap-anywhere">{step?.errorCode ?? step?.error_code ?? "—"}</code></td>
-                        <td className="truncate">{step?.errorMessage ?? step?.error_message ?? "—"}</td>
+                      <tr key={`${key}-${executor}-${idx}`}>
+                        <td>
+                          <code className="wrap-anywhere">{key}</code>
+                        </td>
+                        <td>
+                          <code className="wrap-anywhere">{executor}</code>
+                        </td>
+                        <td>
+                          <Badge tone={tone}>{st}</Badge>
+                        </td>
+                        <td>{formatDate(step.startedAt)}</td>
+                        <td>{formatDate(step.completedAt)}</td>
+                        <td>
+                          <code className="wrap-anywhere">{step.errorCode ?? "—"}</code>
+                        </td>
+                        <td className="truncate">{step.errorMessage ?? "—"}</td>
                       </tr>
                     );
                   })}
@@ -168,10 +180,16 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
               <>
                 <KeyValueGrid
                   items={[
-                    { label: "runnerVersion", value: manifest?.runnerVersion ?? manifest?.runner_version ?? "—" },
-                    { label: "plannerVersion", value: manifest?.plannerVersion ?? manifest?.planner_version ?? "—" },
-                    { label: "corpusSnapshotId", value: <code className="wrap-anywhere">{manifest?.corpusSnapshotId ?? manifest?.corpus_snapshot_id ?? "—"}</code> },
-                    { label: "indexManifestId", value: <code className="wrap-anywhere">{manifest?.indexManifestId ?? manifest?.index_manifest_id ?? "—"}</code> },
+                    { label: "runnerVersion", value: manifest.runnerVersion ?? "—" },
+                    { label: "plannerVersion", value: manifest.plannerVersion ?? "—" },
+                    {
+                      label: "corpusSnapshotId",
+                      value: <code className="wrap-anywhere">{manifest.corpusSnapshotId ?? "—"}</code>,
+                    },
+                    {
+                      label: "indexManifestId",
+                      value: <code className="wrap-anywhere">{manifest.indexManifestId ?? "—"}</code>,
+                    },
                   ]}
                 />
                 <JsonBlock value={manifest} title="Manifest JSON" defaultOpen={false} />
@@ -185,11 +203,13 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
             <SectionHeader title="Adapter Profile" description="A completed run may produce an adapter profile." />
             {profileId ? (
               <div className="inline-actions">
-                <code className="wrap-anywhere">{profileId}</code>
+                <CopyableId value={profileId} />
                 <Link className="button button-secondary" href={`/adaptation/profiles/${encodeURIComponent(profileId)}`}>
                   View profile
                 </Link>
               </div>
+            ) : profileUnavailable ? (
+              <EmptyState title="No profile produced yet">The adapter-profile endpoint returned 404; the run may still be in progress.</EmptyState>
             ) : (
               <EmptyState title="No profile produced">This run did not return an adapter profile.</EmptyState>
             )}
@@ -205,4 +225,3 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
     </>
   );
 }
-

@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   EmptyState,
-  ErrorState,
   Field,
   FormRow,
   Input,
@@ -18,27 +17,9 @@ import {
   Select,
   Table,
 } from "@/components/ui";
+import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { formatDate } from "@/lib/api";
-import { adaptationApi, formatAdaptationError } from "@/lib/adaptationApi";
-
-type PlanRow = {
-  id?: string;
-  planId?: string;
-  createdAt?: string;
-  created_at?: string;
-  domainKey?: string;
-  taskDescription?: string;
-  task_description?: string;
-  recommendedStrategy?: string;
-  recommended_strategy?: string;
-  recipeKey?: string;
-  recipe_key?: string;
-  status?: string;
-  requiresHumanApproval?: boolean;
-  requires_human_approval?: boolean;
-  createdByUserId?: string;
-  created_by_user_id?: string;
-};
+import { adaptationApi, type AdaptationPlanListItem, type AdaptationResult } from "@/lib/adaptationApi";
 
 type Filters = {
   domainKey: string;
@@ -74,47 +55,39 @@ function buildParams(filters: Filters) {
   return params;
 }
 
-function asArray(value: unknown): PlanRow[] {
-  if (Array.isArray(value)) return value as PlanRow[];
-  if (value && typeof value === "object" && "items" in value && Array.isArray((value as any).items)) {
-    return (value as any).items as PlanRow[];
-  }
-  return [];
-}
-
-function planIdOf(plan: PlanRow) {
+function planIdOf(plan: AdaptationPlanListItem) {
   return plan.id ?? plan.planId ?? "";
 }
 
-function planStatusOf(plan: PlanRow) {
+function planStatusOf(plan: AdaptationPlanListItem) {
   return plan.status ?? "—";
 }
 
-function createdAtOf(plan: PlanRow) {
-  return plan.createdAt ?? plan.created_at ?? null;
+function createdAtOf(plan: AdaptationPlanListItem) {
+  return plan.createdAt ?? null;
 }
 
-function requiresHumanApprovalOf(plan: PlanRow) {
-  return plan.requiresHumanApproval ?? plan.requires_human_approval ?? false;
+function requiresHumanApprovalOf(plan: AdaptationPlanListItem) {
+  return plan.requiresHumanApproval ?? false;
 }
 
 export default function AdaptationPlansPage() {
   const [filters, setFilters] = useState<Filters>(defaultFilters);
-  const [items, setItems] = useState<PlanRow[]>([]);
+  const [items, setItems] = useState<AdaptationPlanListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
 
   async function load(next: Filters) {
     setLoading(true);
-    setError(null);
+    setLastError(null);
     const params = buildParams(next);
     const res = await adaptationApi.listPlans(params);
     if (!res.ok) {
       setItems([]);
-      setError(formatAdaptationError(res));
+      setLastError(res);
     } else {
-      setItems(asArray(res.data));
+      setItems(res.data);
       const query = params.toString();
       window.history.replaceState(null, "", query ? `/adaptation/plans?${query}` : "/adaptation/plans");
     }
@@ -139,24 +112,23 @@ export default function AdaptationPlansPage() {
 
   async function approve(planId: string) {
     setActionBusyId(planId);
-    setError(null);
+    setLastError(null);
     const res = await adaptationApi.approvePlan(planId);
-    if (!res.ok) setError(formatAdaptationError(res));
+    if (!res.ok) setLastError(res);
     await load(filters);
     setActionBusyId(null);
   }
 
   async function startRun(planId: string) {
     setActionBusyId(planId);
-    setError(null);
+    setLastError(null);
     const res = await adaptationApi.startRun(planId);
     if (!res.ok) {
-      setError(formatAdaptationError(res));
+      setLastError(res);
       setActionBusyId(null);
       return;
     }
-    const body = res.data as any;
-    const runId = body?.runId ?? body?.id ?? body?.run_id;
+    const runId = res.data.runId;
     if (typeof runId === "string" && runId) {
       window.location.href = `/adaptation/runs/${encodeURIComponent(runId)}`;
       return;
@@ -179,7 +151,7 @@ export default function AdaptationPlansPage() {
         description="Browse adaptation plans, approve drafts, and start runs. This console is read-only except for approve/run actions."
       />
 
-      {error && <ErrorState message={error} />}
+      {lastError && <AdaptationErrorBanner result={lastError} />}
 
       <div className="grid grid-3">
         <Card className="card-muted">
@@ -269,11 +241,11 @@ export default function AdaptationPlansPage() {
                 const id = planIdOf(plan);
                 const statusValue = planStatusOf(plan);
                 const busy = actionBusyId === id;
-                const createdBy = plan.createdByUserId ?? plan.created_by_user_id ?? "—";
-                const task = plan.taskDescription ?? plan.task_description ?? "—";
+                const createdBy = plan.createdByUserId ?? "—";
+                const task = plan.taskDescription ?? "—";
                 const domainKey = plan.domainKey ?? "—";
-                const strategy = plan.recommendedStrategy ?? plan.recommended_strategy ?? "—";
-                const recipe = plan.recipeKey ?? plan.recipe_key ?? "—";
+                const strategy = plan.recommendedStrategy ?? "—";
+                const recipe = plan.recipeKey ?? "—";
                 const requiresApproval = requiresHumanApprovalOf(plan);
                 return (
                   <tr key={id || JSON.stringify(plan)}>
@@ -328,4 +300,3 @@ export default function AdaptationPlansPage() {
     </>
   );
 }
-
