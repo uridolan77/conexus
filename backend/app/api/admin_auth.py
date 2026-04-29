@@ -15,11 +15,13 @@ from app.services.admin_login_rate_limiter import get_admin_login_rate_limiter
 from app.services.admin_auth_service import (
     ADMIN_SESSION_COOKIE,
     AdminSession,
+    InvalidAdminUsernameError,
     any_admin_users_exist,
     authenticate_admin_user,
     issue_admin_session_token,
     require_admin_session,
     validate_admin_credentials,
+    validate_admin_username_format,
 )
 from app.services.audit_service import log_admin_action
 
@@ -132,6 +134,14 @@ async def login(
     username = body.username.strip()
     password = body.password
     client_ip = request.client.host if request.client else None
+
+    try:
+        validate_admin_username_format(username)
+    except InvalidAdminUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     limiter = get_admin_login_rate_limiter(
         max_failures=settings.admin_login_max_failures,

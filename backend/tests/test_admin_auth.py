@@ -149,3 +149,26 @@ async def test_rate_limited_login_with_correct_password_returns_429_and_no_cooki
         )
         assert rows
         assert "rate_limited" in (rows[0].metadata_json or "")
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_username_with_pipe(client: AsyncClient) -> None:
+    res = await client.post(
+        "/admin/auth/login",
+        json={"username": "bad|name", "password": "whatever"},
+    )
+    assert res.status_code == 400
+    assert "pipe" in res.json()["detail"].lower() or "|" in res.json()["detail"]
+
+
+def test_validate_admin_username_format_accepts_normal() -> None:
+    from app.services.admin_auth_service import validate_admin_username_format
+
+    validate_admin_username_format("root")
+
+
+def test_validate_admin_username_format_rejects_pipe() -> None:
+    from app.services.admin_auth_service import InvalidAdminUsernameError, validate_admin_username_format
+
+    with pytest.raises(InvalidAdminUsernameError, match=r"\|"):
+        validate_admin_username_format("a|b")

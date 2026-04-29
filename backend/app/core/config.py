@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     admin_login_window_seconds: int = Field(
         default=600, alias="ADMIN_LOGIN_WINDOW_SECONDS", ge=30
     )
+    # Process-local only today. Future: ``redis`` for distributed limiting (not implemented).
+    admin_login_rate_limit_backend: str = Field(
+        default="in_memory", alias="ADMIN_LOGIN_RATE_LIMIT_BACKEND"
+    )
 
     model_aliases_path: str = Field(
         default_factory=lambda: str(
@@ -75,6 +79,33 @@ class Settings(BaseSettings):
         ),
         alias="MODEL_ALIASES_PATH",
     )
+
+    @field_validator("admin_login_rate_limit_backend", mode="before")
+    @classmethod
+    def _normalize_admin_login_rate_limit_backend(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("ADMIN_LOGIN_RATE_LIMIT_BACKEND must be a string")
+        return value.strip().lower()
+
+    @field_validator("admin_username")
+    @classmethod
+    def _validate_admin_username_no_pipe(cls, value: str) -> str:
+        if "|" in value:
+            raise ValueError(
+                "ADMIN_USERNAME must not contain '|' (reserved for admin session token encoding)"
+            )
+        return value
+
+    @field_validator("admin_login_rate_limit_backend")
+    @classmethod
+    def _validate_admin_login_rate_limit_backend(cls, value: str) -> str:
+        allowed = {"in_memory"}  # extend with ``redis`` when implemented
+        if value not in allowed:
+            raise ValueError(
+                'ADMIN_LOGIN_RATE_LIMIT_BACKEND must be "in_memory" '
+                "(distributed backends are not wired yet)"
+            )
+        return value
 
     @field_validator("cookie_samesite", mode="before")
     @classmethod

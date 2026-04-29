@@ -27,6 +27,9 @@ from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
 from app.llm.dependencies import shutdown_provider
+from app.services.admin_login_rate_limiter import (
+    should_warn_admin_login_rate_limiter_in_memory_prod,
+)
 from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
 from app.llm.model_alias_config import ModelAliasConfigError, load_model_alias_config
 
@@ -67,6 +70,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         else:
             logger.warning(
                 "prod_startup_schema_notice create_all_enabled=false run_alembic_upgrade_head=true"
+            )
+        if should_warn_admin_login_rate_limiter_in_memory_prod(
+            app_env=settings.app_env,
+            admin_login_rate_limit_backend=settings.admin_login_rate_limit_backend,
+        ):
+            logger.warning(
+                "admin_login_rate_limiter_in_memory_prod_warning "
+                "admin login rate limiting is process-local and not shared across "
+                "workers or replicas; use a distributed limiter before multi-replica production"
             )
 
     # Validate static model-alias routing config early so config issues fail fast.

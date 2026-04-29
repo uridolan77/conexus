@@ -131,6 +131,13 @@ async def check_hard_limits(
     - Daily request limit counts *all* gateway_requests rows (including failed).
     - Token and cost sums ignore NULLs via COALESCE(SUM(...), 0).
     - Windows use UTC boundaries.
+
+    Concurrency (v0.6):
+    This check reads aggregates only. The gateway commits the new
+    ``gateway_requests`` row in a separate transaction after this returns.
+    Under concurrent bursts, multiple requests can pass this check before any
+    row exists — **best-effort hard limit**, not a strict serial guarantee.
+    See ``docs/hard-limit-concurrency.md``.
     """
 
     if limits.limit_mode != "hard":

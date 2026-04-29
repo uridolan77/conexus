@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import asyncio
 import uuid
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -941,6 +942,76 @@ async def test_hard_daily_request_limit_blocks_streaming_before_provider_call(
 
     assert response.status_code == 429
     assert stub.stream_calls == []
+
+
+class _DelayedStubProvider(_StubProvider):
+    """Widen the race window so preflight runs for many requests before any log row commits."""
+
+    def __init__(self, *, delay_s: float = 0.08, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._delay_s = delay_s
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> ChatResult:
+        await asyncio.sleep(self._delay_s)
+        return await super().chat(
+            messages, model=model, max_tokens=max_tokens, temperature=temperature
+        )
+
+
+@pytest.mark.asyncio
+async def test_hard_daily_request_limit_preflight_is_best_effort_under_concurrency(
+    client, seeded, db_sessionmaker
+) -> None:
+    """Documents race: preflight counts committed rows only.
+
+    With daily_request_limit=1 and zero prior rows, concurrent requests each
+    see count 0 and may all proceed. Not a strict cap until reservation/locking.
+    See docs/hard-limit-concurrency.md.
+    """
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=1,
+    )
+    stub = _DelayedStubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    n = 5
+    try:
+
+        async def one() -> int:
+            r = await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {plaintext}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            return r.status_code
+
+        codes = await asyncio.gather(*[one() for _ in range(n)])
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    oks = sum(1 for c in codes if c == 200)
+    assert oks >= 2, "expected concurrent burst to exceed strict daily_request_limit=1"
+    assert len(stub.calls) == oks
 
 
 @pytest.mark.asyncio

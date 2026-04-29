@@ -80,3 +80,13 @@ def reset_admin_login_rate_limiter_for_tests() -> None:
     global _rate_limiter, _limiter_config
     _rate_limiter = None
     _limiter_config = None
+
+
+def should_warn_admin_login_rate_limiter_in_memory_prod(
+    *, app_env: str, admin_login_rate_limit_backend: str
+) -> bool:
+    """True when production runs the process-local limiter (not shared across workers/replicas)."""
+    return (
+        app_env.strip().lower() == "prod"
+        and admin_login_rate_limit_backend.strip().lower() == "in_memory"
+    )

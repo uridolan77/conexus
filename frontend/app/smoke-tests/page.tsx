@@ -93,7 +93,6 @@ export default function SmokeTestsPage() {
     setRunningStep("session");
     setSession(null);
     const result = await runStep(`${BACKEND_BASE}/admin/auth/session`, {
-      credentials: "include",
       cache: "no-store",
     });
     setSession(result);
@@ -104,7 +103,6 @@ export default function SmokeTestsPage() {
     setRunningStep("projects");
     setProjects(null);
     const result = await runStep(`${BACKEND_BASE}/admin/projects`, {
-      credentials: "include",
       cache: "no-store",
     });
     setProjects(result);
@@ -127,7 +125,6 @@ export default function SmokeTestsPage() {
       `${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`,
       {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: "smoke-test" }),
       },

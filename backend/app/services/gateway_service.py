@@ -142,6 +142,8 @@ async def run_chat_completion(
 ) -> GatewayResponse:
     request_id = new_request_id()
 
+    # Hard limits: preflight aggregate check (best-effort under concurrency;
+    # see check_hard_limits docstring and docs/hard-limit-concurrency.md).
     async with sessionmaker() as session:
         limits = await get_project_limits(session, project_id=project.id)
         if limits is not None and limits.limit_mode == "hard":
@@ -290,6 +292,7 @@ async def run_chat_completion_stream(
 ) -> GatewayStreamResponse:
     request_id = new_request_id()
 
+    # Hard limits: preflight aggregate check (best-effort under concurrency).
     async with sessionmaker() as session:
         limits = await get_project_limits(session, project_id=project.id)
         if limits is not None and limits.limit_mode == "hard":

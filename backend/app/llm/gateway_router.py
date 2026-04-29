@@ -91,7 +91,11 @@ def _resolve_models(model: str) -> tuple[_Route, str, str]:
     if model.startswith(_KNOWN_OPENAI_PREFIXES):
         # Concrete OpenAI model: bypass Anthropic entirely.
         return "openai_only", cfg.default_primary_model, model
-    raise UnknownModelError(model, known_aliases=list(cfg.aliases))
+    raise UnknownModelError(
+        model,
+        known_aliases=list(cfg.aliases),
+        provider_prefixes=get_known_provider_prefixes(),
+    )
 
 
 class GatewayProvider(LLMProvider):

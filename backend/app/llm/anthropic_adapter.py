@@ -18,6 +18,7 @@ extracted and passed via Anthropic's separate ``system=`` argument.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 import anthropic
@@ -73,6 +74,16 @@ async def _retried_anthropic_create(
     escapes after retries are exhausted into provider-shaped errors.
     """
     return await client.messages.create(**kwargs)
+
+
+@_anthropic_retry
+async def _retried_anthropic_stream_begin(
+    client: anthropic.AsyncAnthropic, kwargs: dict[str, Any]
+) -> tuple[Any, Any]:
+    """Retry stream *creation* only (``__aenter__``); do not retry after chunks flow."""
+    stream_cm = client.messages.stream(**kwargs)
+    stream = await stream_cm.__aenter__()
+    return stream_cm, stream
 
 
 def _split_system(messages: list[ChatMessage]) -> tuple[str, list[ChatMessage]]:
@@ -179,85 +190,85 @@ class AnthropicProvider(LLMProvider):
             # TODO(Mxx): Preserve "tool_use" once tool calling is supported.
             return "stop"
 
-        def _safe_message(prefix: str) -> str:
-            # Do not risk leaking secrets / headers from upstream error strings.
-            return prefix
-
         sent_role = False
         last_stop_reason: str | None = None
 
+        stream_cm: Any | None = None
         try:
-            async with self._client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    event_type = getattr(event, "type", None)
+            stream_cm, stream = await _retried_anthropic_stream_begin(self._client, kwargs)
+            async for event in stream:
+                event_type = getattr(event, "type", None)
 
-                    if event_type == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        text = getattr(delta, "text", None)
-                        if not text:
-                            continue
-                        role_delta = None
-                        if not sent_role:
-                            role_delta = "assistant"
-                            sent_role = True
-                        yield ChatStreamChunk(
-                            provider="anthropic",
-                            model=model,
-                            role_delta=role_delta,
-                            content_delta=text,
-                        )
+                if event_type == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    text = getattr(delta, "text", None)
+                    if not text:
                         continue
-
-                    if event_type == "message_delta":
-                        delta = getattr(event, "delta", None)
-                        stop_reason = getattr(delta, "stop_reason", None)
-                        if stop_reason:
-                            last_stop_reason = stop_reason
-                        continue
-
-                # Emit a final chunk with usage/finish reason if available.
-                try:
-                    final_message = await stream.get_final_message()
-                except Exception as exc:
-                    logger.debug(
-                        "anthropic_stream_final_message_unavailable error_type=%s",
-                        type(exc).__name__,
-                    )
-                    final_message = None
-
-                finish_reason = _map_finish_reason(
-                    getattr(final_message, "stop_reason", None) or last_stop_reason
-                )
-                usage = None
-                if final_message is not None and getattr(final_message, "usage", None) is not None:
-                    final_usage = getattr(final_message, "usage", None)
-                    usage = TokenUsage(
-                        input_tokens=getattr(final_usage, "input_tokens", 0) or 0,
-                        output_tokens=getattr(final_usage, "output_tokens", 0) or 0,
-                    )
-
-                if finish_reason is not None or usage is not None:
+                    role_delta = None
+                    if not sent_role:
+                        role_delta = "assistant"
+                        sent_role = True
                     yield ChatStreamChunk(
                         provider="anthropic",
                         model=model,
-                        finish_reason=finish_reason,
-                        usage=usage,
+                        role_delta=role_delta,
+                        content_delta=text,
                     )
+                    continue
+
+                if event_type == "message_delta":
+                    delta = getattr(event, "delta", None)
+                    stop_reason = getattr(delta, "stop_reason", None)
+                    if stop_reason:
+                        last_stop_reason = stop_reason
+                    continue
+
+            # Emit a final chunk with usage/finish reason if available.
+            try:
+                final_message = await stream.get_final_message()
+            except Exception as exc:
+                logger.debug(
+                    "anthropic_stream_final_message_unavailable error_type=%s",
+                    type(exc).__name__,
+                )
+                final_message = None
+
+            finish_reason = _map_finish_reason(
+                getattr(final_message, "stop_reason", None) or last_stop_reason
+            )
+            usage = None
+            if final_message is not None and getattr(final_message, "usage", None) is not None:
+                final_usage = getattr(final_message, "usage", None)
+                usage = TokenUsage(
+                    input_tokens=getattr(final_usage, "input_tokens", 0) or 0,
+                    output_tokens=getattr(final_usage, "output_tokens", 0) or 0,
+                )
+
+            if finish_reason is not None or usage is not None:
+                yield ChatStreamChunk(
+                    provider="anthropic",
+                    model=model,
+                    finish_reason=finish_reason,
+                    usage=usage,
+                )
         except anthropic.RateLimitError as exc:
             raise ProviderRateLimitError(
-                _safe_message("Anthropic rate limit exceeded."),
+                "Anthropic rate limit exceeded.",
                 provider=self.provider_name,
             ) from exc
         except (anthropic.APIConnectionError, anthropic.InternalServerError) as exc:
             raise ProviderUnavailableError(
-                _safe_message("Anthropic is temporarily unavailable."),
+                "Anthropic is temporarily unavailable.",
                 provider=self.provider_name,
             ) from exc
         except anthropic.AnthropicError as exc:
             raise ProviderError(
-                _safe_message("Anthropic request failed."),
+                "Anthropic request failed.",
                 provider=self.provider_name,
             ) from exc
+        finally:
+            if stream_cm is not None:
+                await stream_cm.__aexit__(*sys.exc_info())
 
     async def aclose(self) -> None:
         try:

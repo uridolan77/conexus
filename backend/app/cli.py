@@ -19,6 +19,7 @@ import sys
 
 from app.db.models import AdminUser, Project
 from app.db.session import get_sessionmaker, init_db
+from app.services.admin_auth_service import InvalidAdminUsernameError, validate_admin_username_format
 from app.services.password_hasher import hash_password
 from app.services.project_key_service import create_api_key
 
@@ -54,6 +55,10 @@ async def _cmd_create_admin(
     username = username.strip()
     if not username:
         raise SystemExit("username cannot be blank")
+    try:
+        validate_admin_username_format(username)
+    except InvalidAdminUsernameError as exc:
+        raise SystemExit(str(exc)) from exc
     password = password.strip()
     if not password:
         raise SystemExit("password cannot be blank")

@@ -40,11 +40,21 @@ class UnknownModelError(ValueError):
     it to a 4xx rather than a 5xx.
     """
 
-    def __init__(self, model: str, *, known_aliases: list[str] | None = None) -> None:
-        suffix = (
-            f" Known aliases: {', '.join(sorted(known_aliases))}."
-            if known_aliases
-            else ""
-        )
-        super().__init__(f"unknown model alias: {model!r}.{suffix}")
+    def __init__(
+        self,
+        model: str,
+        *,
+        known_aliases: list[str] | None = None,
+        provider_prefixes: dict[str, tuple[str, ...]] | None = None,
+    ) -> None:
+        parts: list[str] = [f"unknown model alias: {model!r}."]
+        if known_aliases:
+            parts.append(f"Known aliases: {', '.join(sorted(known_aliases))}.")
+        if provider_prefixes:
+            bits = [
+                f"{name}: {', '.join(prefs)}"
+                for name, prefs in sorted(provider_prefixes.items())
+            ]
+            parts.append(f"Accepted provider model prefixes: {'; '.join(bits)}.")
+        super().__init__(" ".join(parts))
         self.model = model

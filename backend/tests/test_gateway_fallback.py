@@ -243,7 +243,11 @@ async def test_unknown_model_raises_unknown_model_error() -> None:
             model="gp-4o",
         )
 
-    assert "gp-4o" in str(excinfo.value)
+    msg = str(excinfo.value)
+    assert "gp-4o" in msg
+    assert "Known aliases:" in msg
+    assert "Accepted provider model prefixes:" in msg
+    assert "openai:" in msg and "gpt-" in msg
     # Neither provider should have been called.
     assert primary.calls == []
     assert fallback.calls == []

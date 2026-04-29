@@ -19,6 +19,22 @@ from app.services.password_hasher import verify_password
 ADMIN_SESSION_COOKIE = "conexus_admin_session"
 
 
+class InvalidAdminUsernameError(ValueError):
+    """Raised when a username contains characters forbidden by session encoding."""
+
+
+def validate_admin_username_format(username: str) -> None:
+    """Reject usernames that would break pipe-delimited session payloads.
+
+    Session tokens encode ``username|admin_user_id|exp`` before signing; ``|``
+    in ``username`` makes parsing ambiguous.
+    """
+    if "|" in username:
+        raise InvalidAdminUsernameError(
+            "admin username must not contain '|' (reserved for session token encoding)"
+        )
+
+
 @dataclass(slots=True)
 class AdminSession:
     username: str
@@ -44,8 +60,9 @@ def _sign(payload: bytes) -> str:
 
 
 def issue_admin_session_token(*, username: str, admin_user_id: str | None) -> str:
+    validate_admin_username_format(username)
     exp = int(time.time()) + settings.admin_session_ttl_hours * 3600
-    # Payload v2: username|admin_user_id|exp
+    # Payload v2: username|admin_user_id|exp (``|`` is forbidden in usernames — see above).
     # Payload v1 (legacy): username|exp
     admin_user_id_raw = admin_user_id or ""
     payload = f"{username}|{admin_user_id_raw}|{exp}".encode("utf-8")
