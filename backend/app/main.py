@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
 from app.llm.dependencies import shutdown_provider
-from app.services.secret_crypto import ensure_encryption_ready
+from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
 
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    ensure_encryption_ready()
+    try:
+        ensure_encryption_ready()
+    except SecretCryptoError as exc:
+        raise RuntimeError(
+            "invalid ENCRYPTION_KEY: expected a valid Fernet key"
+        ) from exc
     await init_db()
     logger.info("conexus_db_ready url=%s", _redacted_db_url(settings.database_url))
     try:

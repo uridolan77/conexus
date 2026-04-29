@@ -29,3 +29,10 @@ Read first:
 ## Main rule
 
 Each milestone must run locally, deploy, and show its result in the BO or logs before the next milestone starts.
+
+## Required runtime env
+
+Backend startup requires `ENCRYPTION_KEY` to be set to a valid Fernet key.
+
+- Missing key: settings validation fails at process start.
+- Invalid key format: startup fails with a clear `invalid ENCRYPTION_KEY` error.

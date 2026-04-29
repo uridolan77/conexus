@@ -54,6 +54,14 @@ never logged
 rotatable later
 ```
 
+Runtime requirement:
+
+```text
+ENCRYPTION_KEY is mandatory in env
+must be a valid Fernet key
+service fails fast if missing or invalid
+```
+
 ## Auth
 
 For v1, choose the fastest reliable auth path:

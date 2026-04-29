@@ -5,6 +5,7 @@ between tests so env-var overrides don't leak.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +15,9 @@ import tenacity
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
+
+# Tests run with a required ENCRYPTION_KEY; set a deterministic test value if absent.
+os.environ.setdefault("ENCRYPTION_KEY", "8A4Rfd9yzsttvGQY0Q_IeEjV_j9V2drZW8JfHK4HgxA=")
 
 
 @pytest.fixture(autouse=True)
