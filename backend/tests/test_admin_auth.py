@@ -78,3 +78,40 @@ async def test_admin_login_invalid_credentials(client: AsyncClient) -> None:
         json={"username": "admin", "password": "wrong"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_login_rate_limited_after_threshold_and_resets_on_success(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "admin_login_max_failures", 2)
+    monkeypatch.setattr(settings, "admin_login_window_seconds", 600)
+
+    r1 = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert r1.status_code == 401
+
+    r2 = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert r2.status_code == 429
+
+    ok = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
+    assert ok.status_code == 200
+
+    # After success, failures are cleared.
+    again = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert again.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_login_rate_limiter_normalizes_username(client: AsyncClient, monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "admin_login_max_failures", 1)
+    monkeypatch.setattr(settings, "admin_login_window_seconds", 600)
+
+    r1 = await client.post("/admin/auth/login", json={"username": " Admin ", "password": "wrong"})
+    assert r1.status_code == 429 or r1.status_code == 401
+
+    r2 = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert r2.status_code == 429

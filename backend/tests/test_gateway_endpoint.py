@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import asyncio
 import uuid
 
 import pytest
@@ -28,6 +29,7 @@ from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
 from app.services.gateway_service import GatewayClientError
 from app.services.project_key_service import create_api_key
+from app.core.config import settings
 
 
 class _StubProvider(LLMProvider):
@@ -75,6 +77,42 @@ class _StubProvider(LLMProvider):
             yield chunk
         if self._stream_raises is not None:
             raise self._stream_raises
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _SlowProvider(LLMProvider):
+    def __init__(self, *, sleep_seconds: float) -> None:
+        self.sleep_seconds = sleep_seconds
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> ChatResult:
+        await asyncio.sleep(self.sleep_seconds)
+        return ChatResult(
+            content="too late",
+            model=model,
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        yield ChatStreamChunk(provider="openai", model=model, role_delta="assistant")
+        await asyncio.sleep(self.sleep_seconds)
+        yield ChatStreamChunk(provider="openai", model=model, content_delta="never")
 
     async def aclose(self) -> None:
         pass
@@ -1320,3 +1358,70 @@ async def test_chat_completions_direct_openai_model_failure_is_logged(
         assert log.status == "failed"
         assert log.error_code == type(exc).__name__
         assert log.requested_model == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_times_out_and_returns_502(client, seeded, db_sessionmaker) -> None:
+    plaintext, _project, _api_key = seeded
+    original = settings.llm_request_timeout_seconds
+    settings.llm_request_timeout_seconds = 1
+    _set_provider(_SlowProvider(sleep_seconds=2.0))
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        settings.llm_request_timeout_seconds = original
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["detail"]["code"] == "ProviderUnavailableError"
+    request_id = body["detail"]["request_id"]
+    assert request_id
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "ProviderUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    original = settings.llm_stream_timeout_seconds
+    settings.llm_stream_timeout_seconds = 1
+    _set_provider(_SlowProvider(sleep_seconds=2.0))
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        settings.llm_stream_timeout_seconds = original
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "\"error\"" in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "ProviderUnavailableError"

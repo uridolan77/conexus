@@ -15,6 +15,7 @@ row never depends on a fragile commit-inside-error-path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -28,10 +29,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import GatewayRequest, Project, ProjectApiKey
+from app.core.config import settings
 from app.llm import LLMProvider, get_cost
 from app.llm.errors import (
     AllProvidersFailedError,
     ProviderError,
+    ProviderUnavailableError,
     UnknownModelError,
 )
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
@@ -190,12 +193,19 @@ async def run_chat_completion(
 
     started = time.monotonic()
     try:
-        result = await provider.chat(
-            messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        try:
+            async with asyncio.timeout(settings.llm_request_timeout_seconds):
+                result = await provider.chat(
+                    messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+        except TimeoutError as exc:
+            raise ProviderUnavailableError(
+                "Upstream request timed out.",
+                provider=getattr(provider, "provider_name", "unknown"),
+            ) from exc
     except UnknownModelError as exc:
         await _record_failure(
             sessionmaker,
@@ -339,12 +349,26 @@ async def run_chat_completion_stream(
     )
 
     async def _wrapped() -> AsyncIterator[ChatStreamChunk]:
+        aiter = upstream_stream.__aiter__()
         seen_provider: str | None = None
         seen_model: str | None = None
         seen_fallback_used = False
         final_usage = None
         try:
-            async for chunk in upstream_stream:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        aiter.__anext__(),
+                        timeout=settings.llm_stream_timeout_seconds,
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    raise ProviderUnavailableError(
+                        "Upstream stream timed out.",
+                        provider=getattr(provider, "provider_name", "unknown"),
+                    ) from exc
+
                 seen_provider = chunk.provider
                 seen_model = chunk.model
                 seen_fallback_used = seen_fallback_used or chunk.fallback_used

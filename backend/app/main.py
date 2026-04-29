@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api import (
     admin_adaptation,
@@ -27,6 +28,7 @@ from app.core.logging import configure_logging
 from app.db.session import init_db
 from app.llm.dependencies import shutdown_provider
 from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
+from app.llm.model_alias_config import ModelAliasConfigError
 
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -111,6 +113,15 @@ def create_app() -> FastAPI:
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
     app.include_router(admin_routing.router)
+
+    @app.exception_handler(FileNotFoundError)
+    async def _handle_missing_file(_request, exc: FileNotFoundError):
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    @app.exception_handler(ModelAliasConfigError)
+    async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
     logger.info("conexus_app_started env=%s", settings.app_env)
     return app
 

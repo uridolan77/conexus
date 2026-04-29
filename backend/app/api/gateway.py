@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 import json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -135,7 +135,7 @@ def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]
     return {"code": code, "message": message, "request_id": request_id}
 
 
-def _raise_gateway_http(exc: Exception) -> None:
+def _raise_gateway_http(exc: Exception) -> NoReturn:
     if isinstance(exc, GatewayClientError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

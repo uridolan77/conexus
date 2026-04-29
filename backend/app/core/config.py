@@ -6,6 +6,8 @@ Keep settings flat for v1; nest them once we have many provider/budget knobs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -54,6 +56,25 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
     llm_provider: str = Field(default="gateway", alias="LLM_PROVIDER")
+
+    llm_request_timeout_seconds: int = Field(
+        default=60, alias="LLM_REQUEST_TIMEOUT_SECONDS", ge=1
+    )
+    llm_stream_timeout_seconds: int = Field(
+        default=180, alias="LLM_STREAM_TIMEOUT_SECONDS", ge=1
+    )
+
+    admin_login_max_failures: int = Field(default=5, alias="ADMIN_LOGIN_MAX_FAILURES", ge=1)
+    admin_login_window_seconds: int = Field(
+        default=600, alias="ADMIN_LOGIN_WINDOW_SECONDS", ge=30
+    )
+
+    model_aliases_path: str = Field(
+        default_factory=lambda: str(
+            Path(__file__).resolve().parents[2] / "static_config" / "model_aliases.yaml"
+        ),
+        alias="MODEL_ALIASES_PATH",
+    )
 
     @field_validator("cookie_samesite", mode="before")
     @classmethod

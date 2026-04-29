@@ -548,6 +548,7 @@ export default function RequestsPage() {
                 <tr>
                   <th>Request ID</th>
                   <th>Project</th>
+                  <th>API key</th>
                   <th>Status</th>
                   <th>Client requested model</th>
                   <th>Actual served provider/model</th>
@@ -572,6 +573,12 @@ export default function RequestsPage() {
                       </div>
                     </td>
                     <td>{item.project_name ?? item.project_id ?? "—"}</td>
+                    <td>
+                      <div className="stack-tight">
+                        <code>{item.api_key_prefix ?? "—"}</code>
+                        <span className="muted wrap-anywhere">{item.api_key_id ?? ""}</span>
+                      </div>
+                    </td>
                     <td><Badge tone={badgeTone(item.status)}>{item.status}</Badge></td>
                     <td>{item.requested_model}</td>
                     <td>

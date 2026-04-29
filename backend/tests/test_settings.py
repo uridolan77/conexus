@@ -88,3 +88,14 @@ def test_prod_cookie_samesite_none_requires_secure_true() -> None:
     )
     assert ok.cookie_samesite == "none"
 
+
+def test_llm_timeouts_validate_min_value() -> None:
+    with pytest.raises(ValueError):
+        Settings.model_validate(
+            {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "LLM_REQUEST_TIMEOUT_SECONDS": 0}
+        )
+    with pytest.raises(ValueError):
+        Settings.model_validate(
+            {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "LLM_STREAM_TIMEOUT_SECONDS": 0}
+        )
+

@@ -6,7 +6,6 @@ The browser must never call the adaptation service directly.
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any
 
 import httpx
