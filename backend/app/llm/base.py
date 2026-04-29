@@ -12,9 +12,10 @@ Adapted from ``KGB/backend/app/llm/base.py``. Differences from KGB:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Self
 
-from app.llm.types import ChatMessage, ChatResult
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
 
 
 class LLMProvider(ABC):
@@ -35,6 +36,17 @@ class LLMProvider(ABC):
         temperature: float = 0.2,
     ) -> ChatResult:
         """Make a non-streaming chat completion call."""
+
+    @abstractmethod
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """Stream chat completion chunks."""
 
     @abstractmethod
     async def aclose(self) -> None:

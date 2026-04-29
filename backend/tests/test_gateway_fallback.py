@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from app.llm.base import LLMProvider
+from app.llm.errors import ProviderError
 from app.llm.errors import (
     AllProvidersFailedError,
     ProviderRateLimitError,
@@ -21,7 +22,7 @@ from app.llm.errors import (
     UnknownModelError,
 )
 from app.llm.gateway_router import GatewayProvider
-from app.llm.types import ChatMessage, ChatResult, TokenUsage
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 
 
 class _StubProvider(LLMProvider):
@@ -31,11 +32,16 @@ class _StubProvider(LLMProvider):
         provider: str,
         result: ChatResult | None = None,
         raises: BaseException | None = None,
+        stream_chunks: list[ChatStreamChunk] | None = None,
+        stream_raises: BaseException | None = None,
     ) -> None:
         self._provider = provider
         self._result = result
         self._raises = raises
         self.calls: list[dict[str, Any]] = []
+        self.stream_calls: list[dict[str, Any]] = []
+        self._stream_chunks = stream_chunks or []
+        self._stream_raises = stream_raises
 
     async def chat(
         self,
@@ -50,6 +56,27 @@ class _StubProvider(LLMProvider):
             raise self._raises
         assert self._result is not None
         return self._result
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        self.stream_calls.append({"messages": list(messages), "model": model})
+        yielded = False
+        for chunk in self._stream_chunks:
+            yielded = True
+            yield chunk
+        if self._stream_raises is not None:
+            raise self._stream_raises
+        if not yielded:
+            raise ProviderError(
+                "streaming not configured in this stub",
+                provider=self._provider,
+            )
 
     async def aclose(self) -> None:
         pass
@@ -263,3 +290,118 @@ async def test_concrete_openai_model_routes_to_openai_only() -> None:
     assert primary.calls == []
     assert len(fallback.calls) == 1
     assert fallback.calls[0]["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_alias_streaming_routes_to_openai_until_anthropic_streaming_exists() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hi"),
+        ],
+        result=_result("anthropic", "claude-haiku-4-5-20251001"),
+    )
+    fallback = _StubProvider(provider="openai", result=_result("openai", "gpt-4o-mini"))
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in gateway.stream_chat(
+        [{"role": "user", "content": "hello"}],
+        model="conexus-fast",
+    ):
+        chunks.append(chunk)
+
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert fallback.stream_calls == []
+    assert chunks and chunks[0].provider == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_fallback_mid_stream_for_aliases() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hi"),
+        ],
+        stream_raises=ProviderUnavailableError("503", provider="anthropic"),
+        result=_result("anthropic", "claude-haiku-4-5-20251001"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="should-not-happen"),
+        ],
+        result=_result("openai", "gpt-4o-mini"),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    with pytest.raises(ProviderUnavailableError):
+        async for chunk in gateway.stream_chat(
+            [{"role": "user", "content": "hello"}],
+            model="conexus-fast",
+        ):
+            chunks.append(chunk)
+
+    assert chunks and chunks[0].content_delta == "hi"
+    assert fallback.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_concrete_openai_model_streaming_calls_openai_only() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="nope"),
+        ],
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hi"),
+        ],
+        result=_result("openai", "gpt-4o-mini"),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in gateway.stream_chat(
+        [{"role": "user", "content": "hello"}],
+        model="gpt-4o-mini",
+    ):
+        chunks.append(chunk)
+
+    assert primary.stream_calls == []
+    assert fallback.stream_calls and fallback.stream_calls[0]["model"] == "gpt-4o-mini"
+    assert chunks and chunks[0].provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_concrete_anthropic_model_streaming_calls_anthropic_only() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="hi"),
+        ],
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="nope"),
+        ],
+        result=_result("openai", "gpt-4o-mini"),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in gateway.stream_chat(
+        [{"role": "user", "content": "hello"}],
+        model="claude-sonnet-4-20250514",
+    ):
+        chunks.append(chunk)
+
+    assert fallback.stream_calls == []
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-sonnet-4-20250514"
+    assert chunks and chunks[0].provider == "anthropic"

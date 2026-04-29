@@ -45,3 +45,20 @@ class ChatResult:
     usage: TokenUsage = field(default_factory=TokenUsage)
     fallback_used: bool = False
     cached: bool = False
+
+
+@dataclass(slots=True)
+class ChatStreamChunk:
+    """A single streaming chunk in a normalized shape.
+
+    This is an internal type used to translate provider-specific streaming
+    events into OpenAI-compatible SSE output.
+    """
+
+    provider: Literal["openai", "anthropic"]
+    model: str
+    role_delta: Literal["assistant"] | None = None
+    content_delta: str = ""
+    finish_reason: str | None = None
+    usage: TokenUsage | None = None
+    fallback_used: bool = False

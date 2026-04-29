@@ -53,9 +53,9 @@ async def finish_request_success(
     provider: str,
     model: str,
     latency_ms: int,
-    prompt_tokens: int,
-    completion_tokens: int,
-    estimated_cost: float,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    estimated_cost: float | None,
     fallback_used: bool,
 ) -> None:
     row.provider = provider
@@ -64,7 +64,10 @@ async def finish_request_success(
     row.latency_ms = latency_ms
     row.prompt_tokens = prompt_tokens
     row.completion_tokens = completion_tokens
-    row.total_tokens = prompt_tokens + completion_tokens
+    if prompt_tokens is not None and completion_tokens is not None:
+        row.total_tokens = prompt_tokens + completion_tokens
+    else:
+        row.total_tokens = None
     row.estimated_cost = estimated_cost
     row.fallback_used = fallback_used
     row.completed_at = datetime.now(timezone.utc)

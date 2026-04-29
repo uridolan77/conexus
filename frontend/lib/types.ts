@@ -242,3 +242,21 @@ export type RequestDetail = RequestRow & {
     fallback_used: boolean;
   };
 };
+
+export type AuditLogItem = {
+  id: string;
+  actor_admin_user_id: string | null;
+  actor_username: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: unknown | null;
+  created_at: string;
+};
+
+export type AuditListResponse = {
+  items: AuditLogItem[];
+  limit: number;
+  offset: number;
+  total: number;
+};

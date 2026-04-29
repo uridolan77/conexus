@@ -64,3 +64,14 @@ def _reset_secret_crypto_cache():
     reset_fernet_for_tests()
     yield
     reset_fernet_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_overrides():
+    from app.core.config import settings
+
+    original_allow_env_admin_fallback = settings.allow_env_admin_fallback
+    try:
+        yield
+    finally:
+        settings.allow_env_admin_fallback = original_allow_env_admin_fallback

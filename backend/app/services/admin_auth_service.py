@@ -9,8 +9,12 @@ import time
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.db.models import AdminUser
+from app.services.password_hasher import verify_password
 
 ADMIN_SESSION_COOKIE = "conexus_admin_session"
 
@@ -18,6 +22,7 @@ ADMIN_SESSION_COOKIE = "conexus_admin_session"
 @dataclass(slots=True)
 class AdminSession:
     username: str
+    admin_user_id: str | None = None
 
 
 def _b64_encode(data: bytes) -> str:
@@ -38,9 +43,12 @@ def _sign(payload: bytes) -> str:
     return _b64_encode(digest)
 
 
-def issue_admin_session_token(username: str) -> str:
+def issue_admin_session_token(*, username: str, admin_user_id: str | None) -> str:
     exp = int(time.time()) + settings.admin_session_ttl_hours * 3600
-    payload = f"{username}|{exp}".encode("utf-8")
+    # Payload v2: username|admin_user_id|exp
+    # Payload v1 (legacy): username|exp
+    admin_user_id_raw = admin_user_id or ""
+    payload = f"{username}|{admin_user_id_raw}|{exp}".encode("utf-8")
     signature = _sign(payload)
     return f"{_b64_encode(payload)}.{signature}"
 
@@ -57,19 +65,47 @@ def parse_admin_session_token(token: str) -> AdminSession | None:
     if not hmac.compare_digest(signature, expected):
         return None
     try:
-        username, exp_raw = payload.decode("utf-8").split("|", 1)
+        parts = payload.decode("utf-8").split("|")
+        if len(parts) == 2:
+            username, exp_raw = parts
+            admin_user_id = None
+        elif len(parts) == 3:
+            username, admin_user_id_raw, exp_raw = parts
+            admin_user_id = admin_user_id_raw or None
+        else:
+            return None
         exp = int(exp_raw)
     except Exception:
         return None
     if exp < int(time.time()):
         return None
-    return AdminSession(username=username)
+    return AdminSession(username=username, admin_user_id=admin_user_id)
 
 
 def validate_admin_credentials(username: str, password: str) -> bool:
     return hmac.compare_digest(username, settings.admin_username) and hmac.compare_digest(
         password, settings.admin_password
     )
+
+
+async def any_admin_users_exist(session: AsyncSession) -> bool:
+    count_stmt = select(func.count()).select_from(AdminUser)
+    count = int((await session.execute(count_stmt)).scalar_one() or 0)
+    return count > 0
+
+
+async def authenticate_admin_user(
+    session: AsyncSession, *, username: str, password: str
+) -> AdminUser | None:
+    stmt = select(AdminUser).where(AdminUser.username == username)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        return None
+    if not user.is_active:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
 
 
 def require_admin_session(token: str | None) -> AdminSession:

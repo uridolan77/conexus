@@ -15,6 +15,7 @@ from app.db.models import Project, ProjectLimit
 from app.db.session import get_session
 from app.services.admin_auth_service import AdminSession
 from app.services.project_limits_service import get_project_limit_usage
+from app.services.audit_service import log_admin_action
 
 router = APIRouter(prefix="/admin/projects", tags=["admin"])
 
@@ -112,7 +113,7 @@ async def get_project_limits(
 async def put_project_limits(
     project_id: str,
     body: ProjectLimitsPutBody,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProjectLimitsView:
     await _project_or_404(session, project_id)
@@ -128,6 +129,19 @@ async def put_project_limits(
     row.daily_request_limit = body.daily_request_limit
     row.daily_token_limit = body.daily_token_limit
     await session.flush()
+    await log_admin_action(
+        session,
+        actor=admin,
+        action="project_limits.update",
+        resource_type="project_limit",
+        resource_id=row.project_id,
+        metadata={
+            "limit_mode": row.limit_mode,
+            "monthly_cost_limit": row.monthly_cost_limit,
+            "daily_request_limit": row.daily_request_limit,
+            "daily_token_limit": row.daily_token_limit,
+        },
+    )
     return _to_view(row)
 
 

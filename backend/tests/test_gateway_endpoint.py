@@ -18,12 +18,13 @@ from app.llm.base import LLMProvider
 from app.llm.dependencies import get_provider
 from app.llm.errors import (
     AllProvidersFailedError,
+    ProviderError,
     ProviderRateLimitError,
     ProviderUnavailableError,
     UnknownModelError,
 )
 from app.llm.gateway_router import GatewayProvider
-from app.llm.types import ChatMessage, ChatResult, TokenUsage
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
 from app.services.project_key_service import create_api_key
 
@@ -36,10 +37,15 @@ class _StubProvider(LLMProvider):
         *,
         result: ChatResult | None = None,
         raises: BaseException | None = None,
+        stream_chunks: list[ChatStreamChunk] | None = None,
+        stream_raises: BaseException | None = None,
     ) -> None:
         self._result = result
         self._raises = raises
+        self._stream_chunks = stream_chunks or []
+        self._stream_raises = stream_raises
         self.calls: list[dict] = []
+        self.stream_calls: list[dict] = []
 
     async def chat(
         self,
@@ -54,6 +60,20 @@ class _StubProvider(LLMProvider):
             raise self._raises
         assert self._result is not None
         return self._result
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        self.stream_calls.append({"model": model, "messages": list(messages)})
+        for chunk in self._stream_chunks:
+            yield chunk
+        if self._stream_raises is not None:
+            raise self._stream_raises
 
     async def aclose(self) -> None:
         pass
@@ -132,6 +152,19 @@ async def test_chat_completions_missing_token_returns_401(client) -> None:
         json={
             "model": "conexus-fast",
             "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_missing_token_returns_401(client) -> None:
+    response = await client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": True,
         },
     )
     assert response.status_code == 401
@@ -250,6 +283,481 @@ async def test_chat_completions_happy_path(
         assert log.completed_at is not None
 
 
+@pytest.mark.asyncio
+async def test_chat_completions_accepts_common_openai_fields_stream_false(
+    client, seeded
+) -> None:
+    plaintext, _project, _api_key = seeded
+    stub = _StubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": False,
+                "top_p": 0.9,
+                "stop": ["\n\n"],
+                "user": "user-123",
+                "seed": 123,
+                "presence_penalty": 0.1,
+                "frequency_penalty": 0.2,
+                "response_format": {"type": "text"},
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 200
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_rejects_n_gt_1_with_400(client, seeded) -> None:
+    plaintext, _project, _api_key = seeded
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "n": 2,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert stub.calls == []
+    assert REQUEST_ID_HEADER in response.headers
+    body = response.json()
+    assert body["detail"]["code"] == "n_not_supported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tools": [{"type": "function", "function": {"name": "x"}}]},
+        {"tool_choice": "auto"},
+        {"tool_choice": {"type": "function", "function": {"name": "x"}}},
+    ],
+)
+async def test_chat_completions_rejects_tool_calls_with_400(
+    client, seeded, payload
+) -> None:
+    plaintext, _project, _api_key = seeded
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                **payload,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert stub.calls == []
+    body = response.json()
+    assert body["detail"]["code"] == "tool_calls_not_supported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"logprobs": True},
+        {"top_logprobs": 3},
+        {"logprobs": False, "top_logprobs": 3},
+    ],
+)
+async def test_chat_completions_rejects_logprobs_with_400(
+    client, seeded, payload
+) -> None:
+    plaintext, _project, _api_key = seeded
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                **payload,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert stub.calls == []
+    body = response.json()
+    assert body["detail"]["code"] == "logprobs_not_supported"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_rejects_unsupported_response_format_with_400(
+    client, seeded
+) -> None:
+    plaintext, _project, _api_key = seeded
+    stub = _StubProvider(
+        result=ChatResult(
+            content="should not happen",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "response_format": {"type": "json_object"},
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert stub.calls == []
+    body = response.json()
+    assert body["detail"]["code"] == "response_format_not_supported"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_true_returns_sse_and_logs_success(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hel"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="lo"),
+            ChatStreamChunk(
+                provider="openai",
+                model="gpt-4o-mini",
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=3, output_tokens=2),
+            ),
+        ]
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            assert REQUEST_ID_HEADER in response.headers
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "chat.completion.chunk" in payload
+    assert "data: [DONE]" in payload
+    assert stub.stream_calls
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "gpt-4o-mini"
+        assert log.provider == "openai"
+        assert log.model == "gpt-4o-mini"
+        assert log.prompt_tokens == 3
+        assert log.completion_tokens == 2
+        assert log.total_tokens == 5
+        assert log.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_true_concrete_anthropic_model_returns_sse_and_logs_provider_model(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    gateway = GatewayProvider(
+        primary=_StubProvider(
+            stream_chunks=[
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", role_delta="assistant"),
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="hel"),
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="lo"),
+                ChatStreamChunk(
+                    provider="anthropic",
+                    model="claude-sonnet-4-20250514",
+                    finish_reason="stop",
+                    usage=TokenUsage(input_tokens=3, output_tokens=2),
+                ),
+            ]
+        ),
+        fallback=_StubProvider(),
+    )
+    _set_provider(gateway)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "chat.completion.chunk" in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "claude-sonnet-4-20250514"
+        assert log.provider == "anthropic"
+        assert log.model == "claude-sonnet-4-20250514"
+        assert log.prompt_tokens == 3
+        assert log.completion_tokens == 2
+        assert log.total_tokens == 5
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_true_alias_stream_logs_anthropic_provider_model(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    primary = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", role_delta="assistant"),
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hello"),
+            ChatStreamChunk(
+                provider="anthropic",
+                model="claude-haiku-4-5-20251001",
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=2, output_tokens=1),
+            ),
+        ]
+    )
+    fallback = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="should-not-happen"),
+        ]
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+    _set_provider(gateway)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "conexus-fast",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "chat.completion.chunk" in payload
+    assert "hello" in payload
+    assert "data: [DONE]" in payload
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert fallback.stream_calls == []
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "conexus-fast"
+        assert log.provider == "anthropic"
+        assert log.model == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hello"),
+        ],
+        stream_raises=RuntimeError("boom"),
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "gpt-4o-mini"
+        assert log.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_after_partial_output_emits_safe_sse_error_and_logs_failed(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hello"),
+        ],
+        stream_raises=ProviderError("upstream broke", provider="openai"),
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    # Partial output is delivered.
+    assert "hello" in payload
+    # A safe error object is delivered (not the raw provider exception).
+    assert "\"error\"" in payload
+    assert "Stream interrupted." in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "gpt-4o-mini"
+        # Failure finish must win: success fields must not be stamped.
+        assert log.provider is None
+        assert log.model is None
+        assert log.error_code == "ProviderError"
+        assert log.error_message == "upstream broke"
+        assert log.completed_at is not None
+
+
 # ── Limit enforcement (M8A) ────────────────────────────────────────────
 
 
@@ -355,6 +863,43 @@ async def test_hard_daily_request_limit_blocks_before_provider_call(
         assert log.error_code == "daily_request_limit_exceeded"
         assert log.provider is None
         assert log.model is None
+
+
+@pytest.mark.asyncio
+async def test_hard_daily_request_limit_blocks_streaming_before_provider_call(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=1,
+    )
+    now = datetime.now(timezone.utc)
+    await _seed_request(db_sessionmaker, project_id=project.id, created_at=now)
+
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="nope")
+        ]
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 429
+    assert stub.stream_calls == []
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 
+from collections.abc import AsyncIterator
+
 from app.core.config import settings
 from app.llm.anthropic_adapter import (
     ANTHROPIC_FAILOVER_ERRORS,
@@ -31,7 +33,7 @@ from app.llm.errors import (
     UnknownModelError,
 )
 from app.llm.openai_adapter import OPENAI_FAILOVER_ERRORS, OpenAIProvider
-from app.llm.types import ChatMessage, ChatResult
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,62 @@ class GatewayProvider(LLMProvider):
         raise AllProvidersFailedError(
             "All configured LLM providers failed or are not configured."
         )
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str = "conexus-default",
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """Stream from a single selected route (no mid-stream fallback).
+
+        Concrete provider model names bypass alias routing. Conexus aliases
+        stream via the Anthropic primary model (matching non-streaming).
+        """
+        route, anthropic_model, openai_model = _resolve_models(model)
+
+        if route == "openai_only":
+            if self._fallback is None:
+                raise AllProvidersFailedError(
+                    "All configured LLM providers failed or are not configured."
+                )
+            async for chunk in self._fallback.stream_chat(
+                messages,
+                model=openai_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                yield chunk
+            return
+
+        if route == "anthropic_only":
+            if self._primary is None:
+                raise AllProvidersFailedError(
+                    "All configured LLM providers failed or are not configured."
+                )
+            async for chunk in self._primary.stream_chat(
+                messages,
+                model=anthropic_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                yield chunk
+            return
+
+        # Alias routing: stream via Anthropic primary (no streaming fallback).
+        if self._primary is None:
+            raise AllProvidersFailedError(
+                "All configured LLM providers failed or are not configured."
+            )
+        async for chunk in self._primary.stream_chat(
+            messages,
+            model=anthropic_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ):
+            yield chunk
 
     async def aclose(self) -> None:
         for provider in (self._primary, self._fallback):
