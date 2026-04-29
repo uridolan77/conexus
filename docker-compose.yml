@@ -18,11 +18,19 @@ services:
   backend:
     build: ./backend
     environment:
-      APP_ENV: local
-      DATABASE_URL: postgresql+asyncpg://conexus:conexus@postgres:5432/conexus
-      LOG_LEVEL: INFO
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://conexus:conexus@postgres:5432/conexus}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://localhost:8000}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+      AUTH_SECRET: ${AUTH_SECRET:-change-this-local-secret}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      ADMIN_SESSION_TTL_HOURS: ${ADMIN_SESSION_TTL_HOURS:-12}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (set it in .env)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gateway}
     ports:
       - "8000:8000"
     depends_on:
@@ -33,7 +41,7 @@ services:
     build: ./frontend
     environment:
       BACKEND_BASE_URL: http://backend:8000
-      NEXT_PUBLIC_BACKEND_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_BACKEND_BASE_URL: ${NEXT_PUBLIC_BACKEND_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
