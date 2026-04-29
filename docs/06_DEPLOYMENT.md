@@ -11,6 +11,17 @@ PostgreSQL
 logs
 ```
 
+## Migrations (Alembic)
+
+Conexus ships with Alembic migrations. **Production deployments should run migrations explicitly**.
+
+Local (from repo root):
+
+```text
+cd backend
+alembic upgrade head
+```
+
 ## Environments
 
 ```text
@@ -90,11 +101,30 @@ NEXT_PUBLIC_BACKEND_BASE_URL=https://<api-subdomain>
 AUTH_SECRET=<strong secret>
 ADMIN_USERNAME=<admin username>
 ADMIN_PASSWORD=<strong password or later hash>
+ALLOW_ENV_ADMIN_FALLBACK=false
 ENCRYPTION_KEY=<Fernet key>
 ```
 
 Notes:
 
+- Admin bootstrap: create the first admin in DB via CLI. Env fallback is intended for local/dev only.
+- Schema: `create_all` is still used for local/dev convenience, but it is not a migration system. Use Alembic for deployments.
 - Do not rotate `ENCRYPTION_KEY` casually; existing encrypted provider secrets require coordinated re-encryption.
 - In prod, CORS must allow the frontend subdomain(s).
 - Cookies must use `Secure=true` in prod, and same-site behavior must be validated across subdomains.
+
+## Admin bootstrap (production)
+
+After `alembic upgrade head`:
+
+```text
+cd backend
+python -m app.cli create-admin --username admin --password <use_a_strong_password>
+```
+
+Alternative (non-interactive):
+
+```text
+cd backend
+echo <use_a_strong_password> | python -m app.cli create-admin --username admin --password-stdin
+```

@@ -53,6 +53,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(
             "invalid ENCRYPTION_KEY: expected a valid Fernet key"
         ) from exc
+    if settings.app_env.lower() == "prod":
+        logger.warning(
+            "prod_startup_schema_notice use_alembic_migrations=true create_all_is_not_migrations=true"
+        )
     await init_db()
     logger.info("conexus_db_ready url=%s", _redacted_db_url(settings.database_url))
     try:

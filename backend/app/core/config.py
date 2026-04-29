@@ -36,12 +36,21 @@ class Settings(BaseSettings):
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
     admin_session_ttl_hours: int = Field(default=12, alias="ADMIN_SESSION_TTL_HOURS")
+    allow_env_admin_fallback: bool | None = Field(
+        default=None, alias="ALLOW_ENV_ADMIN_FALLBACK"
+    )
     encryption_key: str = Field(..., alias="ENCRYPTION_KEY")
 
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
     llm_provider: str = Field(default="gateway", alias="LLM_PROVIDER")
+
+    @property
+    def effective_allow_env_admin_fallback(self) -> bool:
+        if self.allow_env_admin_fallback is not None:
+            return self.allow_env_admin_fallback
+        return self.app_env.lower() != "prod"
 
 
 settings = Settings()

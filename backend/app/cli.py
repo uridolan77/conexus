@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
+import sys
 
 from app.db.models import AdminUser, Project
 from app.db.session import get_sessionmaker, init_db
@@ -87,7 +89,12 @@ def main() -> None:
     p.add_argument("--label", default=None)
     p = sub.add_parser("create-admin")
     p.add_argument("--username", required=True)
-    p.add_argument("--password", required=True)
+    p.add_argument("--password", default=None)
+    p.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read password from stdin (recommended for CI/automation).",
+    )
     p.add_argument("--email", default=None)
     p.add_argument("--inactive", action="store_true")
     args = parser.parse_args()
@@ -100,10 +107,16 @@ def main() -> None:
         case "create-key":
             asyncio.run(_cmd_create_key(args.project_id, args.label))
         case "create-admin":
+            if args.password_stdin:
+                password = sys.stdin.read().strip()
+            elif args.password is not None:
+                password = args.password
+            else:
+                password = getpass.getpass("Admin password: ")
             asyncio.run(
                 _cmd_create_admin(
                     username=args.username,
-                    password=args.password,
+                    password=password,
                     email=args.email,
                     inactive=args.inactive,
                 )

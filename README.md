@@ -72,6 +72,20 @@ From repo root:
 docker compose up --build
 ```
 
+### 3A) Database migrations (recommended)
+
+From repo root:
+
+```powershell
+cd backend
+alembic upgrade head
+```
+
+Notes:
+
+- Local/dev may still work without Alembic because the backend currently creates tables on startup for convenience.
+- Production deployments should run Alembic migrations explicitly before starting the backend.
+
 Open:
 
 - frontend: http://localhost:3000
@@ -87,6 +101,19 @@ Open:
 3. Create a project API key (copy the key shown once).
 4. Add a provider config in Providers page.
 5. Use Test on that provider config to verify upstream connectivity.
+
+### Admin bootstrap and env fallback
+
+- Preferred (all environments): create admin users in DB:
+
+```powershell
+cd backend
+python -m app.cli create-admin --username admin --password <strong_password>
+```
+
+- Env fallback is controlled by `ALLOW_ENV_ADMIN_FALLBACK`:
+  - default **true** for non-prod environments
+  - default **false** in `APP_ENV=prod`
 
 ### 5) Call gateway with project API key
 

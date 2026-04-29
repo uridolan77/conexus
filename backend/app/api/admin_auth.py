@@ -68,6 +68,11 @@ async def login(
         admin_user_id = user.id
         username = user.username
     else:
+        if not settings.effective_allow_env_admin_fallback:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="admin bootstrap required",
+            )
         if not validate_admin_credentials(username, password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

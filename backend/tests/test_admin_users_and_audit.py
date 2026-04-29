@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db import models
 from app.db.session import get_session
 from app.main import app
+from app.core.config import settings
 from app.services.password_hasher import hash_password, verify_password
 from app.services.provider_config_service import (
     reset_provider_factory_for_tests,
     set_provider_factory_for_tests,
 )
+from app.services.audit_service import log_admin_action
+from app.llm.errors import ProviderError
 
 
 @pytest_asyncio.fixture
@@ -128,6 +131,7 @@ async def test_db_admin_inactive_fails(client: AsyncClient, db_sessionmaker) -> 
 
 @pytest.mark.asyncio
 async def test_env_fallback_only_when_no_admin_users_exist(client: AsyncClient, db_sessionmaker) -> None:
+    settings.allow_env_admin_fallback = None
     # When no admin users exist, env fallback works.
     res = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
     assert res.status_code == 200
@@ -149,9 +153,57 @@ async def test_env_fallback_only_when_no_admin_users_exist(client: AsyncClient, 
 
 
 @pytest.mark.asyncio
+async def test_env_fallback_disabled_requires_bootstrap_when_no_admin_users_exist(client: AsyncClient) -> None:
+    settings.allow_env_admin_fallback = False
+    res = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
+    assert res.status_code == 401
+    assert res.json()["detail"] == "admin bootstrap required"
+
+
+@pytest.mark.asyncio
+async def test_env_fallback_enabled_allows_login_when_no_admin_users_exist(client: AsyncClient) -> None:
+    settings.allow_env_admin_fallback = True
+    res = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
+    assert res.status_code == 200
+    assert res.json()["admin_user_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_audit_endpoint_requires_admin_auth(client: AsyncClient) -> None:
     res = await client.get("/admin/audit")
     assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_audit_sanitizer_redacts_keys_case_insensitively(db_sessionmaker) -> None:
+    async with db_sessionmaker() as session:
+        await log_admin_action(
+            session,
+            actor=None,
+            action="test.action",
+            resource_type="test",
+            resource_id="r1",
+            metadata={
+                "Authorization": "Bearer sk-test-secret",
+                "Set-Cookie": "session=abc",
+                "Password": "pw123",
+                "SECRET_HASH": "deadbeef",
+                "apiKey": "sk-test-123",
+            },
+        )
+        await session.commit()
+
+    async with db_sessionmaker() as session:
+        rows = list((await session.execute(select(models.AuditLog))).scalars().all())
+        assert rows
+        combined = "\n".join([r.metadata_json or "" for r in rows])
+        assert "sk-test-secret" not in combined
+        assert "session=abc" not in combined
+        assert "pw123" not in combined
+        assert "deadbeef" not in combined
+        assert "sk-test-123" not in combined
+        # Sanity: ensure we still wrote something structured.
+        assert "[redacted]" in combined
 
 
 @pytest.mark.asyncio
@@ -241,6 +293,52 @@ async def test_successful_mutations_write_audit_rows_and_no_secrets_leak(
         assert provider_secret not in combined
         assert plaintext_key not in combined
         assert "secret_hash" not in combined
+
+
+@pytest.mark.asyncio
+async def test_provider_test_audit_metadata_does_not_store_raw_error_strings(
+    client: AsyncClient, db_sessionmaker
+) -> None:
+    await _login_env_admin(client)
+
+    class _FailingProvider:
+        async def chat(self, messages, *, model: str, max_tokens: int = 4096, temperature: float = 0.2):
+            raise ProviderError(
+                "upstream failed Authorization: Bearer sk-test-secret header",
+                provider="openai",
+            )
+
+        async def aclose(self) -> None:
+            pass
+
+    def fake_factory(_provider: str, _api_key: str):
+        return _FailingProvider()
+
+    set_provider_factory_for_tests(fake_factory)
+    try:
+        created_provider = await client.post(
+            "/admin/providers",
+            json={"provider": "openai", "label": "Primary", "api_key": "sk-test-1234567890-secret"},
+        )
+        assert created_provider.status_code == 201
+        provider_id = created_provider.json()["id"]
+
+        tested_provider = await client.post(f"/admin/providers/{provider_id}/test", json={})
+        assert tested_provider.status_code == 200
+    finally:
+        reset_provider_factory_for_tests()
+
+    audit = await client.get("/admin/audit?limit=200&offset=0&action=provider.test")
+    assert audit.status_code == 200
+    assert "sk-test-secret" not in audit.text
+    assert "Authorization: Bearer sk-test-secret" not in audit.text
+
+    async with db_sessionmaker() as session:
+        rows = list((await session.execute(select(models.AuditLog).where(models.AuditLog.action == "provider.test"))).scalars())
+        assert rows
+        combined = "\n".join([r.metadata_json or "" for r in rows])
+        assert "sk-test-secret" not in combined
+        assert "Authorization: Bearer sk-test-secret" not in combined
 
 
 @pytest.mark.asyncio

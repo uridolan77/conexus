@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,20 +12,25 @@ from app.services.admin_auth_service import AdminSession
 
 
 _REDACT_KEYS = {
-    "api_key",
-    "apiKey",
-    "api_key_encrypted",
     "authorization",
     "cookie",
     "cookies",
     "set-cookie",
+    "api_key",
+    "api-key",
+    "apikey",
+    "api_key_encrypted",
     "secret",
     "secret_hash",
     "password",
     "password_hash",
+    "token",
+    "access_token",
+    "refresh_token",
     "prompt",
-    "response",
     "messages",
+    "request_body",
+    "response_body",
     "input",
     "output",
 }
@@ -43,7 +49,7 @@ def _sanitize_json_value(value: Any, *, _depth: int = 0) -> Any:
         out: dict[str, Any] = {}
         for k, v in value.items():
             key = str(k)
-            if key in _REDACT_KEYS:
+            if key.lower() in _REDACT_KEYS:
                 out[key] = "[redacted]"
                 continue
             out[key] = _sanitize_json_value(v, _depth=_depth + 1)
@@ -55,6 +61,25 @@ def _sanitize_json_value(value: Any, *, _depth: int = 0) -> Any:
 
 def _json_dumps_safe(value: Any) -> str:
     return json.dumps(_sanitize_json_value(value), ensure_ascii=False, separators=(",", ":"))
+
+
+_SK_LIKE_RE = re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}\b", re.IGNORECASE)
+_AUTH_BEARER_RE = re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+([^\s,;]+)")
+
+
+def sanitize_audit_text(value: str, *, max_len: int = 500) -> str:
+    """Sanitize free-form text before persisting in audit metadata.
+
+    Intended for human-oriented summaries only (not structured request/response bodies).
+    """
+    if not value:
+        return value
+    out = value
+    out = _AUTH_BEARER_RE.sub("Authorization: Bearer [redacted]", out)
+    out = _SK_LIKE_RE.sub("[redacted]", out)
+    if len(out) > max_len:
+        out = out[:max_len]
+    return out
 
 
 async def log_admin_action(

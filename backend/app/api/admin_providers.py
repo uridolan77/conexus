@@ -20,7 +20,7 @@ from app.services.provider_config_service import (
     revoke_provider_config,
     test_provider_config,
 )
-from app.services.audit_service import log_admin_action
+from app.services.audit_service import log_admin_action, sanitize_audit_text
 from app.llm.gateway_router import DEFAULT_PRIMARY_MODEL
 
 router = APIRouter(prefix="/admin/providers", tags=["admin"])
@@ -166,6 +166,9 @@ async def test_provider(
         )
     model = body.model or _default_model(row.provider)
     result: ProviderTestResult = await test_provider_config(session, row, model=model)
+    error_summary: str | None = None
+    if result.error:
+        error_summary = sanitize_audit_text(result.error, max_len=500)
     await log_admin_action(
         session,
         actor=admin,
@@ -177,7 +180,8 @@ async def test_provider(
             "model": model,
             "status": result.status,
             "latency_ms": result.latency_ms,
-            "error": result.error,
+            "error_present": bool(result.error),
+            "error_summary": error_summary,
         },
     )
     return ProviderTestView(
