@@ -213,6 +213,7 @@ export default function DashboardPage() {
             <LinkButton href="/projects">Manage projects and API keys</LinkButton>
             <LinkButton href="/smoke-tests">Test chat completions</LinkButton>
             <LinkButton href="/usage">Review usage and costs</LinkButton>
+            <LinkButton href="/routing">Review routing policy</LinkButton>
             <LinkButton href="/requests">View request monitoring plan</LinkButton>
           </div>
         </Card>

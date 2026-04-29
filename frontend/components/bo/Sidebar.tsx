@@ -30,6 +30,11 @@ const links = [
     description: "Costs and rollups",
   },
   {
+    href: "/routing",
+    label: "Routing",
+    description: "Policy and aliases",
+  },
+  {
     href: "/smoke-tests",
     label: "Smoke Tests",
     description: "End-to-end checks",

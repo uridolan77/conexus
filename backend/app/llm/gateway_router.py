@@ -55,6 +55,19 @@ _KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
 _Route = str  # "gateway" | "anthropic_only" | "openai_only"
 
 
+def get_model_aliases() -> dict[str, tuple[str, str]]:
+    """Return a copy of current alias -> provider model mappings."""
+    return dict(_MODEL_ALIASES)
+
+
+def get_known_provider_prefixes() -> dict[str, tuple[str, ...]]:
+    """Return concrete-model prefixes that bypass alias routing."""
+    return {
+        "anthropic": _KNOWN_ANTHROPIC_PREFIXES,
+        "openai": _KNOWN_OPENAI_PREFIXES,
+    }
+
+
 def _resolve_models(model: str) -> tuple[_Route, str, str]:
     """Resolve a Conexus alias or concrete model name.
 

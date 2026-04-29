@@ -86,6 +86,25 @@ type UsageSummaryMetrics = {
   avg_latency_ms: number | null;
 };
 
+export type RoutingPolicy = {
+  id: string;
+  name: string;
+  mode: string;
+  default_alias: string;
+  aliases: Array<{
+    alias: string;
+    primary_provider: string;
+    primary_model: string;
+    fallback_provider: string;
+    fallback_model: string;
+  }>;
+  direct_routes: Array<{
+    provider: string;
+    model_prefixes: string[];
+    fallback_enabled: boolean;
+  }>;
+};
+
 export type ChatCompletionsResponse = {
   id: string;
   model: string;

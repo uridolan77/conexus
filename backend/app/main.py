@@ -14,6 +14,7 @@ from app.api import (
     admin_projects,
     admin_providers,
     admin_requests,
+    admin_routing,
     admin_usage,
     gateway,
     health,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_projects.router)
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
+    app.include_router(admin_routing.router)
     logger.info("conexus_app_started env=%s", settings.app_env)
     return app
 
