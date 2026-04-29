@@ -216,6 +216,10 @@ summary:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -373,6 +377,25 @@ summary:focus-visible {
 .row-muted {
   background: var(--color-surface-muted);
   color: var(--color-text-muted);
+}
+
+.row-warning {
+  background: var(--color-warning-soft);
+}
+
+.split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: var(--space-2);
+}
+
+.stack-tight {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.pagination-actions {
+  margin-top: var(--space-4);
 }
 
 .wrap-anywhere,
@@ -634,7 +657,12 @@ pre {
 
   .grid-2,
   .grid-3,
+  .grid-4,
   .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .split-row {
     grid-template-columns: 1fr;
   }
 }

@@ -13,6 +13,7 @@ import {
   Input,
   JsonBlock,
   KeyValueGrid,
+  LinkButton,
   PageHeader,
   SectionHeader,
   Select,
@@ -350,7 +351,20 @@ export default function SmokeTestsPage() {
             <SectionHeader title="Response Summary" />
             <KeyValueGrid
               items={[
-                { label: "request_id", value: <code>{chatSummary.request_id}</code> },
+                {
+                  label: "request_id",
+                  value: (
+                    <span className="inline-actions">
+                      <code className="wrap-anywhere">{chatSummary.request_id}</code>
+                      <CopyButton value={chatSummary.request_id} />
+                      <LinkButton
+                        href={`/requests?request_id=${encodeURIComponent(chatSummary.request_id)}`}
+                      >
+                        View request
+                      </LinkButton>
+                    </span>
+                  ),
+                },
                 { label: "provider", value: chatSummary.provider },
                 { label: "model", value: chatSummary.model },
                 { label: "fallback_used", value: String(chatSummary.fallback_used) },

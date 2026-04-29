@@ -59,3 +59,64 @@ export type StepStatus = "not-run" | "running" | "passed" | "failed";
 export type StepResult =
   | { ok: true; data: unknown }
   | { ok: false; status?: number; error: unknown };
+
+export type RequestStatusGroup = "success" | "failure" | "in_progress";
+
+export type RequestRow = {
+  id: string;
+  request_id: string;
+  project_id: string | null;
+  project_name: string | null;
+  api_key_id: string | null;
+  api_key_prefix: string | null;
+  requested_model: string;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  latency_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  estimated_cost: number | null;
+  fallback_used: boolean;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  duration_bucket: "fast" | "normal" | "slow" | null;
+  cost_bucket: "free_or_unknown" | "low" | "medium" | "high";
+};
+
+export type RequestListResponse = {
+  items: RequestRow[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type RequestDetail = RequestRow & {
+  previous_request_id: string | null;
+  next_request_id: string | null;
+  request_age_seconds: number | null;
+  completed_age_seconds: number | null;
+  normalized_status_group: RequestStatusGroup;
+  token_summary: {
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    total_tokens: number | null;
+  };
+  cost_summary: {
+    estimated_cost: number | null;
+    currency: "USD";
+  };
+  error_summary: {
+    code: string | null;
+    message: string | null;
+  };
+  routing_summary: {
+    requested_model: string;
+    served_provider: string | null;
+    served_model: string | null;
+    fallback_used: boolean;
+  };
+};
