@@ -1,5 +1,3 @@
-"use client";
-
 import {
   normalizePlanDetail,
   normalizePlanList,
@@ -57,7 +55,9 @@ async function requestAdaptation<T>(
       },
     });
     if (res.status === 401) {
-      window.location.href = "/login";
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
       return { ok: false, status: 401, error: "unauthorized" };
     }
     const body = await readJsonSafe(res);

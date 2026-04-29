@@ -1,41 +1,10 @@
-Goal: implement the Conexus Back Office Adaptation Review Console, using the existing Conexus backend proxy endpoints.
+# Conexus Back Office — Adaptation Review Console (phase v0.5)
 
-Important:
-- Work only in the `conexus` respo.
-- Do not modify `conexus.adaptation`.
-- Do not call `conexus.adaptation` directly from the browser.
-- Browser must call same-origin Conexus backend proxy endpoints under `/admin/adaptation/*`.
-- Do not add publishing/canary/rollback UI yet.
-- Do not add adapter-profile activation.
-- Do not add KGB/SLOD UI.
-- Do not add retry/cancel/resume UI.
+## Goal
 
-Current backend context:
-- Conexus already has `/admin/adaptation/*` proxy endpoints.
-- Conexus core hardening is done:
-  - provider timeouts
-  - YAML model aliases
-  - login rate limiting
-  - audit logging
-  - `/admin/routing/model-aliases`
-- `conexus.adaptation` now exposes:
-  - `GET /adaptation-plans`
-  - `GET /adaptation-plans/{id}`
-  - `GET /adaptation-plans/{id}/runs`
-  - `POST /adaptation-plans/{id}/approve`
-  - `POST /adaptation-plans/{id}/run`
-  - `GET /adaptation-runs`
-  - `GET /adaptation-runs/{id}`
-  - `GET /adaptation-runs/{id}/manifest`
-  - `GET /adaptation-runs/{id}/adapter-profile`
-  - `GET /adapter-profiles`
-  - `GET /adapter-profiles/{id}`
+Deliver an Adaptation review console in the Conexus Back Office: plans, runs, and adapter profiles, using same-origin `/admin/adaptation/*` proxy endpoints only (no direct calls to the adaptation service from the browser).
 
-Use the Conexus proxy equivalent routes. If the proxy route names differ, inspect `backend/app/api/admin_adaptation.py` and follow the existing mapping.
-
-## Implementation status (Conexus repo)
-
-The Adaptation Review Console described in this document is **implemented** in this repository:
+## Implemented
 
 | Area | Location |
 |------|----------|
@@ -43,18 +12,51 @@ The Adaptation Review Console described in this document is **implemented** in t
 | Proxy tests | `backend/tests/test_admin_adaptation_proxy.py` |
 | Typed DTOs + normalization | `frontend/lib/adaptationTypes.ts`, `frontend/lib/adaptationNormalize.ts` |
 | API client | `frontend/lib/adaptationApi.ts` |
-| ProblemDetails UI | `frontend/components/adaptation/ProblemAlert.tsx` |
+| ProblemDetails UI | `frontend/components/adaptation/ProblemAlert.tsx`, `AdaptationErrorBanner.tsx` |
 | Shared adaptation UI | `frontend/components/adaptation/CopyableId.tsx`, `ScoreBadge.tsx` |
 | BO routes | `frontend/app/adaptation/plans/`, `runs/`, `profiles/` |
 | Sidebar links | `frontend/components/bo/Sidebar.tsx` |
 | Frontend tests | `frontend/test/adaptation.test.tsx` |
 
-The client uses `BACKEND_BASE` / same-origin rules from `frontend/lib/api.ts` (relative `/admin/adaptation/*` when the BO origin matches the API origin). Approve/run POST bodies are `{}` from the browser; the proxy injects temporary identity per `_temporary_identity()` in `admin_adaptation.py`.
+The client uses `BACKEND_BASE` / same-origin rules from `frontend/lib/api.ts` (relative `/admin/adaptation/*` when the BO origin matches the API origin). Approve/run POST bodies from the browser are `{}`; the proxy injects temporary identity via `_temporary_identity()` in `admin_adaptation.py`.
 
-### Remaining / out of scope for this doc
+## Remaining gaps
 
-- **Production identity**: replace hardcoded `admin-user` / roles with authenticated BO admin when product-ready (TODO in proxy code).
-- **Not in scope**: publish, activate, canary, rollback, retry/cancel/resume, KGB/SLOD (see Constraints below).
+- **Production identity**: use the authenticated BO admin session instead of hardcoded `admin-user` / roles on approve/run proxy paths when wired for production.
+
+## Out of scope
+
+- **Repos**: work stays in the `conexus` repo; do not modify the separate `conexus.adaptation` service codebase from this UI track; the browser must not call that service directly.
+- **Product**: publishing, canary, rollback, adapter-profile activation, retry/cancel/resume, KGB/SLOD UI.
+- **Platform**: no new auth system, charting library, or major BO styling overhaul.
+- **Secrets**: do not expose provider API keys, raw secrets, or the adaptation service internal URL in the browser.
+
+## Verification
+
+```bash
+cd frontend
+npm test -- --run
+npm run build
+```
+
+```bash
+cd backend
+pytest -q
+ruff check .
+```
+
+---
+
+## Original implementation plan
+
+The phased sections below record the original checklist and acceptance detail. The console is already implemented in this repository; use this as a reference for intent.
+
+**Upstream context:** Conexus core already exposes `/admin/adaptation/*` (see `admin_adaptation.py` for the exact path map). The upstream adaptation service (not modified here) exposes, among others:
+
+- `GET /adaptation-plans`, `GET /adaptation-plans/{id}`, `GET /adaptation-plans/{id}/runs`
+- `POST /adaptation-plans/{id}/approve`, `POST /adaptation-plans/{id}/run`
+- `GET /adaptation-runs`, `GET /adaptation-runs/{id}`, `GET /adaptation-runs/{id}/manifest`, `GET /adaptation-runs/{id}/adapter-profile`
+- `GET /adapter-profiles`, `GET /adapter-profiles/{id}`
 
 ============================================================
 PHASE 1 — Adaptation API client
@@ -462,8 +464,10 @@ Do not expose:
 Run checks
 ============================================================
 
-Backend:
+See **Verification** at the top of this document for the canonical `frontend` and `backend` command blocks.
+
 ```bash
 cd backend
 pytest -q
 ruff check .
+```

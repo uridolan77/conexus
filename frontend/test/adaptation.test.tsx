@@ -34,6 +34,72 @@ function mockFetchSequence(responses: Array<{ status: number; body?: unknown; co
 }
 
 describe("Adaptation BO pages", () => {
+  it("Adaptation plans list renders rows from mocked API", async () => {
+    mockFetchSequence([
+      {
+        status: 200,
+        body: [
+          {
+            id: "plan_a",
+            status: "Draft",
+            domainKey: "domain-alpha",
+            taskDescription: "First task",
+            recommendedStrategy: "strat-a",
+            recipeKey: "recipe-a",
+            requiresHumanApproval: true,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "plan_b",
+            status: "Approved",
+            domainKey: "domain-beta",
+            taskDescription: "Second task",
+            recommendedStrategy: "strat-b",
+            recipeKey: "recipe-b",
+            requiresHumanApproval: false,
+            createdAt: "2026-01-02T00:00:00Z",
+          },
+        ],
+      },
+    ]);
+
+    const { default: PlansPage } = await import("../app/adaptation/plans/page");
+    render(<PlansPage />);
+
+    expect(await screen.findByText("domain-alpha")).toBeInTheDocument();
+    expect(screen.getByText("domain-beta")).toBeInTheDocument();
+    expect(screen.getByText("First task")).toBeInTheDocument();
+    expect(screen.getByText("Second task")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: /adaptation plans/i })).toBeInTheDocument();
+  });
+
+  it("Adaptation plan detail renders planning reasons", async () => {
+    mockFetchSequence([
+      {
+        status: 200,
+        body: {
+          id: "plan_1",
+          status: "Draft",
+          domainKey: "dk",
+          planningReasons: [
+            { severity: "info", code: "PLAN-001", message: "Chose default recipe" },
+            { severity: "warn", code: "PLAN-002", message: "Limited corpus" },
+          ],
+        },
+      },
+      { status: 200, body: [] },
+    ]);
+
+    const { default: PlanDetail } = await import("../app/adaptation/plans/[id]/page");
+    render(<PlanDetail params={{ id: "plan_1" }} />);
+
+    expect(await screen.findByText("Planner reasons")).toBeInTheDocument();
+    expect(screen.getByText("PLAN-001")).toBeInTheDocument();
+    expect(screen.getByText("Chose default recipe")).toBeInTheDocument();
+    expect(screen.getByText("PLAN-002")).toBeInTheDocument();
+    expect(screen.getByText("Limited corpus")).toBeInTheDocument();
+  });
+
   it("401 from /admin/adaptation/* redirects to /login", async () => {
     setHrefSpy();
     mockFetchSequence([{ status: 401, body: { detail: "unauthorized" } }]);
@@ -72,9 +138,9 @@ describe("Adaptation BO pages", () => {
     expect(await screen.findByText(/trace-xyz/)).toBeInTheDocument();
   });
 
-  it("start run navigates to /adaptation/runs/{runId}", async () => {
+  it("StartRun calls POST .../run and navigates to /adaptation/runs/{runId}", async () => {
     setHrefSpy();
-    mockFetchSequence([
+    const fetchMock = mockFetchSequence([
       {
         status: 200,
         body: [
@@ -102,6 +168,12 @@ describe("Adaptation BO pages", () => {
     await waitFor(() => {
       expect(window.location.href).toBe("/adaptation/runs/run_123");
     });
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/admin/adaptation/plans/plan_1/run"),
+    );
+    expect(runCall).toBeTruthy();
+    expect(runCall?.[1]).toMatchObject({ method: "POST" });
   });
 
   it("approve sends POST to /admin/adaptation/plans/{id}/approve", async () => {
@@ -199,7 +271,7 @@ describe("Adaptation BO pages", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("profile detail highlights failed blocking gate", async () => {
+  it("AdapterProfileDetail highlights failed blocking gate", async () => {
     mockFetchSequence([
       {
         status: 200,
