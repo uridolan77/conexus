@@ -1,0 +1,50 @@
+"""Normalised gateway errors.
+
+Replaces KGB's ``app.api.errors.GatewayError`` / ``BudgetExceededError``
+with a small set of provider-shaped exceptions the gateway can map to
+HTTP responses.
+"""
+
+from __future__ import annotations
+
+
+class ProviderError(Exception):
+    """Base class for provider-related errors."""
+
+    def __init__(self, message: str, *, provider: str | None = None) -> None:
+        super().__init__(message)
+        self.provider = provider
+
+
+class ProviderRateLimitError(ProviderError):
+    """Provider returned 429 (or equivalent)."""
+
+
+class ProviderUnavailableError(ProviderError):
+    """Provider returned a transient 5xx / connection error."""
+
+
+class AllProvidersFailedError(ProviderError):
+    """No configured provider could serve the request."""
+
+    def __init__(self, message: str = "All configured LLM providers failed"):
+        super().__init__(message)
+
+
+class UnknownModelError(ValueError):
+    """Caller asked for a model alias the gateway does not know.
+
+    Distinct from ``ProviderError`` so callers can distinguish a client
+    misconfiguration (typo, unsupported alias) from a runtime provider
+    failure. Subclasses ``ValueError`` so framework default handlers map
+    it to a 4xx rather than a 5xx.
+    """
+
+    def __init__(self, model: str, *, known_aliases: list[str] | None = None) -> None:
+        suffix = (
+            f" Known aliases: {', '.join(sorted(known_aliases))}."
+            if known_aliases
+            else ""
+        )
+        super().__init__(f"unknown model alias: {model!r}.{suffix}")
+        self.model = model
