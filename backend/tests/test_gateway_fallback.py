@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from app.llm.base import LLMProvider
+from app.llm.errors import ProviderError
 from app.llm.errors import (
     AllProvidersFailedError,
     ProviderRateLimitError,
@@ -50,6 +51,16 @@ class _StubProvider(LLMProvider):
             raise self._raises
         assert self._result is not None
         return self._result
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        raise ProviderError("streaming not supported in fallback tests", provider=self._provider)
 
     async def aclose(self) -> None:
         pass

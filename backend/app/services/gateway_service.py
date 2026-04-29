@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 from datetime import datetime, timezone
 
+from collections.abc import AsyncIterator
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,7 +34,7 @@ from app.llm.errors import (
     ProviderError,
     UnknownModelError,
 )
-from app.llm.types import ChatMessage, ChatResult
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
 from app.services.request_log_service import (
     finish_request_failure,
     finish_request_success,
@@ -95,6 +97,12 @@ class GatewayResponse:
     request_id: str
     result: ChatResult
     cost_usd: float
+
+
+@dataclass(slots=True)
+class GatewayStreamResponse:
+    request_id: str
+    stream: AsyncIterator[ChatStreamChunk]
 
 
 async def _with_log_session(
@@ -257,6 +265,165 @@ async def run_chat_completion(
         result.fallback_used,
     )
     return GatewayResponse(request_id=request_id, result=result, cost_usd=cost)
+
+
+async def run_chat_completion_stream(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    provider: LLMProvider,
+    project: Project,
+    api_key: ProjectApiKey,
+    model: str,
+    messages: list[ChatMessage],
+    max_tokens: int,
+    temperature: float,
+) -> GatewayStreamResponse:
+    request_id = new_request_id()
+
+    async with sessionmaker() as session:
+        limits = await get_project_limits(session, project_id=project.id)
+        if limits is not None and limits.limit_mode == "hard":
+            blocked = await check_hard_limits(
+                session,
+                project_id=project.id,
+                limits=limits,
+                now=datetime.now(timezone.utc),
+            )
+            if blocked is not None:
+
+                async def _log_blocked(log_session: AsyncSession) -> None:
+                    row = await start_request(
+                        log_session,
+                        request_id=request_id,
+                        project_id=project.id,
+                        api_key_id=api_key.id,
+                        requested_model=model,
+                    )
+                    await finish_request_failure(
+                        log_session,
+                        row,
+                        latency_ms=0,
+                        error_code=blocked.error_code,
+                        error_message=blocked.error_message,
+                    )
+
+                await _with_log_session(sessionmaker, _log_blocked)
+                raise GatewayLimitError(
+                    blocked.error_message,
+                    code=blocked.error_code,
+                    request_id=request_id,
+                    limit_type=blocked.limit_type,
+                    current_value=blocked.current_value,
+                    limit_value=blocked.limit_value,
+                    window=blocked.window,
+                    reset_at=blocked.reset_at,
+                )
+
+    async def _start(session: AsyncSession) -> None:
+        await start_request(
+            session,
+            request_id=request_id,
+            project_id=project.id,
+            api_key_id=api_key.id,
+            requested_model=model,
+        )
+
+    await _with_log_session(sessionmaker, _start)
+
+    started = time.monotonic()
+    upstream_stream = provider.stream_chat(
+        messages,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    async def _wrapped() -> AsyncIterator[ChatStreamChunk]:
+        seen_provider: str | None = None
+        seen_model: str | None = None
+        seen_fallback_used = False
+        final_usage = None
+        try:
+            async for chunk in upstream_stream:
+                seen_provider = chunk.provider
+                seen_model = chunk.model
+                seen_fallback_used = seen_fallback_used or chunk.fallback_used
+                if chunk.usage is not None:
+                    final_usage = chunk.usage
+                yield chunk
+
+            latency_ms = int((time.monotonic() - started) * 1000)
+            cost = (
+                get_cost(
+                    seen_model or model,
+                    final_usage.input_tokens,
+                    final_usage.output_tokens,
+                )
+                if final_usage is not None
+                else None
+            )
+
+            async def _finish(session: AsyncSession) -> None:
+                row = await _load_row(session, request_id=request_id)
+                await finish_request_success(
+                    session,
+                    row,
+                    provider=seen_provider or "unknown",
+                    model=seen_model or model,
+                    latency_ms=latency_ms,
+                    prompt_tokens=final_usage.input_tokens if final_usage else None,
+                    completion_tokens=final_usage.output_tokens if final_usage else None,
+                    estimated_cost=cost,
+                    fallback_used=seen_fallback_used,
+                )
+
+            await _with_log_session(sessionmaker, _finish)
+        except UnknownModelError as exc:
+            await _record_failure(
+                sessionmaker,
+                request_id=request_id,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code="unknown_model",
+                error_message=str(exc),
+            )
+            raise GatewayClientError(
+                str(exc), code="unknown_model", request_id=request_id
+            ) from exc
+        except AllProvidersFailedError as exc:
+            await _record_failure(
+                sessionmaker,
+                request_id=request_id,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code="all_providers_failed",
+                error_message=str(exc),
+            )
+            raise GatewayUpstreamError(
+                str(exc), code="all_providers_failed", request_id=request_id
+            ) from exc
+        except ProviderError as exc:
+            code = type(exc).__name__
+            await _record_failure(
+                sessionmaker,
+                request_id=request_id,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code=code,
+                error_message=str(exc),
+            )
+            raise GatewayUpstreamError(
+                str(exc), code=code, request_id=request_id
+            ) from exc
+        except Exception as exc:
+            code = type(exc).__name__
+            await _record_failure(
+                sessionmaker,
+                request_id=request_id,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code=code,
+                error_message="stream failed",
+            )
+            raise
+
+    return GatewayStreamResponse(request_id=request_id, stream=_wrapped())
 
 
 async def _record_failure(

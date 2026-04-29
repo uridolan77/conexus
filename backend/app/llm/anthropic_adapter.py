@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 import anthropic
+from collections.abc import AsyncIterator
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -35,7 +36,7 @@ from app.llm.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
-from app.llm.types import ChatMessage, ChatResult, TokenUsage
+from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,19 @@ class AnthropicProvider(LLMProvider):
             model=model,
             provider="anthropic",
             usage=usage,
+        )
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        raise ProviderError(
+            "Streaming is not supported for Anthropic models yet.",
+            provider=self.provider_name,
         )
 
     async def aclose(self) -> None:
