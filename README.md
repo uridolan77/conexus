@@ -115,6 +115,40 @@ python -m app.cli create-admin --username admin --password <strong_password>
   - default **true** for non-prod environments
   - default **false** in `APP_ENV=prod`
 
+## Deployment checklist (foundation)
+
+Conexus is designed to deploy as:
+
+- **Frontend BO** on Vercel (for example `https://bo.<domain>`)
+- **Backend API** on a container host (for example `https://api.<domain>`)
+- **Managed Postgres**
+
+Required production env vars (backend):
+
+- `APP_ENV=prod`
+- `DATABASE_URL`
+- `AUTH_SECRET`
+- `ENCRYPTION_KEY`
+- `CORS_ALLOWED_ORIGINS=https://bo.<domain>` (comma-separated list allowed; no `*` in prod)
+- `ALLOW_ENV_ADMIN_FALLBACK=false`
+- `ALLOW_CREATE_ALL=false` (run Alembic migrations instead)
+
+Optional production env vars:
+
+- `COOKIE_SECURE=true` (defaults to true in prod)
+- `COOKIE_SAMESITE=lax` (defaults to `lax`)
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (if using env-backed runtime providers)
+
+Deployment sequence:
+
+- Provision managed Postgres
+- Set backend env vars
+- Run `alembic upgrade head`
+- Create the first admin user (`python -m app.cli create-admin ...`)
+- Start backend; verify `GET /health` and `GET /health/ready`
+- Deploy frontend with `NEXT_PUBLIC_BACKEND_BASE_URL=https://api.<domain>`
+- Log into BO, create project/key/provider, run a smoke gateway request
+
 ### 5) Call gateway with project API key
 
 Use the project API key returned by BO:

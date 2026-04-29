@@ -58,8 +58,8 @@ def reset_engine() -> None:
     _sessionmaker = None
 
 
-async def init_db() -> None:
-    """Create all tables on startup.
+async def init_db(*, allow_create_all: bool = True) -> None:
+    """Create all tables on startup (optional).
 
     M2 schema only — projects, project_api_keys, gateway_requests. Real
     migrations land in a later milestone.
@@ -68,7 +68,8 @@ async def init_db() -> None:
 
     engine = get_engine()
     async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all)
+        if allow_create_all:
+            await conn.run_sync(models.Base.metadata.create_all)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

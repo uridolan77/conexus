@@ -32,13 +32,19 @@ class Settings(BaseSettings):
         default="http://localhost:3000", alias="FRONTEND_BASE_URL"
     )
 
+    cors_allowed_origins: str | None = Field(default=None, alias="CORS_ALLOWED_ORIGINS")
+    frontend_origins: str | None = Field(default=None, alias="FRONTEND_ORIGINS")
+
     auth_secret: str = Field(default="replace-me-local", alias="AUTH_SECRET")
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
     admin_session_ttl_hours: int = Field(default=12, alias="ADMIN_SESSION_TTL_HOURS")
+    cookie_secure: bool | None = Field(default=None, alias="COOKIE_SECURE")
+    cookie_samesite: str = Field(default="lax", alias="COOKIE_SAMESITE")
     allow_env_admin_fallback: bool | None = Field(
         default=None, alias="ALLOW_ENV_ADMIN_FALLBACK"
     )
+    allow_create_all: bool | None = Field(default=None, alias="ALLOW_CREATE_ALL")
     encryption_key: str = Field(..., alias="ENCRYPTION_KEY")
 
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -51,6 +57,33 @@ class Settings(BaseSettings):
         if self.allow_env_admin_fallback is not None:
             return self.allow_env_admin_fallback
         return self.app_env.lower() != "prod"
+
+    @property
+    def effective_cookie_secure(self) -> bool:
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.app_env.lower() == "prod"
+
+    @property
+    def effective_allow_create_all(self) -> bool:
+        if self.allow_create_all is not None:
+            return self.allow_create_all
+        # Default: keep dev/test convenient; prod should run Alembic explicitly.
+        return self.app_env.lower() != "prod"
+
+    @property
+    def effective_cors_origins(self) -> list[str]:
+        raw = (self.cors_allowed_origins or self.frontend_origins or "").strip()
+        if raw:
+            origins = [o.strip() for o in raw.split(",") if o.strip()]
+        else:
+            origins = [self.frontend_base_url]
+
+        if self.app_env.lower() != "prod":
+            for local in ("http://localhost:3000", "http://127.0.0.1:3000"):
+                if local not in origins:
+                    origins.append(local)
+        return origins
 
 
 settings = Settings()

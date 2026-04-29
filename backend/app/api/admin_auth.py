@@ -84,8 +84,8 @@ async def login(
         key=ADMIN_SESSION_COOKIE,
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=settings.app_env == "prod",
+        samesite=settings.cookie_samesite,
+        secure=settings.effective_cookie_secure,
         max_age=settings.admin_session_ttl_hours * 3600,
         path="/",
     )

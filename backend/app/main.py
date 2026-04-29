@@ -39,6 +39,8 @@ def _ensure_prod_secret_hardening() -> None:
         problems.append("AUTH_SECRET uses default")
     if settings.admin_password == "admin":
         problems.append("ADMIN_PASSWORD uses default")
+    if any(origin.strip() == "*" for origin in settings.effective_cors_origins):
+        problems.append("CORS_ALLOWED_ORIGINS must not include '*' in prod")
     if problems:
         details = ", ".join(problems)
         raise RuntimeError(f"unsafe production config: {details}")
@@ -54,10 +56,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "invalid ENCRYPTION_KEY: expected a valid Fernet key"
         ) from exc
     if settings.app_env.lower() == "prod":
-        logger.warning(
-            "prod_startup_schema_notice use_alembic_migrations=true create_all_is_not_migrations=true"
-        )
-    await init_db()
+        logger.warning("prod_startup use_alembic_migrations=true")
+        if settings.effective_allow_create_all:
+            logger.warning(
+                "prod_startup_schema_notice create_all_enabled=true create_all_is_not_migrations=true"
+            )
+        else:
+            logger.warning(
+                "prod_startup_schema_notice create_all_enabled=false run_alembic_upgrade_head=true"
+            )
+
+    await init_db(allow_create_all=settings.effective_allow_create_all)
     logger.info("conexus_db_ready url=%s", _redacted_db_url(settings.database_url))
     try:
         yield
@@ -85,7 +94,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_base_url],
+        allow_origins=settings.effective_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

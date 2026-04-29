@@ -176,7 +176,7 @@ class AnthropicProvider(LLMProvider):
                 return "stop"
             if stop_reason == "max_tokens":
                 return "length"
-            # e.g. "tool_use" exists; we don't support tool calls, but keep it safe.
+            # TODO(Mxx): Preserve "tool_use" once tool calling is supported.
             return "stop"
 
         def _safe_message(prefix: str) -> str:
@@ -218,7 +218,11 @@ class AnthropicProvider(LLMProvider):
                 # Emit a final chunk with usage/finish reason if available.
                 try:
                     final_message = await stream.get_final_message()
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "anthropic_stream_final_message_unavailable error_type=%s",
+                        type(exc).__name__,
+                    )
                     final_message = None
 
                 finish_reason = _map_finish_reason(
