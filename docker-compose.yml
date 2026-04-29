@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: conexus
+      POSTGRES_PASSWORD: conexus
+      POSTGRES_DB: conexus
+    ports:
+      - "5432:5432"
+    volumes:
+      - conexus_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conexus -d conexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://conexus:conexus@postgres:5432/conexus
+      LOG_LEVEL: INFO
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  conexus_pg:
