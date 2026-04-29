@@ -9,6 +9,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.db import models
 from app.db.session import get_session
 from app.main import app
@@ -80,8 +81,10 @@ def _assert_no_secret_fields(value: Any) -> None:
 @pytest.mark.asyncio
 async def test_routing_policy_requires_admin_auth(client: AsyncClient) -> None:
     response = await client.get("/admin/routing/policy")
+    candidates_response = await client.get("/admin/routing/provider-candidates")
 
     assert response.status_code == 401
+    assert candidates_response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -113,3 +116,67 @@ async def test_routing_policy_describes_current_static_aliases(
     assert direct_routes["openai"]["fallback_enabled"] is False
     assert "gpt-" in direct_routes["openai"]["model_prefixes"]
     _assert_no_secret_fields(body)
+
+
+@pytest.mark.asyncio
+async def test_provider_candidates_include_active_configs_and_env_fallback(
+    client: AsyncClient,
+    db_sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+    monkeypatch.setattr(settings, "openai_api_key", "sk-env-secret")
+    async with db_sessionmaker() as session:
+        session.add_all(
+            [
+                models.ProviderConfig(
+                    id="active_provider",
+                    provider="anthropic",
+                    label="Primary Anthropic",
+                    api_key_encrypted="encrypted-secret",
+                    key_mask="sk-ant...1234",
+                    is_active=True,
+                    last_test_status="ok",
+                ),
+                models.ProviderConfig(
+                    id="revoked_provider",
+                    provider="openai",
+                    label="Revoked OpenAI",
+                    api_key_encrypted="encrypted-revoked-secret",
+                    key_mask="sk-openai...9999",
+                    is_active=False,
+                ),
+            ]
+        )
+        await session.commit()
+    await _login(client)
+
+    response = await client.get("/admin/routing/provider-candidates")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == [
+        {
+            "provider": "anthropic",
+            "source": "bo_config",
+            "config_id": "active_provider",
+            "label": "Primary Anthropic",
+            "key_mask": "sk-ant...1234",
+            "is_active": True,
+            "last_test_status": "ok",
+            "last_tested_at": None,
+        },
+        {
+            "provider": "openai",
+            "source": "env",
+            "config_id": None,
+            "label": "Environment fallback",
+            "key_mask": None,
+            "is_active": True,
+            "last_test_status": None,
+            "last_tested_at": None,
+        },
+    ]
+    _assert_no_secret_fields(body)
+    assert "sk-env-secret" not in response.text
+    assert "encrypted-secret" not in response.text

@@ -105,6 +105,17 @@ export type RoutingPolicy = {
   }>;
 };
 
+export type ProviderCandidate = {
+  provider: string;
+  source: "bo_config" | "env";
+  config_id: string | null;
+  label: string | null;
+  key_mask: string | null;
+  is_active: boolean;
+  last_test_status: string | null;
+  last_tested_at: string | null;
+};
+
 export type ChatCompletionsResponse = {
   id: string;
   model: string;

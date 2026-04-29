@@ -13,10 +13,11 @@ import {
   Table,
 } from "@/components/ui";
 import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
-import type { RoutingPolicy } from "@/lib/types";
+import type { ProviderCandidate, RoutingPolicy } from "@/lib/types";
 
 export default function RoutingPage() {
   const [policy, setPolicy] = useState<RoutingPolicy | null>(null);
+  const [candidates, setCandidates] = useState<ProviderCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,20 +26,34 @@ export default function RoutingPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${BACKEND_BASE}/admin/routing/policy`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const body = await readJsonSafe(res);
-        if (res.status === 401) {
+        const [policyRes, candidatesRes] = await Promise.all([
+          fetch(`${BACKEND_BASE}/admin/routing/policy`, {
+            credentials: "include",
+            cache: "no-store",
+          }),
+          fetch(`${BACKEND_BASE}/admin/routing/provider-candidates`, {
+            credentials: "include",
+            cache: "no-store",
+          }),
+        ]);
+        if (policyRes.status === 401 || candidatesRes.status === 401) {
           window.location.href = "/login";
           return;
         }
-        if (!res.ok) {
-          setError(formatApiError(body));
+        const [policyBody, candidatesBody] = await Promise.all([
+          readJsonSafe(policyRes),
+          readJsonSafe(candidatesRes),
+        ]);
+        if (!policyRes.ok) {
+          setError(formatApiError(policyBody));
           return;
         }
-        setPolicy(body as RoutingPolicy);
+        if (!candidatesRes.ok) {
+          setError(formatApiError(candidatesBody));
+          return;
+        }
+        setPolicy(policyBody as RoutingPolicy);
+        setCandidates(candidatesBody as ProviderCandidate[]);
       } catch {
         setError("Unable to load routing policy. Check that the backend is reachable.");
       } finally {
@@ -78,6 +93,47 @@ export default function RoutingPage() {
                 { label: "Default alias", value: <code>{policy.default_alias}</code> },
               ]}
             />
+          </Card>
+
+          <Card>
+            <SectionHeader
+              title="Provider Candidates"
+              description="Active BO provider configs and configured environment fallback keys. Stored provider keys are not decrypted or shown here."
+            />
+            {candidates.length === 0 ? (
+              <EmptyState title="No provider candidates">
+                Add active provider credentials or configure environment keys before sending gateway traffic.
+              </EmptyState>
+            ) : (
+              <Table aria-label="Provider candidates">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Source</th>
+                    <th>Label</th>
+                    <th>Key</th>
+                    <th>Last test</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((candidate) => (
+                    <tr key={`${candidate.source}-${candidate.config_id ?? candidate.provider}`}>
+                      <td>
+                        <strong>{candidate.provider}</strong>
+                      </td>
+                      <td>
+                        <Badge tone={candidate.source === "bo_config" ? "info" : "neutral"}>
+                          {candidate.source === "bo_config" ? "BO config" : "env fallback"}
+                        </Badge>
+                      </td>
+                      <td>{candidate.label ?? "—"}</td>
+                      <td>{candidate.key_mask ? <code>{candidate.key_mask}</code> : "Configured"}</td>
+                      <td>{candidate.last_test_status ?? "not tested"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
           </Card>
 
           <Card>
