@@ -598,6 +598,11 @@ pre {
   place-items: center;
 }
 
+.auth-standalone {
+  min-height: 100vh;
+  padding: var(--space-5);
+}
+
 .auth-card {
   width: min(100%, 440px);
   box-shadow: var(--shadow-md);

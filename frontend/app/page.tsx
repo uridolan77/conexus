@@ -2,9 +2,11 @@
 
 import { HealthCard } from "../components/HealthCard";
 import {
+  Alert,
   Card,
   EmptyState,
   LinkButton,
+  LoadingState,
   PageHeader,
   SectionHeader,
   StatCard,
@@ -14,31 +16,64 @@ import type { ProjectRow, ProviderRow } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
 
 export default function DashboardPage() {
-  const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[] | null>(null);
+  const [providers, setProviders] = useState<ProviderRow[] | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSummary() {
-      const [projectRes, providerRes] = await Promise.all([
-        fetch(`${BACKEND_BASE}/admin/projects`, { credentials: "include" }),
-        fetch(`${BACKEND_BASE}/admin/providers`, { credentials: "include" }),
-      ]);
-      if (projectRes.status === 401 || providerRes.status === 401) {
-        window.location.href = "/login";
-        return;
+      setSummaryLoading(true);
+      setSummaryError(null);
+      try {
+        const [projectRes, providerRes] = await Promise.all([
+          fetch(`${BACKEND_BASE}/admin/projects`, { credentials: "include" }),
+          fetch(`${BACKEND_BASE}/admin/providers`, { credentials: "include" }),
+        ]);
+        if (projectRes.status === 401 || providerRes.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+
+        const failures: string[] = [];
+        if (projectRes.ok) {
+          setProjects((await projectRes.json()) as ProjectRow[]);
+        } else {
+          setProjects(null);
+          failures.push("projects");
+        }
+
+        if (providerRes.ok) {
+          setProviders((await providerRes.json()) as ProviderRow[]);
+        } else {
+          setProviders(null);
+          failures.push("providers");
+        }
+
+        if (failures.length > 0) {
+          setSummaryError(`Unable to load dashboard summary for ${failures.join(" and ")}.`);
+        }
+      } catch {
+        setProjects(null);
+        setProviders(null);
+        setSummaryError("Unable to load dashboard summary. Check that the backend is reachable.");
+      } finally {
+        setSummaryLoading(false);
       }
-      if (projectRes.ok) setProjects((await projectRes.json()) as ProjectRow[]);
-      if (providerRes.ok) setProviders((await providerRes.json()) as ProviderRow[]);
     }
     void loadSummary();
   }, []);
 
-  const activeProviders = providers.filter((provider) => provider.is_active).length;
-  const activeKeys = projects.reduce(
+  const projectRows = projects ?? [];
+  const providerRows = providers ?? [];
+  const activeProviders = providers
+    ? providers.filter((provider) => provider.is_active).length
+    : null;
+  const activeKeys = projectRows.reduce(
     (total, project) => total + project.active_key_count,
     0,
   );
-  const totalRequests = projects.reduce(
+  const totalRequests = projectRows.reduce(
     (total, project) => total + project.total_request_count,
     0,
   );
@@ -46,12 +81,12 @@ export default function DashboardPage() {
     () => [
       {
         label: "Add provider key",
-        done: activeProviders > 0,
+        done: (activeProviders ?? 0) > 0,
         href: "/providers",
       },
       {
         label: "Create project",
-        done: projects.length > 0,
+        done: projectRows.length > 0,
         href: "/projects",
       },
       {
@@ -70,7 +105,7 @@ export default function DashboardPage() {
         href: "/requests",
       },
     ],
-    [activeKeys, activeProviders, projects.length, totalRequests],
+    [activeKeys, activeProviders, projectRows.length, totalRequests],
   );
 
   return (
@@ -82,11 +117,31 @@ export default function DashboardPage() {
         actions={<LinkButton href="/smoke-tests" variant="primary">Run Smoke Test</LinkButton>}
       />
 
-      <div className="grid grid-3">
-        <StatCard label="Projects" value={projects.length} hint="Gateway clients" />
-        <StatCard label="Active Provider Keys" value={activeProviders} hint="Upstream credentials" />
-        <StatCard label="Logged Requests" value={totalRequests} hint="Persisted by the gateway" />
-      </div>
+      {summaryError && <Alert tone="warning">{summaryError}</Alert>}
+
+      {summaryLoading ? (
+        <Card>
+          <LoadingState label="Loading dashboard summary..." />
+        </Card>
+      ) : (
+        <div className="grid grid-3">
+          <StatCard
+            label="Projects"
+            value={projects ? projects.length : "Unavailable"}
+            hint="Gateway clients"
+          />
+          <StatCard
+            label="Active Provider Keys"
+            value={activeProviders ?? "Unavailable"}
+            hint="Upstream credentials"
+          />
+          <StatCard
+            label="Logged Requests"
+            value={projects ? totalRequests : "Unavailable"}
+            hint="Persisted by the gateway"
+          />
+        </div>
+      )}
 
       <HealthCard />
 
@@ -127,7 +182,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {projects.length === 0 && providers.length === 0 && (
+      {!summaryLoading && !summaryError && projectRows.length === 0 && providerRows.length === 0 && (
         <EmptyState title="Start with an upstream provider">
           Add an OpenAI or Anthropic key, create a project, issue a project API key,
           then run the smoke test to confirm the gateway path.
