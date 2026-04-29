@@ -152,10 +152,12 @@ async def test_usage_routes_require_admin_auth(client: AsyncClient) -> None:
     summary_response = await client.get("/admin/usage/summary")
     by_project_response = await client.get("/admin/usage/by-project")
     by_provider_response = await client.get("/admin/usage/by-provider")
+    timeseries_response = await client.get("/admin/usage/timeseries")
 
     assert summary_response.status_code == 401
     assert by_project_response.status_code == 401
     assert by_provider_response.status_code == 401
+    assert timeseries_response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -277,6 +279,36 @@ async def test_usage_custom_dates_filter_requests(
     assert body["failed_requests"] == 1
     assert body["fallback_count"] == 1
     assert body["estimated_cost"] == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_timeseries_returns_hourly_metadata_buckets(
+    client: AsyncClient,
+    db_sessionmaker,
+) -> None:
+    seed = await _seed_usage_requests(db_sessionmaker)
+    created = seed["created"]
+    await _login(client)
+
+    response = await client.get(
+        "/admin/usage/timeseries",
+        params={
+            "window": "24h",
+            "created_from": created.isoformat(),
+            "created_to": (created + timedelta(hours=3)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["interval"] == "hour"
+    assert len(body["items"]) == 3
+    assert [item["total_requests"] for item in body["items"]] == [1, 1, 1]
+    assert body["items"][0]["completed_requests"] == 1
+    assert body["items"][0]["total_tokens"] == 30
+    assert body["items"][1]["failed_requests"] == 1
+    assert body["items"][1]["fallback_count"] == 1
+    assert body["items"][2]["avg_latency_ms"] is None
 
 
 @pytest.mark.asyncio

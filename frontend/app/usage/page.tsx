@@ -20,6 +20,8 @@ import type {
   UsageProjectRow,
   UsageProviderRow,
   UsageSummary,
+  UsageTimeseriesPoint,
+  UsageTimeseriesResponse,
 } from "@/lib/types";
 
 type UsageWindow = "24h" | "7d" | "30d";
@@ -50,6 +52,7 @@ export default function UsagePage() {
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [byProject, setByProject] = useState<UsageProjectRow[]>([]);
   const [byProvider, setByProvider] = useState<UsageProviderRow[]>([]);
+  const [timeseries, setTimeseries] = useState<UsageTimeseriesPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +62,7 @@ export default function UsagePage() {
       setError(null);
       try {
         const params = new URLSearchParams({ window: windowValue });
-        const [summaryRes, projectRes, providerRes] = await Promise.all([
+        const [summaryRes, projectRes, providerRes, timeseriesRes] = await Promise.all([
           fetch(`${BACKEND_BASE}/admin/usage/summary?${params.toString()}`, {
             credentials: "include",
             cache: "no-store",
@@ -72,21 +75,27 @@ export default function UsagePage() {
             credentials: "include",
             cache: "no-store",
           }),
+          fetch(`${BACKEND_BASE}/admin/usage/timeseries?${params.toString()}`, {
+            credentials: "include",
+            cache: "no-store",
+          }),
         ]);
 
         if (
           summaryRes.status === 401 ||
           projectRes.status === 401 ||
-          providerRes.status === 401
+          providerRes.status === 401 ||
+          timeseriesRes.status === 401
         ) {
           window.location.href = "/login";
           return;
         }
 
-        const [summaryBody, projectBody, providerBody] = await Promise.all([
+        const [summaryBody, projectBody, providerBody, timeseriesBody] = await Promise.all([
           readJsonSafe(summaryRes),
           readJsonSafe(projectRes),
           readJsonSafe(providerRes),
+          readJsonSafe(timeseriesRes),
         ]);
 
         if (!summaryRes.ok) {
@@ -101,6 +110,10 @@ export default function UsagePage() {
           setError(formatApiError(providerBody));
           return;
         }
+        if (!timeseriesRes.ok) {
+          setError(formatApiError(timeseriesBody));
+          return;
+        }
 
         setSummary(summaryBody as UsageSummary);
         setByProject(
@@ -109,6 +122,7 @@ export default function UsagePage() {
         setByProvider(
           (providerBody as UsageBreakdownResponse<UsageProviderRow>).items,
         );
+        setTimeseries((timeseriesBody as UsageTimeseriesResponse).items);
       } catch {
         setError("Unable to load usage analytics. Check that the backend is reachable.");
       } finally {
@@ -219,6 +233,45 @@ export default function UsagePage() {
                   {byProject.map((row) => (
                     <tr key={row.project_id ?? "unknown-project"}>
                       <td>{row.project_name ?? row.project_id ?? "Unassigned"}</td>
+                      <td>{formatNumber(row.total_requests)}</td>
+                      <td>{formatRate(row.success_rate)}</td>
+                      <td>{formatRate(row.fallback_rate)}</td>
+                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{formatCost(row.estimated_cost)}</td>
+                      <td>{formatMs(row.avg_latency_ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Card>
+
+          <Card>
+            <SectionHeader
+              title="Usage Over Time"
+              description="Bucketed request metadata for the selected window. Empty buckets are shown so gaps are visible."
+            />
+            {timeseries.length === 0 ? (
+              <EmptyState title="No usage buckets">
+                No gateway request metadata exists for this time window.
+              </EmptyState>
+            ) : (
+              <Table aria-label="Usage over time">
+                <thead>
+                  <tr>
+                    <th>Bucket start</th>
+                    <th>Requests</th>
+                    <th>Success</th>
+                    <th>Fallback</th>
+                    <th>Tokens</th>
+                    <th>Cost</th>
+                    <th>Avg latency</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {timeseries.map((row) => (
+                    <tr key={row.bucket_start}>
+                      <td>{formatDate(row.bucket_start)}</td>
                       <td>{formatNumber(row.total_requests)}</td>
                       <td>{formatRate(row.success_rate)}</td>
                       <td>{formatRate(row.fallback_rate)}</td>

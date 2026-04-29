@@ -72,6 +72,20 @@ export type UsageBreakdownResponse<T> = {
   items: T[];
 };
 
+export type UsageTimeseriesPoint = UsageSummaryMetrics & {
+  bucket_start: string;
+  bucket_end: string;
+};
+
+export type UsageTimeseriesResponse = {
+  window: "24h" | "7d" | "30d";
+  created_from: string;
+  created_to: string;
+  interval: "hour" | "day";
+  currency: "USD";
+  items: UsageTimeseriesPoint[];
+};
+
 type UsageSummaryMetrics = {
   total_requests: number;
   completed_requests: number;

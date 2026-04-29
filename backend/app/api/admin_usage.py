@@ -28,6 +28,20 @@ class TimeBounds:
     created_to: datetime
 
 
+@dataclass(slots=True)
+class _MetricAccumulator:
+    total_requests: int = 0
+    completed_requests: int = 0
+    failed_requests: int = 0
+    fallback_count: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost: float = 0.0
+    latency_sum_ms: int = 0
+    latency_count: int = 0
+
+
 class UsageMetrics(BaseModel):
     total_requests: int
     completed_requests: int
@@ -72,6 +86,20 @@ class ProviderUsageResponse(BaseModel):
     created_to: datetime
     currency: Literal["USD"] = "USD"
     items: list[ProviderUsageRow]
+
+
+class UsageTimeseriesPoint(UsageMetrics):
+    bucket_start: datetime
+    bucket_end: datetime
+
+
+class UsageTimeseriesResponse(BaseModel):
+    window: Window
+    created_from: datetime
+    created_to: datetime
+    interval: Literal["hour", "day"]
+    currency: Literal["USD"] = "USD"
+    items: list[UsageTimeseriesPoint]
 
 
 def _window_start(window: Window, now: datetime) -> datetime:
@@ -128,11 +156,86 @@ def _metric_columns() -> list:
     ]
 
 
+def _metrics_from_accumulator(accumulator: _MetricAccumulator) -> UsageMetrics:
+    total_requests = accumulator.total_requests
+    return UsageMetrics(
+        total_requests=total_requests,
+        completed_requests=accumulator.completed_requests,
+        failed_requests=accumulator.failed_requests,
+        success_rate=(
+            accumulator.completed_requests / total_requests if total_requests else 0.0
+        ),
+        fallback_count=accumulator.fallback_count,
+        fallback_rate=accumulator.fallback_count / total_requests if total_requests else 0.0,
+        total_prompt_tokens=accumulator.total_prompt_tokens,
+        total_completion_tokens=accumulator.total_completion_tokens,
+        total_tokens=accumulator.total_tokens,
+        estimated_cost=accumulator.estimated_cost,
+        avg_latency_ms=(
+            accumulator.latency_sum_ms / accumulator.latency_count
+            if accumulator.latency_count
+            else None
+        ),
+    )
+
+
+def _record_metric(accumulator: _MetricAccumulator, row: GatewayRequest) -> None:
+    accumulator.total_requests += 1
+    if row.status == "completed":
+        accumulator.completed_requests += 1
+    if row.status == "failed":
+        accumulator.failed_requests += 1
+    if row.fallback_used:
+        accumulator.fallback_count += 1
+    accumulator.total_prompt_tokens += row.prompt_tokens or 0
+    accumulator.total_completion_tokens += row.completion_tokens or 0
+    accumulator.total_tokens += row.total_tokens or 0
+    accumulator.estimated_cost += row.estimated_cost or 0.0
+    if row.latency_ms is not None:
+        accumulator.latency_sum_ms += row.latency_ms
+        accumulator.latency_count += 1
+
+
+def _ensure_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _timeseries_interval(window: Window) -> tuple[Literal["hour", "day"], timedelta]:
+    if window == "24h":
+        return "hour", timedelta(hours=1)
+    return "day", timedelta(days=1)
+
+
+def _empty_buckets(
+    bounds: TimeBounds,
+    step: timedelta,
+) -> list[tuple[datetime, datetime, _MetricAccumulator]]:
+    buckets: list[tuple[datetime, datetime, _MetricAccumulator]] = []
+    bucket_start = bounds.created_from
+    while bucket_start < bounds.created_to:
+        bucket_end = min(bucket_start + step, bounds.created_to)
+        buckets.append((bucket_start, bucket_end, _MetricAccumulator()))
+        bucket_start = bucket_end
+    if not buckets:
+        buckets.append((bounds.created_from, bounds.created_to, _MetricAccumulator()))
+    return buckets
+
+
 def _apply_time_bounds(stmt: Select, bounds: TimeBounds) -> Select:
     return stmt.where(
         GatewayRequest.created_at >= bounds.created_from,
         GatewayRequest.created_at <= bounds.created_to,
     )
+
+
+def _bucket_index(created_at: datetime, bounds: TimeBounds, step: timedelta, count: int) -> int:
+    if count <= 1:
+        return 0
+    elapsed = _ensure_aware(created_at) - bounds.created_from
+    index = int(elapsed.total_seconds() // step.total_seconds())
+    return min(max(index, 0), count - 1)
 
 
 def _metrics_from_mapping(row: object) -> UsageMetrics:
@@ -257,5 +360,43 @@ async def get_usage_by_provider(
                 **_metrics_from_mapping(row).model_dump(),
             )
             for row in rows
+        ],
+    )
+
+
+@router.get("/timeseries", response_model=UsageTimeseriesResponse)
+async def get_usage_timeseries(
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    window: Annotated[Window, Query()] = "30d",
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+) -> UsageTimeseriesResponse:
+    bounds = _time_bounds(
+        window=window,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    interval, step = _timeseries_interval(window)
+    buckets = _empty_buckets(bounds, step)
+    stmt = _apply_time_bounds(select(GatewayRequest), bounds).order_by(
+        GatewayRequest.created_at.asc()
+    )
+    rows = list((await session.execute(stmt)).scalars())
+    for row in rows:
+        index = _bucket_index(row.created_at, bounds, step, len(buckets))
+        _record_metric(buckets[index][2], row)
+    return UsageTimeseriesResponse(
+        window=bounds.window,
+        created_from=bounds.created_from,
+        created_to=bounds.created_to,
+        interval=interval,
+        items=[
+            UsageTimeseriesPoint(
+                bucket_start=bucket_start,
+                bucket_end=bucket_end,
+                **_metrics_from_accumulator(accumulator).model_dump(),
+            )
+            for bucket_start, bucket_end, accumulator in buckets
         ],
     )
