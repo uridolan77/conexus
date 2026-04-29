@@ -531,6 +531,130 @@ async def test_chat_completions_stream_true_returns_sse_and_logs_success(
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_stream_true_concrete_anthropic_model_returns_sse_and_logs_provider_model(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    gateway = GatewayProvider(
+        primary=_StubProvider(
+            stream_chunks=[
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", role_delta="assistant"),
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="hel"),
+                ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="lo"),
+                ChatStreamChunk(
+                    provider="anthropic",
+                    model="claude-sonnet-4-20250514",
+                    finish_reason="stop",
+                    usage=TokenUsage(input_tokens=3, output_tokens=2),
+                ),
+            ]
+        ),
+        fallback=_StubProvider(),
+    )
+    _set_provider(gateway)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "chat.completion.chunk" in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "claude-sonnet-4-20250514"
+        assert log.provider == "anthropic"
+        assert log.model == "claude-sonnet-4-20250514"
+        assert log.prompt_tokens == 3
+        assert log.completion_tokens == 2
+        assert log.total_tokens == 5
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_true_alias_stream_logs_anthropic_provider_model(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, project, api_key = seeded
+    primary = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", role_delta="assistant"),
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hello"),
+            ChatStreamChunk(
+                provider="anthropic",
+                model="claude-haiku-4-5-20251001",
+                finish_reason="stop",
+                usage=TokenUsage(input_tokens=2, output_tokens=1),
+            ),
+        ]
+    )
+    fallback = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="should-not-happen"),
+        ]
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+    _set_provider(gateway)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "conexus-fast",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "chat.completion.chunk" in payload
+    assert "hello" in payload
+    assert "data: [DONE]" in payload
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert fallback.stream_calls == []
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.project_id == project.id
+        assert log.api_key_id == api_key.id
+        assert log.requested_model == "conexus-fast"
+        assert log.provider == "anthropic"
+        assert log.model == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
     client, seeded, db_sessionmaker
 ) -> None:

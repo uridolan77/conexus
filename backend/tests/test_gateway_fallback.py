@@ -296,8 +296,65 @@ async def test_concrete_openai_model_routes_to_openai_only() -> None:
 async def test_alias_streaming_routes_to_openai_until_anthropic_streaming_exists() -> None:
     primary = _StubProvider(
         provider="anthropic",
-        stream_raises=ProviderError("anthropic streaming not supported", provider="anthropic"),
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hi"),
+        ],
         result=_result("anthropic", "claude-haiku-4-5-20251001"),
+    )
+    fallback = _StubProvider(provider="openai", result=_result("openai", "gpt-4o-mini"))
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in gateway.stream_chat(
+        [{"role": "user", "content": "hello"}],
+        model="conexus-fast",
+    ):
+        chunks.append(chunk)
+
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-haiku-4-5-20251001"
+    assert fallback.stream_calls == []
+    assert chunks and chunks[0].provider == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_fallback_mid_stream_for_aliases() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-haiku-4-5-20251001", content_delta="hi"),
+        ],
+        stream_raises=ProviderUnavailableError("503", provider="anthropic"),
+        result=_result("anthropic", "claude-haiku-4-5-20251001"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="should-not-happen"),
+        ],
+        result=_result("openai", "gpt-4o-mini"),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    with pytest.raises(ProviderUnavailableError):
+        async for chunk in gateway.stream_chat(
+            [{"role": "user", "content": "hello"}],
+            model="conexus-fast",
+        ):
+            chunks.append(chunk)
+
+    assert chunks and chunks[0].content_delta == "hi"
+    assert fallback.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_concrete_openai_model_streaming_calls_openai_only() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="nope"),
+        ],
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
     )
     fallback = _StubProvider(
         provider="openai",
@@ -311,11 +368,40 @@ async def test_alias_streaming_routes_to_openai_until_anthropic_streaming_exists
     chunks: list[ChatStreamChunk] = []
     async for chunk in gateway.stream_chat(
         [{"role": "user", "content": "hello"}],
-        model="conexus-fast",
+        model="gpt-4o-mini",
     ):
         chunks.append(chunk)
 
-    # Primary shouldn't be used for alias streaming yet.
     assert primary.stream_calls == []
     assert fallback.stream_calls and fallback.stream_calls[0]["model"] == "gpt-4o-mini"
     assert chunks and chunks[0].provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_concrete_anthropic_model_streaming_calls_anthropic_only() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        stream_chunks=[
+            ChatStreamChunk(provider="anthropic", model="claude-sonnet-4-20250514", content_delta="hi"),
+        ],
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="nope"),
+        ],
+        result=_result("openai", "gpt-4o-mini"),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in gateway.stream_chat(
+        [{"role": "user", "content": "hello"}],
+        model="claude-sonnet-4-20250514",
+    ):
+        chunks.append(chunk)
+
+    assert fallback.stream_calls == []
+    assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-sonnet-4-20250514"
+    assert chunks and chunks[0].provider == "anthropic"

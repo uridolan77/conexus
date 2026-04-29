@@ -84,6 +84,7 @@ Request logging notes:
 - No logprobs
 - `response_format` only supports plain text mode
 - **Concrete OpenAI models** stream (for example `gpt-4o-mini`)
-- **Anthropic streaming is not supported yet**
-- **Conexus alias streaming** currently streams via the alias’ **OpenAI** mapping until Anthropic streaming is implemented
+- **Concrete Anthropic models** stream (for example `claude-sonnet-4-20250514`)
+- **Conexus alias streaming** streams via the alias’ **Anthropic primary** model
+- Streaming does **not** do mid-stream fallback (once streaming starts, Conexus never switches providers). OpenAI fallback remains available only for **non-streaming** alias calls.
 

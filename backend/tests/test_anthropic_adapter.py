@@ -13,7 +13,8 @@ from app.llm.anthropic_adapter import (
     ANTHROPIC_RETRY_ATTEMPTS,
     AnthropicProvider,
 )
-from app.llm.errors import ProviderRateLimitError, ProviderUnavailableError
+from app.llm.errors import ProviderError, ProviderRateLimitError, ProviderUnavailableError
+from app.llm.types import ChatStreamChunk, TokenUsage
 
 
 class _FakeMessages:
@@ -197,3 +198,144 @@ async def test_anthropic_transient_5xx_then_success_returns_chat_result() -> Non
 
     assert result.content == "ok"
     assert len(messages.calls) == 2
+
+
+# ── Streaming ───────────────────────────────────────────────────────────
+
+
+class _FakeAnthropicStream:
+    def __init__(self, events: list[Any], final_message: Any | None = None):
+        self._events = list(events)
+        self._final = final_message
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def __aiter__(self):
+        async def _gen():
+            for ev in self._events:
+                if isinstance(ev, BaseException):
+                    raise ev
+                yield ev
+
+        return _gen()
+
+    async def get_final_message(self) -> Any:
+        if isinstance(self._final, BaseException):
+            raise self._final
+        return self._final
+
+
+class _FakeMessagesWithStream(_FakeMessages):
+    def __init__(
+        self,
+        *,
+        stream: _FakeAnthropicStream | None = None,
+        stream_raises: BaseException | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(**kwargs)
+        self._stream = stream
+        self._stream_raises = stream_raises
+        self.stream_calls: list[dict[str, Any]] = []
+
+    def stream(self, **kwargs: Any) -> Any:
+        self.stream_calls.append(kwargs)
+        if self._stream_raises is not None:
+            raise self._stream_raises
+        assert self._stream is not None
+        return self._stream
+
+
+def _content_delta_event(text: str) -> Any:
+    return SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(text=text))
+
+
+def _message_delta_event(stop_reason: str | None) -> Any:
+    return SimpleNamespace(type="message_delta", delta=SimpleNamespace(stop_reason=stop_reason))
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_happy_path_maps_text_deltas_and_role_once() -> None:
+    stream = _FakeAnthropicStream(
+        events=[
+            _content_delta_event("hel"),
+            _content_delta_event("lo"),
+            _message_delta_event("end_turn"),
+        ],
+        final_message=SimpleNamespace(
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=3, output_tokens=2),
+        ),
+    )
+    messages = _FakeMessagesWithStream(stream=stream, response=_ok_response("ignored", 0, 0))
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    chunks: list[ChatStreamChunk] = []
+    async for chunk in provider.stream_chat(
+        [{"role": "user", "content": "hi"}],
+        model="claude-haiku-4-5-20251001",
+    ):
+        chunks.append(chunk)
+
+    assert chunks[0].provider == "anthropic"
+    assert chunks[0].model == "claude-haiku-4-5-20251001"
+    assert chunks[0].role_delta == "assistant"
+    assert chunks[0].content_delta == "hel"
+    assert chunks[1].role_delta is None
+    assert chunks[1].content_delta == "lo"
+    assert chunks[-1].finish_reason == "stop"
+    assert chunks[-1].usage == TokenUsage(input_tokens=3, output_tokens=2)
+    assert messages.stream_calls and messages.stream_calls[0]["model"] == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_usage_optional_when_not_available() -> None:
+    stream = _FakeAnthropicStream(
+        events=[_content_delta_event("hi"), _message_delta_event("end_turn")],
+        final_message=SimpleNamespace(stop_reason="end_turn", usage=None),
+    )
+    messages = _FakeMessagesWithStream(stream=stream, response=_ok_response("ignored", 0, 0))
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    chunks = [c async for c in provider.stream_chat([{"role": "user", "content": "hi"}], model="claude-haiku-4-5-20251001")]
+    assert any(c.content_delta for c in chunks)
+    assert chunks[-1].finish_reason == "stop"
+    assert chunks[-1].usage is None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_rate_limit_error_is_normalized() -> None:
+    messages = _FakeMessagesWithStream(stream_raises=_rate_limit_error(), response=_ok_response("ignored", 0, 0))
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderRateLimitError):
+        async for _ in provider.stream_chat([{"role": "user", "content": "hi"}], model="claude-haiku-4-5-20251001"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_connection_or_server_error_is_normalized() -> None:
+    # InternalServerError is mapped to ProviderUnavailableError.
+    messages = _FakeMessagesWithStream(stream_raises=_server_error(), response=_ok_response("ignored", 0, 0))
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderUnavailableError):
+        async for _ in provider.stream_chat([{"role": "user", "content": "hi"}], model="claude-haiku-4-5-20251001"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_generic_error_is_normalized_to_provider_error() -> None:
+    messages = _FakeMessagesWithStream(
+        stream_raises=anthropic.BadRequestError("bad", response=_http_response(400), body=None),
+        response=_ok_response("ignored", 0, 0),
+    )
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderError):
+        async for _ in provider.stream_chat([{"role": "user", "content": "hi"}], model="claude-haiku-4-5-20251001"):
+            pass
