@@ -18,6 +18,7 @@ from app.llm.errors import (
     ProviderError,
     ProviderRateLimitError,
     ProviderUnavailableError,
+    UnknownModelError,
 )
 from app.llm.gateway_router import GatewayProvider
 from app.llm.openai_adapter import OpenAIProvider
@@ -64,6 +65,7 @@ __all__ = [
     "ProviderRateLimitError",
     "ProviderUnavailableError",
     "TokenUsage",
+    "UnknownModelError",
     "get_cost",
     "make_provider",
 ]

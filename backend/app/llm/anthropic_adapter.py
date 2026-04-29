@@ -18,6 +18,7 @@ extracted and passed via Anthropic's separate ``system=`` argument.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import anthropic
 from tenacity import (
@@ -50,12 +51,27 @@ ANTHROPIC_FAILOVER_ERRORS: tuple[type[BaseException], ...] = (
     anthropic.InternalServerError,
 )
 
+ANTHROPIC_RETRY_ATTEMPTS = 3
+
 _anthropic_retry = retry(
     retry=retry_if_exception_type(_ANTHROPIC_RETRY_ERRORS),
     wait=wait_exponential_jitter(initial=1, max=30, jitter=2),
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(ANTHROPIC_RETRY_ATTEMPTS),
     reraise=True,
 )
+
+
+@_anthropic_retry
+async def _retried_anthropic_create(
+    client: anthropic.AsyncAnthropic, **kwargs: Any
+) -> Any:
+    """Retry Anthropic ``messages.create`` on raw SDK 429/connection/5xx.
+
+    Tenacity retries against the *raw* SDK exception types so the retry
+    condition can match. ``AnthropicProvider.chat`` translates whatever
+    escapes after retries are exhausted into provider-shaped errors.
+    """
+    return await client.messages.create(**kwargs)
 
 
 def _split_system(messages: list[ChatMessage]) -> tuple[str, list[ChatMessage]]:
@@ -87,7 +103,6 @@ class AnthropicProvider(LLMProvider):
             api_key=api_key or settings.anthropic_api_key
         )
 
-    @_anthropic_retry
     async def chat(
         self,
         messages: list[ChatMessage],
@@ -98,16 +113,17 @@ class AnthropicProvider(LLMProvider):
     ) -> ChatResult:
         system_text, conversation = _split_system(messages)
 
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": list(conversation),
+        }
+        if system_text:
+            kwargs["system"] = system_text
+
         try:
-            kwargs: dict = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": list(conversation),
-            }
-            if system_text:
-                kwargs["system"] = system_text
-            response = await self._client.messages.create(**kwargs)
+            response = await _retried_anthropic_create(self._client, **kwargs)
         except anthropic.RateLimitError as exc:
             raise ProviderRateLimitError(str(exc), provider=self.provider_name) from exc
         except (anthropic.APIConnectionError, anthropic.InternalServerError) as exc:

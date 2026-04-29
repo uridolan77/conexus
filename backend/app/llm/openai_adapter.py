@@ -16,6 +16,7 @@ and the prompt/completion → input/output token mapping.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import openai
 from tenacity import (
@@ -48,12 +49,28 @@ OPENAI_FAILOVER_ERRORS: tuple[type[BaseException], ...] = (
     openai.InternalServerError,
 )
 
+OPENAI_RETRY_ATTEMPTS = 3
+
 _openai_retry = retry(
     retry=retry_if_exception_type(_OPENAI_RETRY_ERRORS),
     wait=wait_exponential_jitter(initial=1, max=30, jitter=2),
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(OPENAI_RETRY_ATTEMPTS),
     reraise=True,
 )
+
+
+@_openai_retry
+async def _retried_openai_create(
+    client: openai.AsyncOpenAI, **kwargs: Any
+) -> Any:
+    """Retry OpenAI chat completion creation on raw SDK 429/connection/5xx.
+
+    Tenacity retries against the *raw* SDK exception types so the retry
+    condition can match. ``OpenAIProvider.chat`` translates whatever escapes
+    after retries are exhausted into the provider-shaped errors used by the
+    rest of Conexus.
+    """
+    return await client.chat.completions.create(**kwargs)
 
 
 class OpenAIProvider(LLMProvider):
@@ -71,7 +88,6 @@ class OpenAIProvider(LLMProvider):
             api_key=api_key or settings.openai_api_key
         )
 
-    @_openai_retry
     async def chat(
         self,
         messages: list[ChatMessage],
@@ -81,7 +97,8 @@ class OpenAIProvider(LLMProvider):
         temperature: float = 0.2,
     ) -> ChatResult:
         try:
-            response = await self._client.chat.completions.create(
+            response = await _retried_openai_create(
+                self._client,
                 model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,

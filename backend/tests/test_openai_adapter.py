@@ -13,17 +13,33 @@ import openai
 import pytest
 
 from app.llm.errors import ProviderRateLimitError, ProviderUnavailableError
-from app.llm.openai_adapter import OpenAIProvider
+from app.llm.openai_adapter import OPENAI_RETRY_ATTEMPTS, OpenAIProvider
 
 
 class _FakeChatCompletions:
-    def __init__(self, response: Any | None = None, raises: BaseException | None = None):
+    """Fake ``client.chat.completions`` whose ``create`` either returns a single
+    response, raises a single exception, or replays a scripted sequence of
+    results/exceptions in order — used to exercise retry behaviour.
+    """
+
+    def __init__(
+        self,
+        response: Any | None = None,
+        raises: BaseException | None = None,
+        sequence: list[Any] | None = None,
+    ):
         self._response = response
         self._raises = raises
+        self._sequence = list(sequence) if sequence is not None else None
         self.calls: list[dict[str, Any]] = []
 
     async def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
+        if self._sequence is not None:
+            item = self._sequence.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
         if self._raises is not None:
             raise self._raises
         return self._response
@@ -122,3 +138,86 @@ class _FakeHTTPResponse:
         import httpx
 
         self.request = httpx.Request("POST", "https://api.openai.com/")
+
+
+def _rate_limit_error() -> openai.RateLimitError:
+    return openai.RateLimitError(
+        "slow down", response=_FakeHTTPResponse(429), body=None
+    )
+
+
+def _server_error() -> openai.InternalServerError:
+    return openai.InternalServerError(
+        "boom", response=_FakeHTTPResponse(500), body=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_persistent_429_retries_then_raises_normalized() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[_rate_limit_error() for _ in range(OPENAI_RETRY_ATTEMPTS)]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderRateLimitError):
+        await provider.chat(
+            [{"role": "user", "content": "x"}],
+            model="gpt-4o-mini",
+        )
+
+    assert len(completions.calls) == OPENAI_RETRY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_openai_persistent_5xx_retries_then_raises_normalized() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[_server_error() for _ in range(OPENAI_RETRY_ATTEMPTS)]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderUnavailableError):
+        await provider.chat(
+            [{"role": "user", "content": "x"}],
+            model="gpt-4o-mini",
+        )
+
+    assert len(completions.calls) == OPENAI_RETRY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_openai_transient_429_then_success_returns_chat_result() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[
+            _rate_limit_error(),
+            _rate_limit_error(),
+            _ok_response("recovered", 2, 3),
+        ]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    result = await provider.chat(
+        [{"role": "user", "content": "x"}],
+        model="gpt-4o-mini",
+    )
+
+    assert result.content == "recovered"
+    assert result.provider == "openai"
+    assert result.usage.input_tokens == 2
+    assert result.usage.output_tokens == 3
+    assert len(completions.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_openai_transient_5xx_then_success_returns_chat_result() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[_server_error(), _ok_response("ok", 1, 1)]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    result = await provider.chat(
+        [{"role": "user", "content": "x"}],
+        model="gpt-4o-mini",
+    )
+
+    assert result.content == "ok"
+    assert len(completions.calls) == 2

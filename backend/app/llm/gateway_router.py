@@ -28,6 +28,7 @@ from app.llm.errors import (
     AllProvidersFailedError,
     ProviderRateLimitError,
     ProviderUnavailableError,
+    UnknownModelError,
 )
 from app.llm.openai_adapter import OPENAI_FAILOVER_ERRORS, OpenAIProvider
 from app.llm.types import ChatMessage, ChatResult
@@ -47,15 +48,24 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
 }
 
 
+_KNOWN_ANTHROPIC_PREFIXES = ("claude-", "anthropic-")
+_KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
+
+
 def _resolve_models(model: str) -> tuple[str, str]:
+    """Resolve a Conexus alias or concrete model name to (anthropic, openai).
+
+    Raises :class:`UnknownModelError` when *model* matches neither a known
+    alias nor a recognised provider prefix — typos must not silently fall
+    through to default models.
+    """
     if model in _MODEL_ALIASES:
         return _MODEL_ALIASES[model]
-    # Caller supplied a concrete provider model name.
-    if model.startswith(("claude-", "anthropic-")):
+    if model.startswith(_KNOWN_ANTHROPIC_PREFIXES):
         return model, DEFAULT_FALLBACK_MODEL
-    if model.startswith(("gpt-", "o1-", "openai-")):
+    if model.startswith(_KNOWN_OPENAI_PREFIXES):
         return DEFAULT_PRIMARY_MODEL, model
-    return DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL
+    raise UnknownModelError(model, known_aliases=list(_MODEL_ALIASES))
 
 
 class GatewayProvider(LLMProvider):

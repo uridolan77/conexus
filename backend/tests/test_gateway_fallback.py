@@ -18,6 +18,7 @@ from app.llm.errors import (
     AllProvidersFailedError,
     ProviderRateLimitError,
     ProviderUnavailableError,
+    UnknownModelError,
 )
 from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, TokenUsage
@@ -173,3 +174,46 @@ async def test_no_providers_configured_raises() -> None:
             [{"role": "user", "content": "hi"}],
             model="conexus-default",
         )
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_raises_unknown_model_error() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    # Typo: "gp-4o" instead of "gpt-4o" must not silently route to defaults.
+    with pytest.raises(UnknownModelError) as excinfo:
+        await gateway.chat(
+            [{"role": "user", "content": "hi"}],
+            model="gp-4o",
+        )
+
+    assert "gp-4o" in str(excinfo.value)
+    # Neither provider should have been called.
+    assert primary.calls == []
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_concrete_anthropic_model_name_is_accepted() -> None:
+    primary = _StubProvider(
+        provider="anthropic",
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="claude-sonnet-4-20250514",
+    )
+    assert result.provider == "anthropic"
+    assert primary.calls[0]["model"] == "claude-sonnet-4-20250514"
