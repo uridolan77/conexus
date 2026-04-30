@@ -1,6 +1,5 @@
 import {
   AdminResult,
-  deleteAdminJson,
   getAdminJson,
   postAdminJson,
   putAdminJson,
@@ -79,8 +78,4 @@ export function getStaleReservations(
 ): Promise<AdminResult<StaleReservationsList>> {
   const params = new URLSearchParams({ project_id: projectId, limit: String(limit) });
   return getAdminJson(`/admin/projects/limits/reservations/stale?${params.toString()}`);
-}
-
-export function deleteProject(projectId: string): Promise<AdminResult<void>> {
-  return deleteAdminJson(`/admin/projects/${projectId}`);
 }

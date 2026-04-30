@@ -89,6 +89,10 @@ frontend/
 - `putAdminJson<TBody, TResult>(path, body)` → `AdminResult<TResult>`
 - `deleteAdminJson<TResult>(path)` → `AdminResult<TResult>`
 
+**Legacy compatibility:**
+- `formatDate(value)` remains exported from `lib/api.ts` for compatibility and delegates to `formatDateTime(value)` in `lib/format.ts`.
+- Null/undefined date fallback is now consistently `"—"`.
+
 **Error model:**
 ```ts
 type ApiError = { message: string; detail?: unknown; status?: number };
@@ -102,6 +106,9 @@ type AdminResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 - Plain string, Error instance, null/undefined, unknown shapes
 
 **Domain API modules** in `lib/admin/` expose typed functions that pages call instead of hand-building URLs.
+
+**Project API surface:**
+- `deleteProject` was intentionally removed from `lib/admin/projects.ts` until a backend delete endpoint is confirmed.
 
 ## Navigation Model
 
@@ -164,7 +171,9 @@ type AdminResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 |---|---|
 | `formatDateTime(v)` | Intl medium date + short time; `"—"` for null |
 | `formatCost(v)` | USD 4dp; `"—"` for null |
-| `formatPercent(v)` | `"73%"`; `"—"` for null |
+| `formatPercentRatio(v)` | Ratio to percent with 1dp (`0.73` → `"73.0%"`); `"—"` for null |
+| `formatPercentValue(v)` | Already-percent values (`73` → `"73%"`); `"—"` for null |
+| `formatPercent(v)` | Alias of ratio semantics (`formatPercentRatio`) |
 | `formatTokens(v)` | Comma-separated integer; `"—"` for null |
 | `formatLatency(ms)` | `"<1ms"` / `"12ms"` / `"1.2s"`; `"—"` for null |
 | `formatNullable(v)` | `"—"` for null/undefined/empty |
@@ -176,9 +185,8 @@ type AdminResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 1. **ESLint is not configured.** `package.json` has `"lint": "next lint"` but no ESLint packages are installed. Do not run `npm run lint` in CI until this is fixed.
 2. **No React Query / SWR.** Data fetching uses raw `useEffect` + `useState`. As pages grow, consider adopting a data-fetching library.
 3. **Projects page uses `window.confirm`** via `ConfirmAction`. Acceptable for now, but not accessible. A modal-based confirmation is the eventual target.
-4. **No pagination in domain modules.** `listRequests` and `listAuditLogs` support offset/limit, but the UI pages manage their own cursor state.
-5. **`lib/admin/providers.ts` duplicates `listProviderCandidates`** (also in `lib/admin/routing.ts`). These can be consolidated when providers/routing pages migrate to the domain modules.
-6. **Pages have not yet been migrated to use domain modules.** The modules exist and are tested, but existing pages still call `adminSessionFetch` directly. Migrate incrementally when editing pages.
+4. **`DetailDrawer` does not trap focus yet.** It supports keyboard dismissal and outside-click dismissal, but full focus trapping is still pending.
+5. **Pages are still migrating incrementally to domain modules.** Foundation modules exist under `lib/admin/`, but page-level adoption is ongoing.
 
 ## Ready for Page Expansion
 

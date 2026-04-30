@@ -65,7 +65,11 @@ export default function ProjectsPage() {
     setLoadingKeys(true);
     try {
       const result = await listProjectKeys(projectId);
-      if (result.ok) setKeys(result.data);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setKeys(result.data);
     } finally {
       setLoadingKeys(false);
     }
@@ -75,7 +79,11 @@ export default function ProjectsPage() {
     setLoadingLimits(true);
     try {
       const result = await getProjectLimits(projectId);
-      if (result.ok) setLimits(result.data);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setLimits(result.data);
     } finally {
       setLoadingLimits(false);
     }
@@ -85,7 +93,11 @@ export default function ProjectsPage() {
     setLoadingLimitsUsage(true);
     try {
       const result = await getProjectLimitsUsage(projectId);
-      if (result.ok) setLimitsUsage(result.data);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setLimitsUsage(result.data);
     } finally {
       setLoadingLimitsUsage(false);
     }
@@ -95,7 +107,11 @@ export default function ProjectsPage() {
     setLoadingLimitsReservations(true);
     try {
       const result = await getProjectReservations(projectId);
-      if (result.ok) setLimitsReservations(result.data);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setLimitsReservations(result.data);
     } finally {
       setLoadingLimitsReservations(false);
     }
@@ -105,7 +121,11 @@ export default function ProjectsPage() {
     setLoadingStaleReservations(true);
     try {
       const result = await getStaleReservations(projectId);
-      if (result.ok) setStaleReservationsSummary(result.data);
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setStaleReservationsSummary(result.data);
     } finally {
       setLoadingStaleReservations(false);
     }

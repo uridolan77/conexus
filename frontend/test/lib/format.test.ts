@@ -7,6 +7,8 @@ import {
   formatLatency,
   formatNullable,
   formatPercent,
+  formatPercentRatio,
+  formatPercentValue,
   formatTokens,
 } from "@/lib/format";
 
@@ -52,11 +54,35 @@ describe("formatPercent", () => {
   it("returns em-dash for null", () => {
     expect(formatPercent(null)).toBe("—");
   });
-  it("formats 73 as '73%'", () => {
-    expect(formatPercent(73)).toBe("73%");
+  it("formats ratio 0.73 as '73.0%'", () => {
+    expect(formatPercent(0.73)).toBe("73.0%");
   });
-  it("rounds to 0 decimal places", () => {
-    expect(formatPercent(73.7)).toBe("74%");
+  it("formats ratio 1 as '100.0%'", () => {
+    expect(formatPercent(1)).toBe("100.0%");
+  });
+  it("formats ratio 0 as '0.0%'", () => {
+    expect(formatPercent(0)).toBe("0.0%");
+  });
+});
+
+describe("formatPercentRatio", () => {
+  it("returns em-dash for null", () => {
+    expect(formatPercentRatio(null)).toBe("—");
+  });
+  it("returns em-dash for undefined", () => {
+    expect(formatPercentRatio(undefined)).toBe("—");
+  });
+  it("formats ratio 0.73 as '73.0%'", () => {
+    expect(formatPercentRatio(0.73)).toBe("73.0%");
+  });
+  it("formats ratio values above 1", () => {
+    expect(formatPercentRatio(1.25)).toBe("125.0%");
+  });
+});
+
+describe("formatPercentValue", () => {
+  it("formats percent-point values", () => {
+    expect(formatPercentValue(73.2)).toBe("73%");
   });
 });
 

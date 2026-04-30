@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { KeyValueGrid, LoadingState } from "@/components/ui";
 import { formatDate } from "@/lib/api";
-import { computePercent, formatCost, formatPercent, formatTokens } from "@/lib/format";
+import { computePercent, formatCost, formatPercentValue, formatTokens } from "@/lib/format";
 import type {
   ProjectLimits,
   ProjectLimitsReservations,
@@ -29,7 +29,7 @@ function UsageBar({
         <strong>{label}</strong>
         <span className="muted">
           {formatValue(current)} / {limit == null ? "unlimited" : formatValue(limit)}
-          {pct != null ? ` (${formatPercent(pct)})` : ""}
+          {pct != null ? ` (${formatPercentValue(pct)})` : ""}
         </span>
       </div>
       {pct != null && (

@@ -1,3 +1,5 @@
+import { formatDateTime } from "@/lib/format";
+
 export const BACKEND_BASE =
   process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:8000";
 
@@ -172,11 +174,5 @@ export function formatApiError(error: unknown) {
 }
 
 export function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTime(value);
 }

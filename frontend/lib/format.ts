@@ -19,9 +19,20 @@ export function formatCost(value: number | null | undefined): string {
   }).format(value);
 }
 
-export function formatPercent(value: number | null | undefined): string {
+/** Format a ratio in [0..1] to a percentage string, e.g. 0.73 -> 73.0%. */
+export function formatPercentRatio(value: number | null | undefined): string {
+  if (value == null) return DASH;
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+/** Format a value already expressed as percent points, e.g. 73 -> 73%. */
+export function formatPercentValue(value: number | null | undefined): string {
   if (value == null) return DASH;
   return `${value.toFixed(0)}%`;
+}
+
+export function formatPercent(value: number | null | undefined): string {
+  return formatPercentRatio(value);
 }
 
 export function formatTokens(value: number | null | undefined): string {
