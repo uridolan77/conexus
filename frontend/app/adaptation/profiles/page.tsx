@@ -184,6 +184,10 @@ export default function AdapterProfilesPage() {
                 <th>Status</th>
                 <th>Approved for runtime</th>
                 <th>Composite score</th>
+                <th>Gateway profile</th>
+                <th>Canary %</th>
+                <th>Published</th>
+                <th>Activated</th>
                 <th>Model</th>
                 <th>Prompt</th>
                 <th>Retrieval</th>
@@ -213,6 +217,12 @@ export default function AdapterProfilesPage() {
                     <td>
                       <ScoreBadge score={composite ?? null} />
                     </td>
+                    <td>
+                      <code className="wrap-anywhere">{profile.gatewayProfileId ?? "—"}</code>
+                    </td>
+                    <td>{profile.canaryPercent != null ? String(profile.canaryPercent) : "—"}</td>
+                    <td>{formatDate(profile.publishedAt ?? undefined)}</td>
+                    <td>{formatDate(profile.activatedAt ?? undefined)}</td>
                     <td>
                       <code className="wrap-anywhere">{profile.modelProfile ?? "—"}</code>
                     </td>

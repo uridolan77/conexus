@@ -7,11 +7,22 @@ import type {
   AdaptationRunStep,
   AdaptationStartRunResponse,
   AdapterProfile,
+  AdapterProfileActivation,
+  AdapterProfileActivationResult,
   AdapterProfileListItem,
+  CitationValidationIssue,
+  CitationValidationResult,
+  EvalQuestionEvidence,
+  EvaluationEvidence,
   EvaluationGateResult,
   EvaluationMetric,
+  EvaluationSecuritySummary,
   PlanningReason,
   ProblemDetailsLike,
+  PromoteAdapterProfileResult,
+  PublishAdapterProfileResult,
+  RetrievedContextEvidence,
+  RollbackAdapterProfileResult,
 } from "@/lib/adaptationTypes";
 
 function str(v: unknown): string | undefined {
@@ -20,6 +31,11 @@ function str(v: unknown): string | undefined {
 
 function num(v: unknown): number | undefined {
   return typeof v === "number" && !Number.isNaN(v) ? v : undefined;
+}
+
+function numOrZero(v: unknown): number {
+  const n = num(v);
+  return n ?? 0;
 }
 
 function bool(v: unknown): boolean | undefined {
@@ -195,6 +211,11 @@ export function normalizeProfileListItem(raw: unknown): AdapterProfileListItem {
   const o = raw as Record<string, unknown>;
   const gatesRaw = o.gateResults ?? o.gate_results ?? o.gates;
   const gateResults = Array.isArray(gatesRaw) ? gatesRaw.map(normalizeGate) : undefined;
+  const canary =
+    num(o.canaryPercent) ??
+    num(o.canary_percent) ??
+    (typeof o.canaryPercent === "string" ? Number(o.canaryPercent) : undefined) ??
+    (typeof o.canary_percent === "string" ? Number(o.canary_percent) : undefined);
   return {
     profileId: str(o.profileId) ?? str(o.profile_id) ?? str(o.id),
     id: str(o.id) ?? str(o.profileId) ?? str(o.profile_id),
@@ -210,6 +231,12 @@ export function normalizeProfileListItem(raw: unknown): AdapterProfileListItem {
     planId: str(o.planId) ?? str(o.plan_id),
     runId: str(o.runId) ?? str(o.run_id),
     gateResults,
+    gatewayProfileId: str(o.gatewayProfileId) ?? str(o.gateway_profile_id) ?? null,
+    canaryPercent: canary !== undefined && !Number.isNaN(canary) ? canary : null,
+    publishedAt: str(o.publishedAt) ?? str(o.published_at) ?? null,
+    activatedAt: str(o.activatedAt) ?? str(o.activated_at) ?? null,
+    rolledBackAt: str(o.rolledBackAt) ?? str(o.rolled_back_at) ?? null,
+    rollbackReason: str(o.rollbackReason) ?? str(o.rollback_reason) ?? null,
   };
 }
 
@@ -248,4 +275,208 @@ export function normalizeStartRunResponse(raw: unknown): AdaptationStartRunRespo
   const o = raw as Record<string, unknown>;
   const runId = str(o.runId) ?? str(o.run_id) ?? str(o.id);
   return { runId: runId ?? null };
+}
+
+function normalizeCitationIssue(raw: unknown): CitationValidationIssue {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  return {
+    code: str(o.code),
+    message: str(o.message),
+    blocking: bool(o.blocking),
+  };
+}
+
+function normalizeCitationValidation(raw: unknown): CitationValidationResult {
+  if (!raw || typeof raw !== "object") return { issues: [] };
+  const o = raw as Record<string, unknown>;
+  const issuesRaw = o.issues ?? o.citationIssues;
+  const issues = Array.isArray(issuesRaw) ? issuesRaw.map(normalizeCitationIssue) : [];
+  return {
+    passed: bool(o.passed),
+    lexicalSupportScore: num(o.lexicalSupportScore) ?? num(o.lexical_support_score),
+    issues,
+  };
+}
+
+function normalizeRetrievedContext(raw: unknown): RetrievedContextEvidence {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  return {
+    excerpt: str(o.excerpt) ?? str(o.text),
+    sourceId: str(o.sourceId) ?? str(o.source_id),
+    documentId: str(o.documentId) ?? str(o.document_id),
+    chunkId: str(o.chunkId) ?? str(o.chunk_id),
+  };
+}
+
+function strArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x)).filter(Boolean);
+}
+
+export function normalizeEvalQuestionEvidence(raw: unknown): EvalQuestionEvidence {
+  if (!raw || typeof raw !== "object") {
+    return {
+      questionId: "",
+      question: "",
+      category: "",
+      answerExcerpt: "",
+      answered: false,
+      requiredSourceIds: [],
+      requiredDocumentIds: [],
+      requiredChunkIds: [],
+      retrievedContexts: [],
+      citationValidation: { issues: [] },
+      estimatedCost: 0,
+      latencyMs: 0,
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  const ctxRaw = o.retrievedContexts ?? o.retrieved_contexts ?? o.contexts;
+  const citation = o.citationValidation ?? o.citation_validation;
+  return {
+    questionId: str(o.questionId) ?? str(o.question_id) ?? "",
+    question: str(o.question) ?? "",
+    category: str(o.category) ?? "",
+    answerExcerpt: str(o.answerExcerpt) ?? str(o.answer_excerpt) ?? "",
+    answered: bool(o.answered) ?? false,
+    requiredSourceIds: strArray(o.requiredSourceIds ?? o.required_source_ids),
+    requiredDocumentIds: strArray(o.requiredDocumentIds ?? o.required_document_ids),
+    requiredChunkIds: strArray(o.requiredChunkIds ?? o.required_chunk_ids),
+    retrievedContexts: Array.isArray(ctxRaw) ? ctxRaw.map(normalizeRetrievedContext) : [],
+    citationValidation: normalizeCitationValidation(citation),
+    estimatedCost: numOrZero(o.estimatedCost ?? o.estimated_cost),
+    latencyMs: numOrZero(o.latencyMs ?? o.latency_ms),
+  };
+}
+
+function normalizeSecuritySummary(raw: unknown): EvaluationSecuritySummary {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  return {
+    summary: str(o.summary) ?? str(o.overview),
+    riskLevel: str(o.riskLevel) ?? str(o.risk_level),
+    notes: str(o.notes),
+  };
+}
+
+export function normalizeEvaluationEvidence(raw: unknown): EvaluationEvidence {
+  if (!raw || typeof raw !== "object") {
+    return {
+      id: "",
+      runId: "",
+      planId: "",
+      domainKey: "",
+      evalSetId: "",
+      createdAt: "",
+      compositeScore: 0,
+      projectionVersion: "",
+      evidenceHash: "",
+      metrics: [],
+      gates: [],
+      securitySummary: {},
+      questions: [],
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  const metricsRaw = o.metrics ?? o.metricResults ?? o.metric_results;
+  const gatesRaw = o.gates ?? o.gateResults ?? o.gate_results;
+  const questionsRaw = o.questions ?? o.questionEvidence ?? o.question_evidence;
+  const sec = o.securitySummary ?? o.security_summary;
+  return {
+    id: str(o.id) ?? "",
+    runId: str(o.runId) ?? str(o.run_id) ?? "",
+    planId: str(o.planId) ?? str(o.plan_id) ?? "",
+    domainKey: str(o.domainKey) ?? str(o.domain_key) ?? "",
+    evalSetId: str(o.evalSetId) ?? str(o.eval_set_id) ?? str(o.evaluationSetId) ?? "",
+    createdAt: str(o.createdAt) ?? str(o.created_at) ?? "",
+    compositeScore: numOrZero(o.compositeScore ?? o.composite_score),
+    projectionVersion: str(o.projectionVersion) ?? str(o.projection_version) ?? "",
+    evidenceHash: str(o.evidenceHash) ?? str(o.evidence_hash) ?? "",
+    metrics: Array.isArray(metricsRaw) ? metricsRaw.map(normalizeMetric) : [],
+    gates: Array.isArray(gatesRaw) ? gatesRaw.map(normalizeGate) : [],
+    securitySummary: normalizeSecuritySummary(sec),
+    questions: Array.isArray(questionsRaw) ? questionsRaw.map(normalizeEvalQuestionEvidence) : [],
+  };
+}
+
+export function normalizeActivationList(raw: unknown): AdapterProfileActivation[] {
+  return asItemArray(raw).map((item) => {
+    if (!item || typeof item !== "object") {
+      return {
+        id: "",
+        adapterProfileId: "",
+        domainKey: "",
+        status: "",
+        canaryPercent: 0,
+        createdAt: "",
+      };
+    }
+    const o = item as Record<string, unknown>;
+    const pct = num(o.canaryPercent) ?? num(o.canary_percent) ?? 0;
+    return {
+      id: str(o.id) ?? str(o.activationId) ?? str(o.activation_id) ?? "",
+      adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? "",
+      domainKey: str(o.domainKey) ?? str(o.domain_key) ?? "",
+      status: str(o.status) ?? "",
+      canaryPercent: pct,
+      previousActiveProfileId: str(o.previousActiveProfileId) ?? str(o.previous_active_profile_id) ?? null,
+      rollbackReason: str(o.rollbackReason) ?? str(o.rollback_reason) ?? null,
+      createdAt: str(o.createdAt) ?? str(o.created_at) ?? "",
+      activatedAt: str(o.activatedAt) ?? str(o.activated_at) ?? null,
+      rolledBackAt: str(o.rolledBackAt) ?? str(o.rolled_back_at) ?? null,
+    };
+  });
+}
+
+export function normalizePublishResult(raw: unknown): PublishAdapterProfileResult {
+  if (!raw || typeof raw !== "object") {
+    return { adapterProfileId: "", gatewayProfileId: "", status: "" };
+  }
+  const o = raw as Record<string, unknown>;
+  return {
+    adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
+    gatewayProfileId: str(o.gatewayProfileId) ?? str(o.gateway_profile_id) ?? "",
+    status: str(o.status) ?? "",
+  };
+}
+
+export function normalizeActivationResult(raw: unknown): AdapterProfileActivationResult {
+  if (!raw || typeof raw !== "object") {
+    return { activationId: "", adapterProfileId: "", status: "" };
+  }
+  const o = raw as Record<string, unknown>;
+  return {
+    activationId: str(o.activationId) ?? str(o.activation_id) ?? str(o.id) ?? "",
+    adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? "",
+    status: str(o.status) ?? "",
+  };
+}
+
+export function normalizePromoteResult(raw: unknown): PromoteAdapterProfileResult {
+  if (!raw || typeof raw !== "object") {
+    return { adapterProfileId: "", status: "" };
+  }
+  const o = raw as Record<string, unknown>;
+  return {
+    adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
+    status: str(o.status) ?? "",
+  };
+}
+
+export function normalizeRollbackResult(raw: unknown): RollbackAdapterProfileResult {
+  if (!raw || typeof raw !== "object") {
+    return { adapterProfileId: "", status: "" };
+  }
+  const o = raw as Record<string, unknown>;
+  return {
+    adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
+    status: str(o.status) ?? "",
+  };
+}
+
+/** Active profile for domain — same shape as profile list/detail fragment. */
+export function normalizeActiveProfileDetail(raw: unknown): AdapterProfile {
+  return normalizeProfileDetail(raw);
 }

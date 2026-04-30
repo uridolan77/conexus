@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { CopyableId } from "@/components/adaptation/CopyableId";
+import { EvaluationEvidencePanel } from "@/components/adaptation/EvaluationEvidencePanel";
 import { formatDate } from "@/lib/api";
 import {
   adaptationApi,
@@ -23,6 +24,7 @@ import {
   type AdaptationRun,
   type AdaptationRunManifest,
   type AdapterProfile,
+  type EvaluationEvidence,
 } from "@/lib/adaptationApi";
 
 export default function AdaptationRunDetailPage({ params }: { params: { id: string } }) {
@@ -31,6 +33,8 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
   const [manifest, setManifest] = useState<AdaptationRunManifest | null>(null);
   const [profile, setProfile] = useState<AdapterProfile | null>(null);
   const [profileUnavailable, setProfileUnavailable] = useState(false);
+  const [evidence, setEvidence] = useState<EvaluationEvidence | null>(null);
+  const [evidenceLoad, setEvidenceLoad] = useState<"loading" | "ok" | "404" | "error">("loading");
   const [loading, setLoading] = useState(true);
   const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
 
@@ -38,16 +42,20 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
     setLoading(true);
     setLastError(null);
     setProfileUnavailable(false);
-    const [runRes, manifestRes, profileRes] = await Promise.all([
+    setEvidenceLoad("loading");
+    const [runRes, manifestRes, profileRes, evRes] = await Promise.all([
       adaptationApi.getRun(runId),
       adaptationApi.getRunManifest(runId),
       adaptationApi.getAdapterProfileByRunId(runId),
+      adaptationApi.getRunEvaluation(runId),
     ]);
     if (!runRes.ok) {
       setLastError(runRes);
       setRun(null);
       setManifest(null);
       setProfile(null);
+      setEvidence(null);
+      setEvidenceLoad("error");
       setLoading(false);
       return;
     }
@@ -58,6 +66,16 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
     } else {
       setProfile(null);
       setProfileUnavailable(profileRes.status === 404);
+    }
+    if (evRes.ok) {
+      setEvidence(evRes.data);
+      setEvidenceLoad("ok");
+    } else if (evRes.status === 404) {
+      setEvidence(null);
+      setEvidenceLoad("404");
+    } else {
+      setEvidence(null);
+      setEvidenceLoad("error");
     }
     setLoading(false);
   }
@@ -100,6 +118,8 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
         </Card>
       ) : (
         <>
+          <EvaluationEvidencePanel evidence={evidence} status={evidenceLoad} />
+
           <Card>
             <SectionHeader title="Run Summary" />
             <KeyValueGrid

@@ -6,7 +6,9 @@ The browser must never call the adaptation service directly.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -103,9 +105,29 @@ async def proxy_adaptation_request(
     return _response_from_upstream(upstream)
 
 
-def _temporary_identity() -> tuple[str, list[str]]:
-    # v0.3d: hardcoded. TODO before production: derive from authenticated BO admin session.
-    return ("admin-user", ["ComplianceReviewer"])
+# Temporary: all authenticated BO admins receive full adaptation deployment roles until
+# Conexus maps read-only vs operator capabilities.
+_DEPLOYMENT_ROLES = (
+    "ComplianceReviewer",
+    "AdaptationPublisher",
+    "AdaptationOperator",
+)
+
+
+def _deployment_identity(admin: AdminSession) -> tuple[str, list[str]]:
+    user_id = (admin.username or admin.admin_user_id or "admin-user").strip() or "admin-user"
+    return (user_id, list(_DEPLOYMENT_ROLES))
+
+
+async def _read_json_object(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.body()
+        if not body:
+            return {}
+        data = json.loads(body.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
 
 
 @router.get("/plans")
@@ -149,10 +171,10 @@ async def list_runs_for_plan(
 @router.post("/plans/{plan_id}/approve")
 async def approve_plan(
     plan_id: str,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
-    approved_by, roles = _temporary_identity()
+    approved_by, roles = _deployment_identity(admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adaptation-plans/{plan_id}/approve",
@@ -164,10 +186,10 @@ async def approve_plan(
 @router.post("/plans/{plan_id}/run")
 async def start_run(
     plan_id: str,
-    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
-    created_by, _roles = _temporary_identity()
+    created_by, _roles = _deployment_identity(admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adaptation-plans/{plan_id}/run",
@@ -215,6 +237,19 @@ async def get_run_manifest(
     )
 
 
+@router.get("/runs/{run_id}/evaluation")
+async def get_run_evaluation(
+    run_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path=f"/adaptation-runs/{run_id}/evaluation",
+        request=request,
+    )
+
+
 @router.get("/runs/{run_id}/adapter-profile")
 async def get_run_adapter_profile(
     run_id: str,
@@ -249,6 +284,131 @@ async def get_profile(
     return await proxy_adaptation_request(
         method="GET",
         upstream_path=f"/adapter-profiles/{profile_id}",
+        request=request,
+    )
+
+
+@router.get("/profiles/{profile_id}/activations")
+async def list_profile_activations(
+    profile_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path=f"/adapter-profiles/{profile_id}/activations",
+        request=request,
+    )
+
+
+@router.post("/profiles/{profile_id}/publish")
+async def publish_profile(
+    profile_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_json_object(request)
+    notes = raw.get("notes")
+    notes_out: str | None
+    if notes is None:
+        notes_out = None
+    elif isinstance(notes, str):
+        notes_out = notes
+    else:
+        notes_out = str(notes)
+    user_id, roles = _deployment_identity(admin)
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adapter-profiles/{profile_id}/publish",
+        request=request,
+        json_body={
+            "publishedByUserId": user_id,
+            "roles": roles,
+            "notes": notes_out,
+        },
+    )
+
+
+@router.post("/profiles/{profile_id}/activate-canary")
+async def activate_canary(
+    profile_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_json_object(request)
+    pct_raw = raw.get("canaryPercent") if "canaryPercent" in raw else raw.get("canary_percent")
+    try:
+        canary_percent = int(pct_raw) if pct_raw is not None else None
+    except (TypeError, ValueError):
+        canary_percent = None
+    if canary_percent is None or canary_percent < 1 or canary_percent > 50:
+        return _problem(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Invalid canary percent.",
+            detail="canaryPercent must be an integer between 1 and 50.",
+        )
+    user_id, roles = _deployment_identity(admin)
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adapter-profiles/{profile_id}/activate-canary",
+        request=request,
+        json_body={
+            "activatedByUserId": user_id,
+            "roles": roles,
+            "canaryPercent": canary_percent,
+        },
+    )
+
+
+@router.post("/profiles/{profile_id}/promote")
+async def promote_profile(
+    profile_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    user_id, roles = _deployment_identity(admin)
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adapter-profiles/{profile_id}/promote",
+        request=request,
+        json_body={"userId": user_id, "roles": roles},
+    )
+
+
+@router.post("/profiles/{profile_id}/rollback")
+async def rollback_profile(
+    profile_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_json_object(request)
+    reason_raw = raw.get("reason")
+    reason = (str(reason_raw).strip() if reason_raw is not None else "") or ""
+    if not reason:
+        return _problem(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Invalid rollback reason.",
+            detail="reason is required and cannot be empty or whitespace only.",
+        )
+    user_id, roles = _deployment_identity(admin)
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adapter-profiles/{profile_id}/rollback",
+        request=request,
+        json_body={"userId": user_id, "roles": roles, "reason": reason},
+    )
+
+
+@router.get("/domains/{domain_key}/active-profile")
+async def get_domain_active_profile(
+    domain_key: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    encoded = quote(domain_key, safe="")
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path=f"/domains/{encoded}/active-profile",
         request=request,
     )
 

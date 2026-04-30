@@ -260,6 +260,7 @@ describe("Adaptation BO pages", () => {
         },
       },
       { status: 404, body: { title: "Not Found", detail: "no profile" } },
+      { status: 404, body: { title: "Not Found", detail: "no evidence" } },
     ]);
 
     const { default: RunDetail } = await import("../app/adaptation/runs/[id]/page");
@@ -268,7 +269,48 @@ describe("Adaptation BO pages", () => {
     expect(await screen.findByText("Manifest Summary")).toBeInTheDocument();
     expect(await screen.findByText("rv-1")).toBeInTheDocument();
     expect(await screen.findByText("No profile produced yet")).toBeInTheDocument();
+    expect(await screen.findByText(/No evaluation evidence projection is available/i)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("run detail loads evaluation evidence when present", async () => {
+    mockFetchSequence([
+      {
+        status: 200,
+        body: {
+          runId: "run_1",
+          id: "run_1",
+          status: "Completed",
+          steps: [],
+        },
+      },
+      { status: 200, body: { runnerVersion: "rv-1" } },
+      { status: 404, body: { title: "Not Found", detail: "no profile" } },
+      {
+        status: 200,
+        body: {
+          id: "ev1",
+          runId: "run_1",
+          planId: "p1",
+          domainKey: "dk",
+          evalSetId: "es",
+          createdAt: "2026-01-01T00:00:00Z",
+          compositeScore: 0.9,
+          projectionVersion: "v1",
+          evidenceHash: "h",
+          metrics: [],
+          gates: [],
+          securitySummary: {},
+          questions: [],
+        },
+      },
+    ]);
+
+    const { default: RunDetail } = await import("../app/adaptation/runs/[id]/page");
+    render(<RunDetail params={{ id: "run_1" }} />);
+
+    expect(await screen.findByText("Evaluation evidence")).toBeInTheDocument();
+    expect(await screen.findByText("ev1")).toBeInTheDocument();
   });
 
   it("AdapterProfileDetail highlights failed blocking gate", async () => {
@@ -282,6 +324,7 @@ describe("Adaptation BO pages", () => {
           gateResults: [{ gateKey: "safety.blocking", blocking: true, passed: false, message: "unsafe" }],
         },
       },
+      { status: 200, body: [] },
     ]);
 
     const { default: ProfileDetail } = await import("../app/adaptation/profiles/[id]/page");
@@ -291,6 +334,106 @@ describe("Adaptation BO pages", () => {
     const row = container.querySelector("tr.row-warning");
     expect(row).toBeTruthy();
     expect(await screen.findByText("unsafe")).toBeInTheDocument();
+  });
+
+  it("profile detail Approved shows publish control", async () => {
+    mockFetchSequence([
+      {
+        status: 200,
+        body: {
+          profileId: "prof_1",
+          status: "Approved",
+          approvedForRuntime: true,
+          domainKey: "dk",
+          gateResults: [],
+        },
+      },
+      { status: 200, body: [] },
+      {
+        status: 200,
+        body: {
+          profileId: "other",
+          domainKey: "dk",
+        },
+      },
+    ]);
+
+    const { default: ProfileDetail } = await import("../app/adaptation/profiles/[id]/page");
+    render(<ProfileDetail params={{ id: "prof_1" }} />);
+
+    expect(await screen.findByText("Publish profile")).toBeInTheDocument();
+  });
+});
+
+describe("adaptationApi deployment client", () => {
+  it("publishProfile posts only notes in JSON body", async () => {
+    const calls: unknown[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () =>
+          JSON.stringify({
+            adapterProfileId: "a1",
+            gatewayProfileId: "g1",
+            status: "Published",
+          }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.publishProfile("p1", { notes: "hello" });
+    expect(res.ok).toBe(true);
+    const posted = calls.find((c) => typeof c === "object" && c && (c as { url: string }).url.includes("/publish")) as {
+      body?: string;
+    };
+    expect(posted?.body).toBe(JSON.stringify({ notes: "hello" }));
+  });
+
+  it("activateCanary posts only canaryPercent", async () => {
+    const bodies: string[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.body && typeof init.body === "string") bodies.push(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () =>
+          JSON.stringify({
+            activationId: "act1",
+            adapterProfileId: "a1",
+            status: "Canary",
+          }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.activateCanary("p1", { canaryPercent: 12 });
+    expect(res.ok).toBe(true);
+    expect(bodies.some((b) => b === JSON.stringify({ canaryPercent: 12 }))).toBe(true);
+  });
+
+  it("rollbackProfile posts only reason", async () => {
+    const bodies: string[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.body && typeof init.body === "string") bodies.push(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ adapterProfileId: "a1", status: "RolledBack" }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.rollbackProfile("p1", { reason: "bad" });
+    expect(res.ok).toBe(true);
+    expect(bodies.some((b) => b === JSON.stringify({ reason: "bad" }))).toBe(true);
   });
 });
 

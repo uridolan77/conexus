@@ -224,8 +224,12 @@ async def test_admin_adaptation_approve_injects_identity(monkeypatch: pytest.Mon
     assert response.status_code == 200
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/adaptation-plans/plan_1/approve")
-    assert captured["json"]["approvedByUserId"] == "admin-user"
-    assert captured["json"]["approverRoles"] == ["ComplianceReviewer"]
+    assert captured["json"]["approvedByUserId"] == "admin"
+    assert captured["json"]["approverRoles"] == [
+        "ComplianceReviewer",
+        "AdaptationPublisher",
+        "AdaptationOperator",
+    ]
 
 
 @pytest.mark.asyncio
@@ -251,8 +255,345 @@ async def test_admin_adaptation_run_injects_created_by_and_uses_longer_timeout(
 
     response = await client.post("/admin/adaptation/plans/plan_1/run", json={"createdByUserId": "spoof"})
     assert response.status_code == 200
-    assert captured["json"]["createdByUserId"] == "admin-user"
+    assert captured["json"]["createdByUserId"] == "admin"
     assert captured["url"].endswith("/adaptation-plans/plan_1/run")
     assert isinstance(captured["timeout"], httpx.Timeout)
     assert captured["timeout"].read == 30.0
+
+
+_DEPLOYMENT_ROLES = (
+    "ComplianceReviewer",
+    "AdaptationPublisher",
+    "AdaptationOperator",
+)
+
+
+@pytest.mark.asyncio
+async def test_GET_run_evaluation_requires_session(client: AsyncClient) -> None:
+    response = await client.get("/admin/adaptation/runs/run_1/evaluation")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_GET_run_evaluation_forwards_to_upstream(monkeypatch: pytest.MonkeyPatch, client: AsyncClient) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"runId": "run_1"}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/runs/run_1/evaluation")
+    assert response.status_code == 200
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/adaptation-runs/run_1/evaluation")
+
+
+@pytest.mark.asyncio
+async def test_GET_run_evaluation_preserves_404_problem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={"title": "Not Found", "detail": "no evidence"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/runs/run_1/evaluation")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "no evidence"
+
+
+@pytest.mark.asyncio
+async def test_POST_publish_requires_admin(client: AsyncClient) -> None:
+    response = await client.post("/admin/adaptation/profiles/p1/publish", json={"notes": "x"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_POST_publish_injects_admin_identity_and_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/profiles/p1/publish", json={"notes": "ship it"})
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adapter-profiles/p1/publish")
+    assert captured["json"]["publishedByUserId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
+    assert captured["json"]["notes"] == "ship it"
+
+
+@pytest.mark.asyncio
+async def test_POST_publish_does_not_forward_browser_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/publish",
+        json={
+            "roles": ["FakeSuperAdmin"],
+            "publishedByUserId": "attacker",
+            "notes": "x",
+        },
+    )
+    assert response.status_code == 200
+    assert captured["json"]["publishedByUserId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
+    assert captured["json"]["notes"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_POST_publish_preserves_409_problem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={"title": "Conflict", "detail": "already published"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/profiles/p1/publish", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "already published"
+
+
+@pytest.mark.asyncio
+async def test_POST_activate_canary_injects_identity_roles_and_percent(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/activate-canary",
+        json={"canaryPercent": 10},
+    )
+    assert response.status_code == 200
+    assert captured["json"]["activatedByUserId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
+    assert captured["json"]["canaryPercent"] == 10
+
+
+@pytest.mark.asyncio
+async def test_POST_activate_canary_rejects_invalid_percent_before_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    called = {"n": 0}
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/activate-canary",
+        json={"canaryPercent": 99},
+    )
+    assert response.status_code == 400
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_POST_promote_injects_identity_and_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/profiles/p1/promote", json={})
+    assert response.status_code == 200
+    assert captured["json"]["userId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
+
+
+@pytest.mark.asyncio
+async def test_POST_rollback_injects_identity_roles_and_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/rollback",
+        json={"reason": "  bad metrics  "},
+    )
+    assert response.status_code == 200
+    assert captured["json"]["userId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
+    assert captured["json"]["reason"] == "bad metrics"
+
+
+@pytest.mark.asyncio
+async def test_POST_rollback_rejects_empty_reason(client: AsyncClient) -> None:
+    await _login_admin(client)
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/rollback",
+        json={"reason": "   "},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_GET_profile_activations_forwards_to_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json=[], headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/profiles/p1/activations")
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adapter-profiles/p1/activations")
+
+
+@pytest.mark.asyncio
+async def test_GET_domain_active_profile_forwards_to_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"profileId": "p1"}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/domains/my-domain/active-profile")
+    assert response.status_code == 200
+    assert "/domains/my-domain/active-profile" in captured["url"]
+
+
+@pytest.mark.asyncio
+async def test_browser_supplied_roles_are_ignored_for_activate_canary(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/activate-canary",
+        json={"canaryPercent": 5, "roles": ["Evil"], "activatedByUserId": "attacker"},
+    )
+    assert response.status_code == 200
+    assert captured["json"]["activatedByUserId"] == "admin"
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
 

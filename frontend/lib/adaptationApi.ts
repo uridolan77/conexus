@@ -1,8 +1,15 @@
 import {
+  normalizeActivationList,
+  normalizeActivationResult,
+  normalizeActiveProfileDetail,
+  normalizeEvaluationEvidence,
   normalizePlanDetail,
   normalizePlanList,
   normalizeProfileDetail,
   normalizeProfileList,
+  normalizePromoteResult,
+  normalizePublishResult,
+  normalizeRollbackResult,
   normalizeRunDetail,
   normalizeRunList,
   normalizeRunManifest,
@@ -17,8 +24,14 @@ import type {
   AdaptationRunManifest,
   AdaptationStartRunResponse,
   AdapterProfile,
+  AdapterProfileActivation,
+  AdapterProfileActivationResult,
   AdapterProfileListItem,
+  EvaluationEvidence,
   ProblemDetailsLike,
+  PromoteAdapterProfileResult,
+  PublishAdapterProfileResult,
+  RollbackAdapterProfileResult,
 } from "@/lib/adaptationTypes";
 import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 
@@ -123,6 +136,61 @@ export const adaptationApi = {
 
   getProfile: (profileId: string) =>
     requestAdaptation(`/admin/adaptation/profiles/${encodeURIComponent(profileId)}`, normalizeProfileDetail),
+
+  getRunEvaluation: (runId: string) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/${encodeURIComponent(runId)}/evaluation`,
+      normalizeEvaluationEvidence,
+    ),
+
+  publishProfile: (profileId: string, input: { notes?: string | null }) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/publish`,
+      normalizePublishResult,
+      {
+        method: "POST",
+        body: JSON.stringify({ notes: input.notes ?? null }),
+      },
+    ),
+
+  activateCanary: (profileId: string, input: { canaryPercent: number }) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/activate-canary`,
+      normalizeActivationResult,
+      {
+        method: "POST",
+        body: JSON.stringify({ canaryPercent: input.canaryPercent }),
+      },
+    ),
+
+  promoteProfile: (profileId: string) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/promote`,
+      normalizePromoteResult,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+
+  rollbackProfile: (profileId: string, input: { reason: string }) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/rollback`,
+      normalizeRollbackResult,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason: input.reason }),
+      },
+    ),
+
+  listProfileActivations: (profileId: string) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/activations`,
+      normalizeActivationList,
+    ),
+
+  getActiveProfile: (domainKey: string) =>
+    requestAdaptation(
+      `/admin/adaptation/domains/${encodeURIComponent(domainKey)}/active-profile`,
+      normalizeActiveProfileDetail,
+    ),
 };
 
 export type {
@@ -133,6 +201,12 @@ export type {
   AdaptationRunManifest,
   AdaptationStartRunResponse,
   AdapterProfile,
+  AdapterProfileActivation,
+  AdapterProfileActivationResult,
   AdapterProfileListItem,
+  EvaluationEvidence,
   ProblemDetailsLike,
+  PromoteAdapterProfileResult,
+  PublishAdapterProfileResult,
+  RollbackAdapterProfileResult,
 };

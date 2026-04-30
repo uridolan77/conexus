@@ -101,6 +101,12 @@ export type AdapterProfileListItem = {
   runId?: string;
   /** Present when list API includes gate summaries. */
   gateResults?: EvaluationGateResult[];
+  gatewayProfileId?: string | null;
+  canaryPercent?: number | null;
+  publishedAt?: string | null;
+  activatedAt?: string | null;
+  rolledBackAt?: string | null;
+  rollbackReason?: string | null;
 };
 
 export type AdapterProfile = AdapterProfileListItem & {
@@ -109,6 +115,98 @@ export type AdapterProfile = AdapterProfileListItem & {
   toolProfile?: string;
   metrics?: EvaluationMetric[];
   gateResults?: EvaluationGateResult[];
+};
+
+/** v0.4 deployment action results (normalized). */
+export type PublishAdapterProfileResult = {
+  adapterProfileId: string;
+  gatewayProfileId: string;
+  status: string;
+};
+
+export type AdapterProfileActivationResult = {
+  activationId: string;
+  adapterProfileId: string;
+  status: string;
+};
+
+export type PromoteAdapterProfileResult = {
+  adapterProfileId: string;
+  status: string;
+};
+
+export type RollbackAdapterProfileResult = {
+  adapterProfileId: string;
+  status: string;
+};
+
+export type AdapterProfileActivation = {
+  id: string;
+  adapterProfileId: string;
+  domainKey: string;
+  status: string;
+  canaryPercent: number;
+  previousActiveProfileId?: string | null;
+  rollbackReason?: string | null;
+  createdAt: string;
+  activatedAt?: string | null;
+  rolledBackAt?: string | null;
+};
+
+export type EvaluationSecuritySummary = {
+  summary?: string;
+  riskLevel?: string;
+  notes?: string;
+};
+
+export type CitationValidationIssue = {
+  code?: string;
+  message?: string;
+  blocking?: boolean;
+};
+
+export type CitationValidationResult = {
+  passed?: boolean;
+  lexicalSupportScore?: number;
+  issues?: CitationValidationIssue[];
+};
+
+export type RetrievedContextEvidence = {
+  excerpt?: string;
+  sourceId?: string;
+  documentId?: string;
+  chunkId?: string;
+};
+
+export type EvalQuestionEvidence = {
+  questionId: string;
+  question: string;
+  category: string;
+  answerExcerpt: string;
+  answered: boolean;
+  requiredSourceIds: string[];
+  requiredDocumentIds: string[];
+  requiredChunkIds: string[];
+  retrievedContexts: RetrievedContextEvidence[];
+  citationValidation: CitationValidationResult;
+  estimatedCost: number;
+  latencyMs: number;
+};
+
+export type EvaluationEvidence = {
+  id: string;
+  runId: string;
+  planId: string;
+  domainKey: string;
+  evalSetId: string;
+  createdAt: string;
+  compositeScore: number;
+  projectionVersion: string;
+  evidenceHash: string;
+  metrics: EvaluationMetric[];
+  gates: EvaluationGateResult[];
+  securitySummary: EvaluationSecuritySummary;
+  questions: EvalQuestionEvidence[];
 };
 
 /** POST /plans/{id}/run success body (normalized). */

@@ -15,9 +15,15 @@ import {
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { CopyableId } from "@/components/adaptation/CopyableId";
+import { DeploymentActionPanel } from "@/components/adaptation/DeploymentActionPanel";
 import { ScoreBadge } from "@/components/adaptation/ScoreBadge";
 import { formatDate } from "@/lib/api";
-import { adaptationApi, type AdapterProfile, type AdaptationResult } from "@/lib/adaptationApi";
+import {
+  adaptationApi,
+  type AdapterProfile,
+  type AdapterProfileActivation,
+  type AdaptationResult,
+} from "@/lib/adaptationApi";
 
 function bool(value: unknown) {
   return value === true || value === "true";
@@ -26,25 +32,46 @@ function bool(value: unknown) {
 export default function AdapterProfileDetailPage({ params }: { params: { id: string } }) {
   const profileId = params.id;
   const [profile, setProfile] = useState<AdapterProfile | null>(null);
+  const [activations, setActivations] = useState<AdapterProfileActivation[]>([]);
+  const [activeForDomain, setActiveForDomain] = useState<AdapterProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
+  const [deploymentError, setDeploymentError] = useState<AdaptationResult<unknown> | null>(null);
+  const [deploymentSuccess, setDeploymentSuccess] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
-    setLastError(null);
+  async function loadProfileData(options?: { quiet?: boolean }) {
+    const quiet = options?.quiet === true;
+    if (!quiet) {
+      setLoading(true);
+      setLastError(null);
+      setDeploymentError(null);
+      setDeploymentSuccess(null);
+    }
     const res = await adaptationApi.getProfile(profileId);
     if (!res.ok) {
       setProfile(null);
+      setActivations([]);
+      setActiveForDomain(null);
       setLastError(res);
-      setLoading(false);
+      if (!quiet) setLoading(false);
       return;
     }
-    setProfile(res.data);
-    setLoading(false);
+    const p = res.data;
+    setProfile(p);
+    const actRes = await adaptationApi.listProfileActivations(profileId);
+    setActivations(actRes.ok ? actRes.data : []);
+    const dk = p.domainKey?.trim();
+    if (dk) {
+      const domRes = await adaptationApi.getActiveProfile(dk);
+      setActiveForDomain(domRes.ok ? domRes.data : null);
+    } else {
+      setActiveForDomain(null);
+    }
+    if (!quiet) setLoading(false);
   }
 
   useEffect(() => {
-    void load();
+    void loadProfileData();
   }, [profileId]);
 
   const approvedForRuntime = bool(profile?.approvedForRuntime);
@@ -112,9 +139,56 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
                 { label: "createdAt", value: formatDate(profile.createdAt) },
                 { label: "evaluatedAt", value: formatDate(profile.evaluatedAt) },
                 { label: "approvedAt", value: formatDate(profile.approvedAt) },
+                {
+                  label: "gatewayProfileId",
+                  value: profile.gatewayProfileId ? (
+                    <code className="wrap-anywhere">{profile.gatewayProfileId}</code>
+                  ) : (
+                    "—"
+                  ),
+                },
+                {
+                  label: "canaryPercent",
+                  value:
+                    profile.canaryPercent !== undefined && profile.canaryPercent !== null
+                      ? String(profile.canaryPercent)
+                      : "—",
+                },
+                { label: "publishedAt", value: formatDate(profile.publishedAt ?? undefined) },
+                { label: "activatedAt", value: formatDate(profile.activatedAt ?? undefined) },
+                { label: "rolledBackAt", value: formatDate(profile.rolledBackAt ?? undefined) },
+                {
+                  label: "rollbackReason",
+                  value: profile.rollbackReason ? <span className="truncate">{profile.rollbackReason}</span> : "—",
+                },
               ]}
             />
           </Card>
+
+          {deploymentSuccess && (
+            <Card className="card-muted">
+              <p style={{ margin: 0, color: "var(--color-success)" }}>{deploymentSuccess}</p>
+            </Card>
+          )}
+          {deploymentError && <AdaptationErrorBanner result={deploymentError} />}
+
+          <DeploymentActionPanel
+            profile={profile}
+            profileId={profileId}
+            activations={activations}
+            activeForDomain={activeForDomain}
+            onRefresh={async () => {
+              await loadProfileData({ quiet: true });
+            }}
+            onDeploymentError={(r) => {
+              setDeploymentError(r);
+              setDeploymentSuccess(null);
+            }}
+            onDeploymentSuccess={(msg) => {
+              setDeploymentSuccess(msg);
+              setDeploymentError(null);
+            }}
+          />
 
           <Card>
             <SectionHeader title="Runtime Profile Keys" description="These keys map to runtime config objects (not expanded here in v0.3d)." />
@@ -231,7 +305,8 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
             <JsonBlock value={profile} defaultOpen={false} />
             {blockingFailures > 0 && (
               <p className="muted">
-                Failed blocking gates are highlighted above. This does not publish or activate a profile in v0.3d.
+                Failed blocking gates are highlighted above. Use the deployment lifecycle panel to publish or activate
+                when the profile is ready.
               </p>
             )}
           </Card>
