@@ -13,6 +13,9 @@ post-call reconciliation.
 
 Details: [strict-limit-reservations.md](strict-limit-reservations.md).
 
+**Stale / unreconciled reservations** after crashes are addressed operationally in v0.8
+(list, dry-run, repair). See [stale-limit-reservation-repair.md](stale-limit-reservation-repair.md).
+
 ## v0.6 behavior (historical)
 
 Project **hard** limits were enforced by reading aggregates from `gateway_requests`

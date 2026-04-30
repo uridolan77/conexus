@@ -64,6 +64,15 @@ class Settings(BaseSettings):
         default=180, alias="LLM_STREAM_TIMEOUT_SECONDS", ge=1
     )
 
+    # Stale limit reservation repair (v0.8): classify unreconciled rows older than this.
+    limit_reservation_stale_after_seconds: int = Field(
+        default=900, alias="LIMIT_RESERVATION_STALE_AFTER_SECONDS", ge=60
+    )
+    # After this age, "started but not completed" reservations may be force-repaired as failed.
+    limit_reservation_force_repair_after_seconds: int = Field(
+        default=3600, alias="LIMIT_RESERVATION_FORCE_REPAIR_AFTER_SECONDS", ge=300
+    )
+
     admin_login_max_failures: int = Field(default=5, alias="ADMIN_LOGIN_MAX_FAILURES", ge=1)
     admin_login_window_seconds: int = Field(
         default=600, alias="ADMIN_LOGIN_WINDOW_SECONDS", ge=30

@@ -366,3 +366,47 @@ async def reconcile_gateway_request(
 
     res.reconciled_at = datetime.now(timezone.utc)
     await session.flush()
+
+
+async def release_orphan_limit_reservation(
+    session: AsyncSession,
+    *,
+    reservation_id: str,
+) -> bool:
+    """Release reserved daily/monthly counters without incrementing completed requests.
+
+    Used when a reservation row exists but no gateway request was ever started
+    (process crashed after reserve, before ``start_request``).
+    """
+    dialect = _dialect_name(session)
+    stmt = select(ProjectGatewayLimitReservation).where(
+        ProjectGatewayLimitReservation.id == reservation_id
+    )
+    if dialect == "postgresql":
+        stmt = stmt.with_for_update()
+    res = (await session.execute(stmt)).scalar_one_or_none()
+    if res is None:
+        return False
+    if res.reconciled_at is not None:
+        return False
+
+    window_ids = [res.daily_window_id]
+    if res.monthly_window_id:
+        window_ids.append(res.monthly_window_id)
+    window_ids.sort()
+
+    windows: dict[str, ProjectUsageWindow] = {}
+    for wid in window_ids:
+        windows[wid] = await _lock_window_by_id(session, wid)
+
+    daily = windows[res.daily_window_id]
+    daily.request_count_reserved = max(0, daily.request_count_reserved - res.request_slots)
+    daily.token_count_reserved = max(0, daily.token_count_reserved - res.tokens_reserved)
+
+    if res.monthly_window_id:
+        monthly = windows[res.monthly_window_id]
+        monthly.cost_reserved = max(0.0, monthly.cost_reserved - res.cost_reserved)
+
+    res.reconciled_at = datetime.now(timezone.utc)
+    await session.flush()
+    return True

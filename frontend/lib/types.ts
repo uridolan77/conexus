@@ -46,6 +46,43 @@ export type ProjectLimitsUsage = {
   };
 };
 
+/** Stale unreconciled limit reservations (v0.8 repair). */
+export type StaleReservationItem = {
+  reservation_id: string;
+  project_id: string;
+  created_at: string;
+  age_seconds: number;
+  daily_window_id: string;
+  monthly_window_id: string | null;
+  request_slots: number;
+  tokens_reserved: number;
+  cost_reserved: number;
+  gateway_request_id: string | null;
+  gateway_request_status: string | null;
+  gateway_request_completed_at: string | null;
+  repair_kind: string;
+  recommended_action: string;
+};
+
+export type StaleReservationsList = {
+  now: string;
+  older_than_seconds: number;
+  total_count: number;
+  oldest_age_seconds: number | null;
+  items: StaleReservationItem[];
+};
+
+export type ReservationRepairResponse = {
+  reservation_id: string;
+  project_id: string;
+  repair_kind: string;
+  action: string;
+  applied: boolean;
+  message: string;
+  before: unknown;
+  after: unknown;
+};
+
 /** Current UTC usage-window counters (v0.7 admission). */
 export type ProjectLimitsReservations = {
   project_id: string;

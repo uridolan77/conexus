@@ -168,3 +168,43 @@ async def test_get_limits_reservations_null_when_no_usage_windows(
     assert body["daily"] is None
     assert body["monthly"] is None
 
+
+@pytest.mark.asyncio
+async def test_get_stale_reservations_requires_admin(client: AsyncClient) -> None:
+    response = await client.get("/admin/projects/limits/reservations/stale")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_stale_reservations_returns_shape(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.get("/admin/projects/limits/reservations/stale")
+    assert response.status_code == 200
+    body = response.json()
+    assert "now" in body
+    assert "older_than_seconds" in body
+    assert "total_count" in body
+    assert "oldest_age_seconds" in body
+    assert "items" in body
+    assert body["total_count"] == 0
+    assert body["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_post_repair_dry_run_404_when_missing(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.post(
+        "/admin/projects/limits/reservations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/repair/dry-run"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_repair_apply_404_when_missing(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.post(
+        "/admin/projects/limits/reservations/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/repair",
+        json={"reason": "test"},
+    )
+    assert response.status_code == 404
+

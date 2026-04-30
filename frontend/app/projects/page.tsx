@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import {
   Alert,
@@ -27,6 +28,7 @@ import type {
   ProjectLimitsReservations,
   ProjectLimitsUsage,
   ProjectRow,
+  StaleReservationsList,
 } from "@/lib/types";
 
 export default function ProjectsPage() {
@@ -44,6 +46,10 @@ export default function ProjectsPage() {
   const [loadingLimits, setLoadingLimits] = useState(false);
   const [loadingLimitsUsage, setLoadingLimitsUsage] = useState(false);
   const [loadingLimitsReservations, setLoadingLimitsReservations] = useState(false);
+  const [staleReservationsSummary, setStaleReservationsSummary] = useState<StaleReservationsList | null>(
+    null,
+  );
+  const [loadingStaleReservations, setLoadingStaleReservations] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
   const [limitMode, setLimitMode] = useState<ProjectLimits["limit_mode"]>("disabled");
   const [monthlyCostLimit, setMonthlyCostLimit] = useState("");
@@ -145,6 +151,27 @@ export default function ProjectsPage() {
     }
   }
 
+  async function fetchStaleReservationsSummary(projectId: string) {
+    setLoadingStaleReservations(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        project_id: projectId,
+        limit: "100",
+      });
+      const res = await adminSessionFetch(
+        `${BACKEND_BASE}/admin/projects/limits/reservations/stale?${params.toString()}`,
+      );
+      if (!res.ok) {
+        setError("Unable to load stale reservation summary.");
+        return;
+      }
+      setStaleReservationsSummary((await res.json()) as StaleReservationsList);
+    } finally {
+      setLoadingStaleReservations(false);
+    }
+  }
+
   useEffect(() => {
     void fetchProjects();
   }, []);
@@ -156,11 +183,13 @@ export default function ProjectsPage() {
       void fetchLimits(selectedProjectId);
       void fetchLimitsUsage(selectedProjectId);
       void fetchLimitsReservations(selectedProjectId);
+      void fetchStaleReservationsSummary(selectedProjectId);
     } else {
       setKeys([]);
       setLimits(null);
       setLimitsUsage(null);
       setLimitsReservations(null);
+      setStaleReservationsSummary(null);
     }
   }, [selectedProjectId]);
 
@@ -338,6 +367,12 @@ export default function ProjectsPage() {
   function _percent(current: number, limit: number | null) {
     if (!limit || limit <= 0) return null;
     return Math.min(999, (current / limit) * 100);
+  }
+
+  function _formatStaleAge(seconds: number) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   }
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -525,6 +560,38 @@ export default function ProjectsPage() {
                           },
                         ]}
                       />
+                      {loadingStaleReservations ? (
+                        <LoadingState label="Loading stale reservation summary..." />
+                      ) : staleReservationsSummary ? (
+                        <div className="stack" style={{ marginBottom: 12 }}>
+                          <div className="muted">
+                            Stale reservations are unreconciled limit rows older than the configured
+                            threshold.{" "}
+                            <Link
+                              className="nav-link"
+                              href={`/projects/stale-reservations?project_id=${selectedProjectId}`}
+                            >
+                              View stale reservations
+                            </Link>{" "}
+                            for this project.
+                          </div>
+                          <KeyValueGrid
+                            items={[
+                              {
+                                label: "Stale reservations (count)",
+                                value: _formatNumber(staleReservationsSummary.total_count),
+                              },
+                              {
+                                label: "Oldest stale age",
+                                value:
+                                  staleReservationsSummary.oldest_age_seconds == null
+                                    ? "—"
+                                    : _formatStaleAge(staleReservationsSummary.oldest_age_seconds),
+                              },
+                            ]}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

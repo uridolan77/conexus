@@ -32,6 +32,12 @@ When hard limits reject a request before the provider runs, the gateway still wr
 included in legacy daily/monthly aggregates and therefore **count toward request
 totals** the same way other failed gateway calls do.
 
+**Recommended direction (v0.8+):** blocked 429 admission attempts should **not** create
+limit reservations (they never reach `reserve_gateway_request`), but may still log a
+failed `gateway_requests` row for audit. They should **not** increase completed
+reservation counters. Today, treat legacy aggregate totals as observational when
+debugging admission.
+
 ## Concurrency
 
 - **PostgreSQL:** `SELECT ... FOR UPDATE` on usage window rows serializes updates
@@ -45,11 +51,15 @@ totals** the same way other failed gateway calls do.
   in-memory pool (`StaticPool`). The per-project asyncio lock still helps avoid
   interleaving reserve vs `start_request` within one process.
 
-## Stale reservations (future work)
+## Stale reservations (v0.8)
 
 If a process crashes after reserving usage but before reconcile, counters can remain
-inflated until a repair job or operator intervention. **Automated stale-reservation
-repair is not implemented** in v0.7.
+inflated. v0.8 adds **listing, classification, dry-run, and apply repair** (admin API,
+back office, and CLI). See [stale-limit-reservation-repair.md](stale-limit-reservation-repair.md).
+
+Orphan reservations (no `gateway_requests` row) **release** reserved slots/tokens/cost
+without counting a completed request. Failed/completed gateway rows are **reconciled**
+using the same rules as the live gateway path.
 
 ## Reconciliation
 

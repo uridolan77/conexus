@@ -16,12 +16,18 @@ import argparse
 import asyncio
 import getpass
 import sys
+from datetime import datetime, timezone
 
+from app.core.config import settings
 from app.db.models import AdminUser, Project
 from app.db.session import get_sessionmaker, init_db
 from app.services.admin_auth_service import InvalidAdminUsernameError, validate_admin_username_format
 from app.services.password_hasher import hash_password
 from app.services.project_key_service import create_api_key
+from app.services.project_limit_reservation_repair_service import (
+    list_stale_reservations,
+    repair_stale_reservation,
+)
 
 
 async def _cmd_init_db() -> None:
@@ -83,6 +89,84 @@ async def _cmd_create_admin(
         print(user.id)
 
 
+async def _cmd_limits_list_stale(
+    *,
+    older_than_seconds: int | None,
+    project_id: str | None,
+    limit: int,
+) -> None:
+    threshold = (
+        older_than_seconds
+        if older_than_seconds is not None
+        else settings.limit_reservation_stale_after_seconds
+    )
+    now = datetime.now(timezone.utc)
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        items = await list_stale_reservations(
+            session,
+            older_than_seconds=threshold,
+            project_id=project_id,
+            limit=limit,
+            now=now,
+        )
+    print(
+        f"older_than_seconds={threshold}  now={now.isoformat()}  "
+        f"listed={len(items)} (limit {limit})"
+    )
+    for it in items:
+        print(
+            f"{it.reservation_id}\t{it.project_id}\tage={it.age_seconds}s\t"
+            f"kind={it.repair_kind}\trec={it.recommended_action}\t"
+            f"gw={it.gateway_request_status or '—'}"
+        )
+
+
+async def _cmd_limits_repair_stale(
+    *,
+    older_than_seconds: int | None,
+    project_id: str | None,
+    limit: int,
+    dry_run: bool,
+) -> None:
+    threshold = (
+        older_than_seconds
+        if older_than_seconds is not None
+        else settings.limit_reservation_stale_after_seconds
+    )
+    mode = "dry_run" if dry_run else "apply"
+    now = datetime.now(timezone.utc)
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        items = await list_stale_reservations(
+            session,
+            older_than_seconds=threshold,
+            project_id=project_id,
+            limit=limit,
+            now=now,
+        )
+    print(
+        f"mode={mode}  older_than_seconds={threshold}  "
+        f"candidates={len(items)}  now={now.isoformat()}"
+    )
+    for it in items:
+        async with sessionmaker() as session:
+            async with session.begin():
+                result = await repair_stale_reservation(
+                    session,
+                    reservation_id=it.reservation_id,
+                    mode=mode,
+                    now=now,
+                )
+        if result is None:
+            print(f"{it.reservation_id}\tmissing")
+            continue
+        print(
+            f"{it.reservation_id}\t{result.project_id}\t{result.action}\t"
+            f"applied={result.applied}\t{result.message}"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="conexus")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -102,6 +186,28 @@ def main() -> None:
     )
     p.add_argument("--email", default=None)
     p.add_argument("--inactive", action="store_true")
+
+    plimits = sub.add_parser("limits")
+    pl_sub = plimits.add_subparsers(dest="limits_cmd", required=True)
+    p_ls = pl_sub.add_parser(
+        "list-stale-reservations",
+        help="List stale unreconciled limit reservations",
+    )
+    p_ls.add_argument("--older-than-seconds", type=int, default=None)
+    p_ls.add_argument("--project-id", default=None)
+    p_ls.add_argument("--limit", type=int, default=100)
+
+    p_rep = pl_sub.add_parser(
+        "repair-stale-reservations",
+        help="Dry-run or apply repair for each stale reservation in the list",
+    )
+    p_rep.add_argument("--older-than-seconds", type=int, default=None)
+    p_rep.add_argument("--project-id", default=None)
+    p_rep.add_argument("--limit", type=int, default=100)
+    rep_g = p_rep.add_mutually_exclusive_group(required=True)
+    rep_g.add_argument("--dry-run", action="store_true")
+    rep_g.add_argument("--apply", action="store_true")
+
     args = parser.parse_args()
 
     match args.cmd:
@@ -126,6 +232,25 @@ def main() -> None:
                     inactive=args.inactive,
                 )
             )
+        case "limits":
+            match args.limits_cmd:
+                case "list-stale-reservations":
+                    asyncio.run(
+                        _cmd_limits_list_stale(
+                            older_than_seconds=args.older_than_seconds,
+                            project_id=args.project_id,
+                            limit=args.limit,
+                        )
+                    )
+                case "repair-stale-reservations":
+                    asyncio.run(
+                        _cmd_limits_repair_stale(
+                            older_than_seconds=args.older_than_seconds,
+                            project_id=args.project_id,
+                            limit=args.limit,
+                            dry_run=args.dry_run,
+                        )
+                    )
 
 
 if __name__ == "__main__":
