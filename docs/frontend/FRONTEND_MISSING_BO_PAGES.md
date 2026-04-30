@@ -1,81 +1,359 @@
-Missing BO pages after foundation fixes
-
+# Conexus BO Pages Expansion — Controlled Implementation Plan
 
 You are working in the `conexus` repository.
 
-Goal: add the missing operational BO pages using the frontend foundation that now exists.
+Goal: add the missing operational BO pages using the now-hardened frontend foundation.
 
-Do this only after the foundation correction pass is complete and both commands pass:
-- `npm test -- --run`
-- `npm run build`
-
-Important constraints:
-- Do not redesign the whole app.
-- Do not introduce a large UI framework.
-- Reuse existing components:
-  - `PageHeader`
-  - `Card`
-  - `SectionHeader`
-  - `PageState`
-  - `Toolbar`
-  - `FilterBar`
-  - `RefreshButton`
-  - `DataTable` only if it remains simple
-  - `DetailDrawer`
-  - `JsonBlock`
-  - `InlineCode`
-  - `CopyableCode`
-  - `MetricCard`
-- Use `frontend/lib/admin/*` domain API modules where available.
-- Add new domain API modules only when needed.
-- Do not expose secrets.
-- Do not store project API keys in localStorage.
-- Do not show raw provider keys.
-- Do not show prompts/responses unless the backend explicitly returns them and it is safe.
-- Do not call `/internal/*` endpoints directly from the browser.
-- If a backend endpoint is missing, add a small read-only `/admin/*` endpoint only when safe. Otherwise create a clear placeholder and document the gap.
-- Keep tests/build passing.
-
-Pages to implement or complete:
-
-1. `/playground`
-2. `/smoke-tests` alias or redirect to `/playground`
-3. `/requests` improvement if already present
-4. `/activity`
-5. `/audit` alias or existing page alignment with `/activity`
-6. `/usage` improvement if already present
-7. `/health`
-8. `/settings`
-9. `/adapter-profiles`
-10. `/routing` improvement if already present
-11. `/limits` if not already covered sufficiently by project detail/Projects page
-
-Implementation order:
+This frontend is intended to become a reusable BO/admin foundation for Conexus and future back offices. Keep the implementation clean, typed, testable, and consistent with the documented BO conventions.
 
 ---
 
-## Phase 1 — Playground / Smoke Test
+## Current frontend foundation
 
-Route:
-- `frontend/app/playground/page.tsx`
-- `frontend/app/smoke-tests/page.tsx` should either redirect to `/playground` or render the same component.
+The frontend already has:
 
-Purpose:
-Let the operator test `POST /v1/chat/completions`.
+- Next.js App Router
+- TypeScript strict mode
+- Vanilla CSS design tokens
+- grouped sidebar navigation via `frontend/lib/navigation.ts`
+- typed admin API helpers in `frontend/lib/api.ts`
+- `buildQuery`
+- `AdminResult<T>`
+- `parseApiError`
+- `useAdminResource`
+- formatter utilities in `frontend/lib/format.ts`
+- domain modules under `frontend/lib/admin/`
+- shared UI primitives in `frontend/components/ui/index.tsx`
+- decomposed Projects components under `frontend/components/projects/`
+- BO conventions in `docs/frontend/BO_FRONTEND_CONVENTIONS.md`
 
-Fields:
-- API key input, manual paste only for now.
-- Model input, default `conexus-fast`.
-- System message textarea, optional.
-- User message textarea, default `Say hello in one sentence.`
-- Temperature input, default optional.
-- Max tokens input, optional.
-- Stream toggle optional. If streaming is hard, document as not implemented yet.
+Use those foundations. Do not bypass them.
 
-Request:
-- POST `${BACKEND_BASE}/v1/chat/completions`
-- Header: `Authorization: Bearer <manual key>`
-- Body:
+---
+
+## Hard constraints
+
+Do not violate these:
+
+1. Do not redesign the app.
+2. Do not introduce Tailwind, shadcn/ui, MUI, Radix, React Query, SWR, or any large dependency.
+3. Do not expose secrets.
+4. Do not store project API keys in `localStorage`, `sessionStorage`, cookies, query strings, logs, or persistent component state beyond the current in-memory form state.
+5. Do not show raw provider keys.
+6. Do not show internal API keys.
+7. Do not call `/internal/*` endpoints directly from the browser.
+8. Do not show prompts/responses unless the backend explicitly returns them and it is safe.
+9. Do not weaken TypeScript strictness.
+10. Do not run or enforce `npm run lint`; ESLint is not configured yet.
+11. Preserve all existing pages and behaviors.
+12. Keep each phase small and reviewable.
+
+---
+
+## Required validation
+
+From `frontend/` after each phase:
+
+```bash
+npm test -- --run
+npm run build
+````
+
+If backend endpoints are added:
+
+```bash
+cd backend
+python -m pytest
+python -m ruff check app tests
+```
+
+Do not run `npm run lint`.
+
+---
+
+# Implementation strategy
+
+Do not implement all pages in one uncontrolled pass.
+
+Use this order:
+
+1. Phase 0 — tiny API safety fix
+2. Phase 1 — Playground + Smoke Test alias
+3. Phase 2 — Requests Explorer hardening
+4. Phase 3 — Activity / Audit
+5. Phase 4 — Usage
+6. Phase 5 — Health + Settings
+7. Phase 6 — Routing
+8. Phase 7 — Adapter Profiles registry
+9. Phase 8 — Limits landing page
+10. Phase 9 — docs + final sanity checklist
+
+If this prompt is run in Cursor as one agent task, complete **Phase 0 and Phase 1 only**, then stop and report. Continue later phase-by-phase after review.
+
+---
+
+# Phase 0 — Tiny API safety correction
+
+Before adding pages, tighten the admin API helper.
+
+## Files
+
+* `frontend/lib/api.ts`
+* relevant tests under `frontend/test/lib/`
+
+## Required changes
+
+### 0.1 Reject paths without leading slash
+
+Current API helpers reject absolute `http(s)://` URLs. Also reject relative paths that do not start with `/`.
+
+Invalid:
+
+```ts
+getAdminJson("admin/projects")
+```
+
+Valid:
+
+```ts
+getAdminJson("/admin/projects")
+```
+
+Expected behavior:
+
+* returns `{ ok: false }`
+* does not call `fetch`
+* error message is clear
+* error message does not contain secrets
+
+Suggested behavior:
+
+```ts
+if (!path.startsWith("/")) {
+  return {
+    ok: false,
+    error: {
+      message: "Invalid path: admin API paths must start with '/'.",
+      status: 0,
+    },
+  };
+}
+```
+
+Keep the existing absolute URL rejection.
+
+### 0.2 Optional: expose public `requestAdminJson`
+
+If low-risk, add:
+
+```ts
+requestAdminJson<T>({
+  method,
+  path,
+  body,
+  signal,
+})
+```
+
+Use it internally for `getAdminJson`, `postAdminJson`, `putAdminJson`, and `deleteAdminJson`.
+
+This helps future pages that need `PATCH` or non-standard methods.
+
+Do not break existing helper signatures.
+
+## Tests
+
+Add/update tests for:
+
+* `/admin/projects` accepted
+* `admin/projects` rejected
+* `http://example.com/admin/projects` rejected
+* rejected paths do not call `fetch`
+* `buildQuery` behavior remains unchanged
+* empty 204/empty body handling remains valid
+
+---
+
+# Shared page conventions
+
+Every new BO page must follow this shape:
+
+```tsx
+<PageHeader
+  eyebrow="..."
+  title="..."
+  description="..."
+  actions={<RefreshButton onClick={reload} loading={loading} />}
+/>
+
+{pageError && <ErrorState message={pageError} />}
+
+<Card>
+  <SectionHeader title="..." description="..." />
+  <PageState
+    loading={loading}
+    error={sectionError}
+    empty={rows.length === 0}
+    emptyTitle="..."
+    emptyBody="..."
+  >
+    ...
+  </PageState>
+</Card>
+```
+
+Use:
+
+* `useAdminResource` for new read-heavy pages
+* `AdminResult<T>` for all admin API calls
+* domain modules under `frontend/lib/admin/*`
+* `buildQuery` for query strings
+* `formatDateTime`
+* `formatCost`
+* `formatPercentRatio`
+* `formatPercentValue`
+* `formatTokens`
+* `formatLatency`
+* `formatNullable`
+* `formatDurationSeconds`
+* `PageState`
+* `Toolbar`
+* `FilterBar`
+* `RefreshButton`
+* `DetailDrawer`
+* `JsonBlock`
+* `InlineCode`
+* `CodeChip`
+* `CopyableCode`
+* `DataTable` only for simple tables
+
+Use normal JSX `<Table>` for complex tables.
+
+---
+
+# Phase 1 — Playground + Smoke Test alias
+
+## Routes
+
+Create:
+
+```text
+frontend/app/playground/page.tsx
+```
+
+Update or create:
+
+```text
+frontend/app/smoke-tests/page.tsx
+```
+
+`/smoke-tests` should either redirect to `/playground` or render the same component. Prefer redirect if clean.
+
+## Purpose
+
+Let an operator manually test:
+
+```text
+POST /v1/chat/completions
+```
+
+This closes the core loop:
+
+```text
+create project → issue API key → paste key → send gateway request → inspect request log
+```
+
+## Domain module
+
+Create:
+
+```text
+frontend/lib/admin/playground.ts
+```
+
+But remember: this is not an admin endpoint. The playground sends a gateway request to:
+
+```text
+/v1/chat/completions
+```
+
+Do not use `adminSessionFetch` for the actual gateway call because gateway auth uses `Authorization: Bearer <project API key>`, not the admin cookie.
+
+Create a small helper like:
+
+```ts
+sendPlaygroundChatCompletion({
+  apiKey,
+  payload,
+  signal,
+}): Promise<PlaygroundResult>
+```
+
+It should:
+
+* call `${BACKEND_BASE}/v1/chat/completions`
+* send `Authorization: Bearer ${apiKey}`
+* send `Content-Type: application/json`
+* parse JSON safely
+* capture response status
+* capture `X-Conexus-Request-Id` if present
+* return a typed result
+* never store or log the API key
+
+## Form fields
+
+Required:
+
+* Project API key input, manual paste only
+* Model input, default:
+
+```text
+conexus-fast
+```
+
+* User message textarea, default:
+
+```text
+Say hello in one sentence.
+```
+
+Optional:
+
+* System message textarea
+* Temperature
+* Max tokens
+
+Do not implement streaming in this phase unless it is already trivial. If not implemented, show:
+
+```text
+Streaming playground mode is not implemented yet. Non-streaming requests are supported.
+```
+
+## Payload builder
+
+Create a pure helper, preferably in the same module or separate file:
+
+```ts
+buildChatCompletionPayload({
+  model,
+  systemMessage,
+  userMessage,
+  temperature,
+  maxTokens,
+})
+```
+
+Rules:
+
+* include system message only when non-empty
+* include user message
+* include temperature only when valid number
+* include max_tokens only when valid positive integer
+* trim strings
+* never include API key in payload
+
+Example body:
+
 ```json
 {
   "model": "conexus-fast",
@@ -83,375 +361,596 @@ Request:
     { "role": "user", "content": "Say hello in one sentence." }
   ]
 }
+```
 
-Show result:
+## Result display
 
-HTTP status
-X-Conexus-Request-Id response header if present
-model
-provider
-fallback_used
-content
-usage
-raw JSON collapsible
+On success, show:
 
-Show error:
+* HTTP status
+* request ID from `X-Conexus-Request-Id`, if present
+* response id
+* model
+* provider
+* fallback_used
+* first assistant message content
+* usage:
 
-status
-normalized message
-raw JSON collapsible if safe
-request ID if present
-hint: “Check provider config and project API key.”
+  * prompt tokens
+  * completion tokens
+  * total tokens
+* raw JSON in `<JsonBlock>`
 
-Security:
+On error, show:
 
-Do not persist API key in localStorage/sessionStorage.
-Provide a “clear key” button.
-Never include API key in logs or UI error output.
+* HTTP status
+* request ID if present
+* normalized message
+* safe raw JSON in `<JsonBlock>` if useful
+* troubleshooting hints:
 
-Tests:
+  * check project API key
+  * check provider config
+  * check model alias
+  * check backend logs
 
-payload builder includes system message only when non-empty.
-no localStorage usage.
-error state renders.
-Phase 2 — Requests Explorer
+## Security
 
-Route:
+* Do not persist API key in localStorage/sessionStorage.
+* Do not include API key in raw JSON debug block.
+* Do not include API key in error messages.
+* Add “Clear key” button.
+* Password-style input is acceptable, but a “show/hide” toggle may be added if simple.
+* Do not auto-fill from project key list because plaintext keys are shown once only.
 
+## Tests
+
+Add tests for:
+
+* payload builder omits empty system message
+* payload builder includes non-empty system message
+* payload builder validates max tokens
+* payload builder validates temperature
+* no localStorage/sessionStorage usage
+* successful response renders request ID and content
+* error response renders safe error
+* API key is not rendered in error output
+
+## Manual sanity after Phase 1
+
+1. Start Conexus.
+2. Login in frontend.
+3. Create project.
+4. Issue API key.
+5. Copy key.
+6. Open `/playground`.
+7. Paste key.
+8. Send request.
+9. Confirm success or safe provider failure.
+10. Go to Requests page and verify a request row was logged.
+
+Stop after this phase and report.
+
+---
+
+# Phase 2 — Requests Explorer hardening
+
+## Route
+
+```text
 frontend/app/requests/page.tsx
+```
 
-Purpose:
-Inspect gateway request logs.
+If it already exists, improve it. Do not rewrite unless needed.
 
-If already implemented, harden it to use foundation components and domain API module.
+## Domain module
 
-Use or create:
+Use or update:
 
+```text
 frontend/lib/admin/requests.ts
+```
 
-Required filters:
+All query params must use `buildQuery`.
 
-status
-project id/name if supported
-provider
-requested model
-request ID
-error code
-limit/offset pagination
+## Filters
 
-Table columns:
+Support as many as backend already supports:
 
-created at
-status
-request ID
-project
-requested model
-provider
-served model
-latency
-tokens
-cost
-fallback
-error code
+* status
+* project ID
+* provider
+* requested model
+* request ID
+* error code
+* limit
+* offset
 
-Detail drawer:
+Do not fake unsupported filters. If backend does not support one, omit it or document it as a gap.
 
-request ID
-project id/name
-API key prefix
-requested model
-provider/model
-status
-latency
-tokens
-estimated cost
-fallback used
-error code/message
-created/completed timestamps
-gateway profile ID if available
-raw JSON if safe
+## Table columns
+
+* created at
+* status
+* request ID
+* project
+* requested model
+* provider
+* served model
+* latency
+* tokens
+* estimated cost
+* fallback
+* error code
+
+## Detail drawer
+
+Use `DetailDrawer`.
+
+Show:
+
+* request ID
+* project ID/name
+* API key prefix only
+* requested model
+* provider/model served
+* status
+* latency
+* prompt/completion/total tokens
+* estimated cost
+* fallback used
+* error code/message
+* created/completed timestamps
+* gateway profile ID if present
+* raw row JSON in `JsonBlock`
 
 Do not show:
 
-raw prompt
-raw response
-full project API key
-provider secret
+* raw prompt
+* raw response
+* full API key
+* provider secret
 
-Tests:
+## Tests
 
-empty state
-failed request row
-detail drawer opens
-filters build expected query string where practical
-Phase 3 — Activity / Audit
+* empty state
+* failed request row
+* completed request row
+* detail drawer opens
+* filter query construction
+* null token/cost fields do not crash
 
-Routes:
+---
 
+# Phase 3 — Activity / Audit
+
+## Routes
+
+Create:
+
+```text
 frontend/app/activity/page.tsx
-frontend/app/audit/page.tsx should redirect to /activity or reuse same component.
+```
 
-Purpose:
-Human-readable audit log explorer.
+Make `/audit` either:
 
-Use or create:
+* redirect to `/activity`, or
+* reuse the same component.
 
+Prefer `/activity` as the canonical route and keep `/audit` as compatibility alias.
+
+## Domain module
+
+Use or update:
+
+```text
 frontend/lib/admin/audit.ts
+```
 
-Filters:
+## Filters
 
-action
-actor
-resource type
-resource ID
-limit/offset
+* action
+* actor
+* resource type
+* resource ID
+* limit
+* offset
 
-Table columns:
+## Table columns
 
-created at
-actor
-action
-resource type
-resource ID
-metadata summary
+* created at
+* actor
+* action
+* resource type
+* resource ID
+* metadata summary
 
-Detail drawer:
+## Detail drawer
 
-full metadata JSON
-copy resource ID
-related links if obvious
+Show:
 
-Important:
+* event ID
+* actor
+* action
+* resource type
+* resource ID
+* created at
+* full metadata JSON
 
-Existing direct internal registration should appear as gateway.adapter_profile.registered if backend audit endpoint includes it.
-Login/project/key actions should appear.
+Do not show secrets from metadata if present. If metadata may contain secrets, redact obvious keys:
 
-Tests:
+```text
+api_key
+apikey
+token
+secret
+password
+authorization
+```
 
-empty state
-row rendering
-metadata drawer
-Phase 4 — Usage
+## Tests
 
-Route:
+* empty state
+* row rendering
+* drawer opens
+* metadata JSON renders
+* obvious secret-like metadata keys are redacted if redaction is implemented
 
+---
+
+# Phase 4 — Usage
+
+## Route
+
+```text
 frontend/app/usage/page.tsx
+```
 
-Purpose:
-Show usage/cost rollups.
+## Domain module
 
-Use or create:
+Use or update:
 
+```text
 frontend/lib/admin/usage.ts
+```
 
-Controls:
+## Controls
 
-window selector: 24h, 7d, 30d
+Window selector:
 
-Summary cards:
+* `24h`
+* `7d`
+* `30d`
 
-total requests
-completed requests
-failed requests
-success rate using formatPercentRatio
-fallback rate using formatPercentRatio
-total tokens
-prompt tokens
-completion tokens
-estimated cost
-average latency
+## Summary cards
 
-Breakdown sections:
+Use `MetricCard`.
 
-by project
-by provider
-timeseries if backend endpoint exists
+Show:
 
-Important:
+* total requests
+* completed requests
+* failed requests
+* success rate using `formatPercentRatio`
+* fallback rate using `formatPercentRatio`
+* prompt tokens
+* completion tokens
+* total tokens
+* estimated cost
+* average latency
 
-Handle null token/cost fields gracefully.
-Do not assume streaming rows always have usage.
-Do not crash with empty DB.
+## Breakdowns
 
-Tests:
+Add sections if backend endpoints exist:
 
-empty usage
-ratio formatting
-null cost/token handling
-Phase 5 — Health
+* by project
+* by provider
+* timeseries
 
-Route:
+Do not fake missing data.
 
+## Important behavior
+
+* empty DB should render cleanly
+* null token/cost fields should render `"—"`
+* streaming rows may have null tokens/cost; do not assume usage is present
+
+## Tests
+
+* empty usage
+* ratio formatting
+* null cost/token handling
+* window selector triggers reload
+
+---
+
+# Phase 5 — Health + Settings
+
+## Health route
+
+```text
 frontend/app/health/page.tsx
-
-Purpose:
-Make backend and frontend operational state obvious.
+```
 
 Calls:
 
-/health
-/readyz
+* `/health`
+* `/readyz`
+
+These are not admin-cookie endpoints. Use normal fetch.
 
 Show:
 
-backend base URL
-frontend environment label
-health status
-readiness status
-raw JSON collapsible
-last checked time
+* backend base URL
+* environment label
+* health status
+* readiness status
+* last checked time
+* raw JSON collapsible
+* copy diagnostics JSON
 
-Actions:
-
-Refresh
-Copy diagnostics JSON
+Use `RefreshButton`.
 
 Tests:
 
-healthy state
-failed readiness state
-raw JSON shown
-Phase 6 — Settings
+* healthy state
+* failed readiness state
+* raw JSON shown
 
-Route:
+## Settings route
 
+```text
 frontend/app/settings/page.tsx
+```
 
 Purpose:
+
 Read-only operational config summary.
 
-Do not expose secret values.
+Show only safe frontend-known values:
 
-Show:
+* `BACKEND_BASE`
+* environment label
+* auth/session model description
+* frontend version if available
+* known frontend assumptions
 
-frontend backend base URL
-environment label
-cookie/session assumptions
-known feature flags if backend exposes them
-adapter registry configured/enabled if exposed
-canary routing status if exposed
-provider mode if exposed
+If backend safe config endpoint exists, use it. If not, show:
 
-If backend does not expose config:
+```text
+Backend safe config endpoint is not available yet.
+```
 
-Show what the frontend can know.
-Add a “Backend config endpoint not available” info card.
-Document backend endpoint gap.
+Do not add a risky config endpoint that could leak secrets.
 
-Do not add risky backend config endpoint unless it returns only safe configured/missing booleans.
+If adding backend endpoint, it must return only booleans/statuses like:
 
-Phase 7 — Routing
+* provider config present/missing
+* adapter registry enabled/disabled
+* observability enabled/disabled
+* canary routing enabled/disabled
 
-Route:
+Never return actual secret values.
 
+---
+
+# Phase 6 — Routing
+
+## Route
+
+```text
 frontend/app/routing/page.tsx
+```
 
-Purpose:
-Explain routing and model alias behavior.
+## Domain module
 
-Use or create:
+Use or update:
 
+```text
 frontend/lib/admin/routing.ts
+```
 
-Show:
+## Show
 
-routing policy if endpoint exists
-provider candidates if endpoint exists
-alias table:
-alias
-primary provider/model
-fallback provider/model
-provider source:
-BO config
-env
-last test status
+If backend exposes routing policy:
 
-If backend runtime still uses env-driven providers:
+* default alias
+* alias table:
 
-Show warning:
-“BO provider configs may not fully drive runtime provider selection yet. Verify backend wiring before production.”
+  * alias
+  * primary provider
+  * primary model
+  * fallback provider
+  * fallback model
+
+If provider candidates endpoint exists:
+
+* provider
+* source:
+
+  * BO config
+  * env
+* active status
+* label
+* key mask
+* last test status
+* last tested at
+
+Show warning if relevant:
+
+```text
+BO provider configs may not fully drive runtime provider selection yet. Verify backend wiring before production.
+```
 
 Tests:
 
-policy table renders
-warning renders when relevant data unavailable
-Phase 8 — Adapter Profiles registry
+* policy table renders
+* provider candidates render
+* warning renders when data is missing or runtime wiring is unclear
 
-Route:
+---
 
+# Phase 7 — Adapter Profiles registry
+
+## Route
+
+```text
 frontend/app/adapter-profiles/page.tsx
+```
 
-Purpose:
+## Purpose
+
 Read-only Conexus-side gateway adapter profile registry.
 
-Do not call /internal/* from browser.
+This is not the adaptation service profile page. It shows gateway registry state stored in Conexus.
+
+## Backend rule
+
+Do not call `/internal/*` from the browser.
 
 First inspect backend:
 
-If admin read-only endpoints already exist, use them.
-If not, add small read-only admin endpoints:
-GET /admin/adapter-profiles
-GET /admin/adapter-profiles/{gateway_profile_id}
-GET /admin/adapter-profiles/{gateway_profile_id}/activations
-These endpoints must require admin session.
-They must not mutate anything.
-They must not expose secrets.
+* If admin read-only endpoints already exist, use them.
+* If missing, add small read-only admin endpoints only:
 
-Table columns:
+  * `GET /admin/adapter-profiles`
+  * `GET /admin/adapter-profiles/{gateway_profile_id}`
+  * `GET /admin/adapter-profiles/{gateway_profile_id}/activations`
 
-gateway profile ID
-adapter profile ID
-domain key
-status
-composite score
-profile version
-evidence hash
-semantic context hash
-SLOD model version
-created at
+These endpoints must:
 
-Detail drawer:
+* require admin session
+* be read-only
+* not expose secrets
+* not mutate lifecycle state
+* not call adaptation service
+* not imply live traffic routing
 
-all fields
-metadata JSON
-activation history
+## Domain module
 
-Warning banner:
-“Adapter profile registration is supported. Canary, promote, rollback, and traffic splitting may still be staged depending on backend configuration. This page shows gateway registry state, not guaranteed live traffic behavior.”
+Create:
 
-Tests:
+```text
+frontend/lib/admin/adapterProfiles.ts
+```
 
-manual registered row renders if API returns it
-warning banner renders
-detail drawer renders metadata
-Phase 9 — Limits page
+## Types
 
-Route:
+Add safe types to `frontend/lib/types.ts`:
 
-frontend/app/limits/page.tsx
+* `GatewayAdapterProfileRow`
+* `GatewayAdapterProfileDetail`
+* `GatewayAdapterProfileActivationRow`
+* list response if paginated
 
-Purpose:
-Consolidated limits/reservation view across projects.
+## Table columns
 
-If Projects page already handles enough of this:
+* gateway profile ID
+* adapter profile ID
+* domain key
+* status
+* composite score
+* profile version
+* evidence hash
+* semantic context hash
+* SLOD model version
+* created at
 
-Make /limits a landing page that links to Projects limit cards and stale reservations.
-Add only safe cross-project summary if backend supports it.
+## Detail drawer
 
 Show:
 
-project selector
-current project limits
-current reservation counters
-stale reservation summary
-link to repair tools if existing
+* all profile fields
+* metadata JSON
+* activation history
 
-Do not add destructive actions without confirmation.
+## Required warning banner
 
-Domain API modules
+Show this exact warning:
 
-Create/update as needed:
+```text
+Adapter profile registration is supported. Canary, promote, rollback, and traffic splitting may still be staged depending on backend configuration. This page shows gateway registry state, not guaranteed live traffic behavior.
+```
 
+## Tests
+
+Frontend:
+
+* warning banner renders
+* table renders registered row
+* drawer renders metadata
+* activation history renders
+
+Backend, if endpoints added:
+
+* admin auth required
+* list endpoint returns rows
+* detail endpoint returns one row
+* activations endpoint returns activation history
+* no mutation happens
+
+---
+
+# Phase 8 — Limits landing page
+
+## Route
+
+```text
+frontend/app/limits/page.tsx
+```
+
+## Purpose
+
+Central landing page for limit and reservation operations.
+
+Projects page already handles per-project limits. So `/limits` should not duplicate everything unless backend has cross-project endpoints.
+
+Show:
+
+* explanation of limit modes:
+
+  * disabled
+  * soft
+  * hard
+* link to Projects page
+* project selector if easy
+* selected project’s current limits if reusable
+* stale reservations link/tooling if already exists
+
+Do not add destructive repair actions without confirmation.
+
+Tests:
+
+* page renders
+* links to Projects
+* empty state works
+
+---
+
+# Navigation updates
+
+Update `frontend/lib/navigation.ts` only after routes exist.
+
+Add:
+
+* `/playground` under Operations or Routing
+* `/activity` under Operations
+* `/health` under System
+* `/settings` under System
+* `/adapter-profiles` under Routing or Operations
+* `/limits` under Operations
+
+Keep `/audit` and `/smoke-tests` as aliases if already exposed.
+
+Avoid navigation links to 404 pages.
+
+---
+
+# Domain modules
+
+Create/update only as needed:
+
+```text
 frontend/lib/admin/playground.ts
 frontend/lib/admin/requests.ts
 frontend/lib/admin/audit.ts
@@ -460,101 +959,112 @@ frontend/lib/admin/health.ts
 frontend/lib/admin/routing.ts
 frontend/lib/admin/adapterProfiles.ts
 frontend/lib/admin/settings.ts
+```
 
-Keep them thin:
+Rules:
 
-URL construction
-typed result
-no UI logic
-Types
+* thin wrappers only
+* no UI logic
+* all admin endpoints return `AdminResult<T>`
+* all query params use `buildQuery`
+* no unsupported endpoints
+* no secrets
 
-Update frontend/lib/types.ts only with safe response types.
+---
+
+# Types
+
+Update `frontend/lib/types.ts` only with safe response types.
 
 Add types for:
 
-playground response if needed
-health/readiness
-adapter profile registry rows
-activation rows
-settings/config summary if endpoint exists
+* playground result
+* health/readiness
+* request list/detail if missing
+* audit list/detail if missing
+* usage summaries if missing
+* adapter registry rows
+* settings/config summary if safe endpoint exists
 
 Do not weaken strict TypeScript.
 
-UI/UX requirements
+---
 
-All pages must have:
-
-PageHeader
-loading state
-empty state
-error state
-refresh action where useful
-no crash on empty DB
-no crash on backend 401; adminSessionFetch redirect handles it
-no secret leakage
-
-Use:
-
-formatDateTime
-formatCost
-formatPercentRatio
-formatTokens
-formatLatency
-formatNullable
-Documentation
+# Documentation
 
 Create/update:
 
+```text
 docs/frontend/FRONTEND_PAGES_EXPANSION_REVIEW.md
 docs/frontend/FRONTEND_PAGES_EXPANSION_CHANGELOG.md
+docs/frontend/BO_FRONTEND_CONVENTIONS.md
+```
 
 Include:
 
-pages added
-endpoints used
-backend endpoints added, if any
-placeholders/gaps
-manual sanity checklist
-known limitations
-security notes
+* pages added
+* endpoints used
+* backend endpoints added, if any
+* placeholders/gaps
+* security notes
+* manual sanity checklist
+* remaining limitations
 
 Manual sanity checklist:
 
-Login.
-Create project.
-Issue API key.
-Open Playground.
-Paste API key.
-Send request.
-Check Requests page shows row.
-Check Usage page updates or safely shows null/empty.
-Check Activity page shows login/project/key actions.
-Check Health page.
-Check Adapter Profiles page shows manual internal registration row if present.
-Validation
+```text
+[ ] Login works.
+[ ] Create project.
+[ ] Issue project API key.
+[ ] Open Playground.
+[ ] Paste API key.
+[ ] Send request.
+[ ] Request succeeds or fails safely.
+[ ] Requests page shows the row.
+[ ] Usage page loads and handles null/empty values.
+[ ] Activity page shows login/project/key events.
+[ ] Health page shows /health and /readyz.
+[ ] Routing page loads.
+[ ] Adapter Profiles page shows manual internal registration row if present.
+[ ] No full secrets are displayed.
+```
 
-From frontend/:
+---
 
+# Final validation
+
+Frontend:
+
+```bash
+cd frontend
 npm test -- --run
 npm run build
+```
 
-If backend endpoints are added:
-From backend/:
+Backend, only if backend endpoints were added:
 
+```bash
+cd backend
 python -m pytest
 python -m ruff check app tests
+```
 
-Do not run npm run lint; ESLint is not configured.
+Do not run `npm run lint`.
 
-Final response:
+---
 
-Pages added/changed.
-Components reused.
-Domain modules added/changed.
-Backend endpoints added, if any.
-Security constraints preserved.
-Tests added.
-Exact validation results.
-Remaining gaps and recommended next step.
+# Final response format
 
--
+When done, report:
+
+1. Phases completed.
+2. Pages added/changed.
+3. Components reused.
+4. Domain modules added/changed.
+5. Backend endpoints added, if any.
+6. Security constraints preserved.
+7. Tests added/updated.
+8. Exact validation results.
+9. Manual sanity checklist status.
+10. Remaining gaps.
+11. Recommended next phase.
