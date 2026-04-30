@@ -7,6 +7,11 @@ from typing import Any
 import yaml
 
 
+# Concrete model id prefixes that bypass Conexus alias routing (same as gateway).
+CONCRETE_ANTHROPIC_PREFIXES: tuple[str, ...] = ("claude-", "anthropic-")
+CONCRETE_OPENAI_PREFIXES: tuple[str, ...] = ("gpt-", "o1-", "openai-")
+
+
 @dataclass(frozen=True, slots=True)
 class ModelAliasConfig:
     default_primary_model: str
@@ -75,4 +80,35 @@ def load_model_alias_config(path: str | Path) -> ModelAliasConfig:
         default_fallback_model=default_fallback_model,
         aliases=aliases,
     )
+
+
+def match_alias_models(cfg: ModelAliasConfig, requested_model: str) -> tuple[str, str] | None:
+    """Return (anthropic_model, openai_model) when *requested_model* is a configured alias."""
+    m = requested_model.strip()
+    if m in cfg.aliases:
+        return cfg.aliases[m]
+    m_low = m.lower()
+    for key, pair in cfg.aliases.items():
+        if key.lower() == m_low:
+            return pair
+    return None
+
+
+def resolve_pricing_model_candidates(requested_model: str, cfg: ModelAliasConfig) -> list[str]:
+    """Return one or more concrete model ids to evaluate for pricing / cost reservation.
+
+    - Configured aliases expand to their Anthropic and OpenAI target models (deduplicated).
+    - Concrete ``claude-`` / ``gpt-`` / etc. ids return themselves.
+    - Anything else returns ``[requested_model.strip()]`` (unknown-model behavior unchanged).
+    """
+    pair = match_alias_models(cfg, requested_model)
+    if pair is not None:
+        a, o = pair
+        return list(dict.fromkeys((a, o)))
+    m = requested_model.strip()
+    if m.startswith(CONCRETE_ANTHROPIC_PREFIXES):
+        return [m]
+    if m.startswith(CONCRETE_OPENAI_PREFIXES):
+        return [m]
+    return [m]
 

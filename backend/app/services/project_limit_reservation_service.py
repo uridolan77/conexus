@@ -18,7 +18,8 @@ from app.db.models import (
     ProjectLimit,
     ProjectUsageWindow,
 )
-from app.llm.pricing import estimate_reservation_cost_usd
+from app.llm.gateway_router import get_model_alias_config
+from app.llm.pricing import estimate_hard_monthly_reservation_cost_usd
 from app.services.project_limits_service import (
     LimitBlock,
     _utc_day_bounds,
@@ -202,7 +203,11 @@ async def reserve_gateway_request(
 
     estimated_cost: float | None = None
     if limits.monthly_cost_limit is not None:
-        estimated_cost = estimate_reservation_cost_usd(model, reserved_tokens)
+        estimated_cost = estimate_hard_monthly_reservation_cost_usd(
+            model,
+            reserved_tokens,
+            alias_cfg=get_model_alias_config(),
+        )
         if estimated_cost is None:
             return LimitReservationResult(
                 False,

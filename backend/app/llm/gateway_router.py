@@ -22,7 +22,13 @@ from collections.abc import AsyncIterator
 from typing import Literal
 
 from app.core.config import settings
-from app.llm.model_alias_config import ModelAliasConfig, load_model_alias_config
+from app.llm.model_alias_config import (
+    CONCRETE_ANTHROPIC_PREFIXES,
+    CONCRETE_OPENAI_PREFIXES,
+    ModelAliasConfig,
+    load_model_alias_config,
+    match_alias_models,
+)
 from app.llm.anthropic_adapter import (
     ANTHROPIC_FAILOVER_ERRORS,
     AnthropicProvider,
@@ -38,9 +44,6 @@ from app.llm.openai_adapter import OPENAI_FAILOVER_ERRORS, OpenAIProvider
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
 
 logger = logging.getLogger(__name__)
-
-_KNOWN_ANTHROPIC_PREFIXES = ("claude-", "anthropic-")
-_KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
 
 _MODEL_ALIAS_CONFIG: ModelAliasConfig | None = None
 
@@ -68,9 +71,14 @@ def get_model_aliases() -> dict[str, tuple[str, str]]:
 def get_known_provider_prefixes() -> dict[str, tuple[str, ...]]:
     """Return concrete-model prefixes that bypass alias routing."""
     return {
-        "anthropic": _KNOWN_ANTHROPIC_PREFIXES,
-        "openai": _KNOWN_OPENAI_PREFIXES,
+        "anthropic": CONCRETE_ANTHROPIC_PREFIXES,
+        "openai": CONCRETE_OPENAI_PREFIXES,
     }
+
+
+def get_model_alias_config() -> ModelAliasConfig:
+    """Shared alias config (same cache as gateway routing)."""
+    return _get_alias_config()
 
 
 def _resolve_models(model: str) -> tuple[_Route, str, str]:
@@ -81,16 +89,18 @@ def _resolve_models(model: str) -> tuple[_Route, str, str]:
     through to default models.
     """
     cfg = _get_alias_config()
-    if model in cfg.aliases:
-        anthropic_model, openai_model = cfg.aliases[model]
+    pair = match_alias_models(cfg, model)
+    if pair is not None:
+        anthropic_model, openai_model = pair
         return "gateway", anthropic_model, openai_model
-    if model.startswith(_KNOWN_ANTHROPIC_PREFIXES):
+    m = model.strip()
+    if m.startswith(CONCRETE_ANTHROPIC_PREFIXES):
         # Concrete Anthropic model: do not attempt OpenAI unless the client
         # explicitly asked for a Conexus alias.
-        return "anthropic_only", model, cfg.default_fallback_model
-    if model.startswith(_KNOWN_OPENAI_PREFIXES):
+        return "anthropic_only", m, cfg.default_fallback_model
+    if m.startswith(CONCRETE_OPENAI_PREFIXES):
         # Concrete OpenAI model: bypass Anthropic entirely.
-        return "openai_only", cfg.default_primary_model, model
+        return "openai_only", cfg.default_primary_model, m
     raise UnknownModelError(
         model,
         known_aliases=list(cfg.aliases),

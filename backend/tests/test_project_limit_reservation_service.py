@@ -206,3 +206,42 @@ async def test_reconcile_idempotent(db_sessionmaker) -> None:
         ).scalar_one()
         assert w.request_count_completed == 1
         assert w.token_count_completed == 5
+
+
+@pytest.mark.asyncio
+async def test_reserve_monthly_hard_allows_conexus_default_alias_when_priced(
+    db_sessionmaker,
+) -> None:
+    """Integration: alias expands to underlying models with explicit pricing."""
+    async with db_sessionmaker() as session:
+        proj = models.Project(name="p")
+        session.add(proj)
+        await session.flush()
+        lim = models.ProjectLimit(
+            project_id=proj.id,
+            limit_mode="hard",
+            monthly_cost_limit=1e9,
+            daily_request_limit=10_000,
+            daily_token_limit=100_000_000,
+        )
+        session.add(lim)
+        await session.commit()
+
+    now = datetime.now(timezone.utc)
+    async with db_sessionmaker() as session:
+        async with session.begin():
+            lim2 = (
+                await session.execute(
+                    select(models.ProjectLimit).where(models.ProjectLimit.project_id == proj.id)
+                )
+            ).scalar_one()
+            r = await reserve_gateway_request(
+                session,
+                project_id=proj.id,
+                limits=lim2,
+                model="conexus-default",
+                requested_max_tokens=4096,
+                estimated_prompt_tokens=None,
+                now=now,
+            )
+            assert r.allowed and r.reservation_id

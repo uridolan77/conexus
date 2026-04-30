@@ -14,20 +14,42 @@ auditing, and backward-compatible pre-checks against historical rows.
   (`max_tokens`, or `max_tokens + estimated_prompt_tokens` when an estimate is
   supplied). Actual usage reconciles after the provider responds; unused reserved
   tokens are released.
-- **Monthly cost limit:** reservation uses `estimate_reservation_cost_usd`, which
-  requires the model to exist in the pricing table. If the model is unknown and a
-  hard monthly cost cap is set, the gateway returns `pricing_unavailable_for_hard_cost_limit`.
+- **Monthly cost limit:** reservation uses `estimate_hard_monthly_reservation_cost_usd`.
+  If the **requested** model id has explicit pricing, a single-model estimate is used
+  (unchanged from plain `estimate_reservation_cost_usd`). If the requested name is not
+  in the pricing table (e.g. a Conexus alias such as `conexus-default`), the gateway
+  resolves **concrete** Anthropic and OpenAI targets from the model-alias config and
+  takes the **maximum** per-candidate reservation cost (most conservative). If **any**
+  candidate lacks explicit pricing, admission fails with
+  `pricing_unavailable_for_hard_cost_limit`.
 - **Failed / timed-out calls:** still consume the daily request reservation; token
   and cost reservations reconcile toward actuals (often zero).
+
+## Blocked admission attempts
+
+When hard limits reject a request before the provider runs, the gateway still writes a
+`gateway_requests` row with `status=failed` and the limit error code. Those rows are
+included in legacy daily/monthly aggregates and therefore **count toward request
+totals** the same way other failed gateway calls do.
 
 ## Concurrency
 
 - **PostgreSQL:** `SELECT ... FOR UPDATE` on usage window rows serializes updates
-  for strict semantics across workers sharing one database.
+  for strict semantics **when all gateway workers share one database**. Use Postgres
+  in production for predictable row locking.
+- **Process-local asyncio lock:** an `asyncio.Lock` per project serializes the
+  **reserve** step within a single process only. It does **not** coordinate across
+  workers or hosts. Multi-worker strictness still depends on database row locks
+  (Postgres) plus a shared database.
 - **SQLite:** weaker under true multi-connection concurrency. Tests use a shared
-  in-memory pool (`StaticPool`). In addition, an **asyncio lock per project**
-  serializes the reserve step in-process so concurrent gateway tasks do not
-  interleave between reservation commit and `start_request`.
+  in-memory pool (`StaticPool`). The per-project asyncio lock still helps avoid
+  interleaving reserve vs `start_request` within one process.
+
+## Stale reservations (future work)
+
+If a process crashes after reserving usage but before reconcile, counters can remain
+inflated until a repair job or operator intervention. **Automated stale-reservation
+repair is not implemented** in v0.7.
 
 ## Reconciliation
 
