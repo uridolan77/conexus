@@ -10,6 +10,7 @@ These endpoints are consumed by the BO:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -27,13 +28,43 @@ from app.services.admin_permissions_service import ADAPTATION_VIEW, require_adap
 router = APIRouter(prefix="/admin/adapter-profiles", tags=["admin"])
 
 
+_SENSITIVE_KEY_RE = re.compile(
+    r"api_?key|apikey|token|secret|password|authorization|bearer|^key$",
+    re.IGNORECASE,
+)
+_REDACTED = "[REDACTED]"
+
+
+def _is_sensitive_key(key: str) -> bool:
+    return bool(_SENSITIVE_KEY_RE.search(key))
+
+
+def _redact_metadata(value: Any, _seen: set[int] | None = None) -> Any:  # noqa: ANN401
+    """Recursively redact values whose keys look sensitive."""
+    if _seen is None:
+        _seen = set()
+    if value is None or not isinstance(value, (dict, list)):
+        return value
+    obj_id = id(value)
+    if obj_id in _seen:
+        return value
+    _seen.add(obj_id)
+    if isinstance(value, list):
+        return [_redact_metadata(item, _seen) for item in value]
+    return {
+        k: (_REDACTED if _is_sensitive_key(k) else _redact_metadata(v, _seen))
+        for k, v in value.items()
+    }
+
+
 def _parse_metadata(value: str | None) -> Any | None:
     if not value:
         return None
     try:
-        return json.loads(value)
+        parsed = json.loads(value)
     except Exception:
         return value
+    return _redact_metadata(parsed)
 
 
 class GatewayAdapterProfileRow(BaseModel):

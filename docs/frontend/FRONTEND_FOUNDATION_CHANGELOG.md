@@ -72,3 +72,54 @@
 - `window.confirm` is still used in projects actions.
 - `DetailDrawer` supports dismissal but does not trap focus yet.
 - Page migration to domain modules in `frontend/lib/admin/*` is still incremental.
+
+---
+
+## 2026-04-30 - Security and convention hardening pass
+
+### Security fixes
+
+**Frontend metadata redaction (`lib/redaction.ts`)**
+- Created `redactSensitiveObject(value)` — deep-walks objects/arrays and replaces values for keys matching `api_key`, `apikey`, `token`, `secret`, `password`, `authorization`, `bearer`, standalone `key` with `[REDACTED]`. Cycle-safe, non-mutating.
+- Created `redactSensitiveString(value)` — redacts `Bearer <token>`, `sk-*`, and `cnx_*` patterns from strings.
+- Applied to `app/activity/page.tsx` and `app/adapter-profiles/page.tsx` before rendering metadata in `JsonBlock`.
+
+**Backend metadata redaction (`backend/app/api/admin_adapter_profiles_registry.py`)**
+- Added `_is_sensitive_key`, `_redact_metadata` (recursive, cycle-safe).
+- `_parse_metadata` now applies redaction to parsed JSON before returning.
+- Both the detail endpoint and activations endpoint metadata are redacted server-side.
+- Defense-in-depth: frontend redaction remains as a second layer.
+
+### Convention fixes
+
+**Requests page (`app/requests/page.tsx`)**
+- Replaced ad hoc `adminSessionFetch` + `BACKEND_BASE` project load with `listProjects()` from `lib/admin/projects.ts`.
+- Removed unused `BACKEND_BASE` and `adminSessionFetch` imports.
+
+**Playground validators (`lib/admin/playground.ts`)**
+- Moved `parseTemperature` and `parseMaxTokens` from private page scope to `lib/admin/playground.ts` as exported functions.
+- Page imports them. Behavior identical.
+- Full validation was already wired: `FieldError` shown inline, `canSend` blocks send when invalid, `buildChatCompletionPayload` remains a pure function.
+
+### Tests added
+
+| File | Tests |
+|---|---|
+| `test/lib/redaction.test.ts` | 24 (sensitive key redaction, nesting, arrays, cycles, string patterns) |
+| `test/lib/playground.test.ts` | 20 (`parseTemperature`, `parseMaxTokens`, `buildChatCompletionPayload`) |
+| `backend/tests/test_admin_adapter_profiles_registry.py` | 24 (`_is_sensitive_key`, `_redact_metadata`, `_parse_metadata`) |
+
+### Validation results
+
+```
+npm test -- --run    32 files, 213 tests passed
+npm run build        Clean, 23 routes, no TypeScript errors
+python -m pytest     296 passed
+python -m ruff check All checks passed (changed files)
+```
+
+### Remaining gaps
+
+- Audit log backend (`GET /admin/audit`) does not apply server-side redaction — frontend does via `redactSensitiveObject`.
+- `app/requests/page.tsx` detail drawer renders full raw `RequestDetail` via `JsonBlock`. No credential fields exist there today, but a defensive `redactSensitiveObject` wrapper would be prudent.
+- `domain_key` field intentionally not redacted (`^key$` anchored regex avoids this suffix match). Verify this boundary remains correct if new metadata schemas are added.

@@ -1,5 +1,24 @@
 import { BACKEND_BASE, readJsonSafe } from "@/lib/api";
 
+export type ParseResult<T> = { ok: true; value?: T } | { ok: false };
+
+export function parseTemperature(value: string): ParseResult<number> {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return { ok: false };
+  return { ok: true, value: n };
+}
+
+export function parseMaxTokens(value: string): ParseResult<number> {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true };
+  if (!/^\d+$/.test(trimmed)) return { ok: false };
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n <= 0) return { ok: false };
+  return { ok: true, value: n };
+}
+
 export type ChatCompletionMessage = {
   role: "system" | "user";
   content: string;

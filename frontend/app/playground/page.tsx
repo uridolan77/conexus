@@ -23,6 +23,8 @@ import { formatApiError } from "@/lib/api";
 import { formatTokens } from "@/lib/format";
 import {
   buildChatCompletionPayload,
+  parseMaxTokens,
+  parseTemperature,
   sendPlaygroundChatCompletion,
   type PlaygroundResult,
 } from "@/lib/admin/playground";
@@ -113,23 +115,6 @@ function isUsageTokens(value: unknown): value is UsageTokens {
 function renderTokens(value: number | null): ReactNode {
   if (value == null) return <span className="muted">—</span>;
   return formatTokens(value);
-}
-
-function parseTemperature(value: string): { ok: true; value?: number } | { ok: false } {
-  const trimmed = value.trim();
-  if (!trimmed) return { ok: true };
-  const n = Number(trimmed);
-  if (!Number.isFinite(n)) return { ok: false };
-  return { ok: true, value: n };
-}
-
-function parseMaxTokens(value: string): { ok: true; value?: number } | { ok: false } {
-  const trimmed = value.trim();
-  if (!trimmed) return { ok: true };
-  if (!/^\d+$/.test(trimmed)) return { ok: false };
-  const n = Number(trimmed);
-  if (!Number.isInteger(n) || n <= 0) return { ok: false };
-  return { ok: true, value: n };
 }
 
 export default function PlaygroundPage() {

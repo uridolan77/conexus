@@ -22,9 +22,9 @@ import {
   StatCard,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
 import { formatCost, formatDateTime, formatLatency, formatTokens } from "@/lib/format";
 import { getRequest, listRequests } from "@/lib/admin/requests";
+import { listProjects } from "@/lib/admin/projects";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
 const DEFAULT_LIMIT = "50";
@@ -158,11 +158,9 @@ export default function RequestsPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
 
   async function loadProjects() {
-    const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`, {
-      cache: "no-store",
-    });
-    if (res.ok) {
-      setProjects((await res.json()) as ProjectRow[]);
+    const result = await listProjects();
+    if (result.ok) {
+      setProjects(result.data);
     }
   }
 

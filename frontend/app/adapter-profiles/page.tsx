@@ -16,6 +16,7 @@ import {
   Table,
 } from "@/components/ui";
 import { formatDateTime, formatNullable } from "@/lib/format";
+import { redactSensitiveObject } from "@/lib/redaction";
 import {
   getAdapterProfile,
   listAdapterProfileActivations,
@@ -244,7 +245,7 @@ export default function AdapterProfilesPage() {
               )}
             </Card>
 
-            <JsonBlock value={detail.metadata} title="Metadata JSON" defaultOpen={false} />
+            <JsonBlock value={redactSensitiveObject(detail.metadata)} title="Metadata JSON" defaultOpen={false} />
           </div>
         ) : (
           <EmptyState title="Select a profile">Pick a row from the table to view details.</EmptyState>

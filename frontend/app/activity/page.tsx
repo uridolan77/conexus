@@ -19,6 +19,7 @@ import {
 } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
 import { listAuditLogs } from "@/lib/admin/audit";
+import { redactSensitiveObject } from "@/lib/redaction";
 import type { AuditListResponse, AuditLogItem } from "@/lib/types";
 
 const DEFAULT_LIMIT = 50;
@@ -313,7 +314,7 @@ export default function ActivityPage() {
                 { label: "created_at", value: formatDateTime(selected.created_at) },
               ]}
             />
-            <JsonBlock value={selected.metadata} title="Metadata JSON" defaultOpen />
+            <JsonBlock value={redactSensitiveObject(selected.metadata)} title="Metadata JSON" defaultOpen />
           </div>
         ) : null}
       </DetailDrawer>
