@@ -64,6 +64,15 @@ logger = logging.getLogger(__name__)
 # Serialize hard-limit reservation per project so concurrent asyncio tasks cannot
 # interleave between reserve and start_request (SQLite has no row lock; Postgres
 # still benefits from fewer aborted transactions).
+#
+# SINGLE-PROCESS ONLY: asyncio.Lock is not shared across OS processes, workers,
+# or replicas. Under multi-replica deployment the serialization guarantee is lost
+# and concurrent reservations from different processes may both pass the hard-limit
+# check for the same project window. The DB reservation table provides a last-line
+# of defense (rows are committed individually), but strict admission is not
+# guaranteed without a distributed lock or a serializable DB transaction.
+# Production-safe future options: serializable Postgres transactions on the
+# reservation INSERT, or a Redis-based distributed lock per project_id.
 _project_reserve_locks: dict[str, asyncio.Lock] = {}
 
 

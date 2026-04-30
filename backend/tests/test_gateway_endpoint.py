@@ -1526,6 +1526,64 @@ async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_tokens(
+    client, seeded, db_sessionmaker
+) -> None:
+    """Stream completes normally but the provider never emits a usage chunk.
+
+    Expected DB outcome: status=completed, prompt_tokens=None, completion_tokens=None,
+    total_tokens=None, estimated_cost=None.  This is the documented best-effort
+    accounting posture for providers that omit usage in streaming mode.
+    """
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hi"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", finish_reason="stop"),
+            # Intentionally no usage chunk.
+        ]
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "data: [DONE]" in payload
+    assert "error" not in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.provider == "openai"
+        assert log.model == "gpt-4o-mini"
+        assert log.prompt_tokens is None
+        assert log.completion_tokens is None
+        assert log.total_tokens is None
+        assert log.estimated_cost is None
+        assert log.completed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_gateway_request_with_gateway_profile_logs_profile_id(
     client, seeded, db_sessionmaker
 ) -> None:

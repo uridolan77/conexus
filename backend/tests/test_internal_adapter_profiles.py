@@ -63,6 +63,37 @@ async def test_register_adapter_profile_requires_internal_api_key(client: AsyncC
 
 
 @pytest.mark.asyncio
+async def test_internal_api_key_not_configured_returns_503(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registry is enabled but INTERNAL_ADAPTER_API_KEY is absent → safe 503 (not 401)."""
+    monkeypatch.setattr(settings, "adapter_profile_registry_enabled", True)
+    monkeypatch.setattr(settings, "internal_adapter_api_key", None)
+    response = await client.post(
+        "/internal/adapter-profiles/register",
+        headers={"X-Internal-Api-Key": "any-value"},
+        json={"adapterProfileId": "ap-x", "domainKey": "dk"},
+    )
+    assert response.status_code == 503
+    assert "not configured" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_profile_registry_disabled_returns_404(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADAPTER_PROFILE_REGISTRY_ENABLED=false → every internal endpoint returns 404."""
+    monkeypatch.setattr(settings, "adapter_profile_registry_enabled", False)
+    monkeypatch.setattr(settings, "internal_adapter_api_key", "secret")
+    response = await client.post(
+        "/internal/adapter-profiles/register",
+        headers={"X-Internal-Api-Key": "secret"},
+        json={"adapterProfileId": "ap-x", "domainKey": "dk"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_register_adapter_profile_creates_gateway_profile(client: AsyncClient) -> None:
     settings.internal_adapter_api_key = "secret"
     response = await client.post(

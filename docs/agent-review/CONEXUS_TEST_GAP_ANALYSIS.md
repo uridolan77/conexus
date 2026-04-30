@@ -1,6 +1,6 @@
 # Conexus — Test Gap Analysis
 
-Last updated: 2026-04-30
+Last updated: 2026-04-30 (second pass)
 
 ## Current coverage impression
 
@@ -12,10 +12,14 @@ Last updated: 2026-04-30
 
 ### Gateway streaming edge cases
 
-- **Missing tests**
-  - Stream interruption: provider stops mid-stream or raises; ensure request log becomes `failed` and reservation reconciles.
-  - Stream timeout: per-chunk timeout yields correct error classification and cleanup.
-  - Stream “usage not emitted”: ensure logging path behaves predictably (cost/tokens null vs 0).
+- **Status after second pass**
+  - Stream interruption (`RuntimeError`, `ProviderError`): ✓ already tested.
+  - Stream timeout (per-chunk `asyncio.wait_for`): ✓ already tested.
+  - Stream “usage not emitted”: ✓ **added in second pass** —
+    `test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_tokens`
+    verifies `status=completed` with `prompt_tokens/completion_tokens/estimated_cost = None`.
+- **Still missing**
+  - Reservation reconcile path when stream fails with a hard-limit reservation active.
 
 ### Strict limit reservations correctness
 
@@ -42,10 +46,15 @@ Last updated: 2026-04-30
 
 ### Backend unit tests
 
-- `backend/tests/test_gateway_stream_logging.py`
-  - fake provider that yields a few chunks then raises; assert DB request row status and error code
+- ~~`backend/tests/test_gateway_stream_logging.py`~~ *(covered: stream interruption,
+  timeout, and no-usage paths all tested in `test_gateway_endpoint.py` as of second pass)*
 - `backend/tests/test_internal_adapter_profile_register_race.py`
   - simulate IntegrityError path and ensure stable outcome
+
+### Internal key posture tests *(added in second pass)*
+
+- `test_internal_api_key_not_configured_returns_503` — in `test_internal_adapter_profiles.py`.
+- `test_adapter_profile_registry_disabled_returns_404` — in `test_internal_adapter_profiles.py`.
 
 ### Backend integration smoke (local-only)
 
@@ -56,7 +65,8 @@ Last updated: 2026-04-30
 
 ### Frontend tests
 
-- Ensure CI runs `npm test`.
+- ~~Ensure CI runs `npm test`~~ *(done: already in CI as of first pass)*.
+- ESLint still needs to be installed before a lint CI step can be added (owner action).
 - Keep UI tests focused on “API client does not send identities/roles” and correct rendering of ProblemDetails.
 
 ## Contract tests

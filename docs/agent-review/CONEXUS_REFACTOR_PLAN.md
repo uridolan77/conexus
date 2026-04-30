@@ -1,22 +1,28 @@
 # Conexus — Refactor Plan (Safe + Deferred)
 
-Last updated: 2026-04-30
+Last updated: 2026-04-30 (second pass)
 
 This is a **production-safety-first** plan. Items are grouped by what is safe to do now vs what needs an owner decision.
 
 ## Safe now (low risk, behavior-preserving)
 
-- **CI hardening**
-  - Add frontend `npm test` to `.github/workflows/ci.yml` (already `vitest run` exists).
-  - Optionally add `npm run lint` in CI if it’s stable.
+- **CI hardening** *(second pass: partially addressed)*
+  - `npm test` already runs in CI as of first pass.
+  - `npm run lint`: ESLint not installed, no `.eslintrc` at project root — requires
+    `npm install --save-dev eslint eslint-config-next` and a `.eslintrc.json` before
+    the CI step can be added. Owner action needed.
 - **Gateway code clarity**
   - Reduce duplication in `backend/app/services/gateway_service.py` between stream and non-stream paths by extracting tiny private helpers (no behavior changes).
   - Improve log messages for failure paths (keep response shapes identical).
 - **Internal adapter observability**
   - Replace Python materialization with SQL aggregates only if output-identical.
   - Add query bounds/limits if endpoints are used with large windows.
+  - See `CONEXUS_SECOND_PASS.md §5` for the exact future PostgreSQL query and index plan.
 - **Docs**
   - Fix `docs/03_ARCHITECTURE.md` drift (mark aspirational tables as “future” or remove them).
+- **Process-local mechanism docs** *(second pass: done)*
+  - `_project_reserve_locks` in `gateway_service.py` now has an explicit single-process
+    warning matching the level of documentation in `AdminLoginRateLimiter`.
 
 ## Needs owner decision (small scope but contract/behavior-adjacent)
 
