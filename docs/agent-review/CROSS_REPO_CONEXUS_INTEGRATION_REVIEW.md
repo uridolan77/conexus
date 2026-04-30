@@ -2,69 +2,88 @@
 
 **Scope:** `conexus` (FastAPI LLM gateway) ↔ `conexus.adaptation` (.NET adaptation orchestrator)  
 **Date:** 2026-04-30  
-**Reviewer:** Agent cross-repo review  
-**Status:** Draft — awaiting owner decisions on P0/P1 items
+**Reviewer:** Agent cross-repo review — v2 (corrected after implementation verification)  
+**Status:** Draft — awaiting owner decisions on P1 items
+
+---
+
+## Correction Notice
+
+The first draft of this review contained a material factual error: it incorrectly claimed that `/internal/*` endpoints do not exist in `conexus`. They are fully implemented. This version corrects that claim and rewrites all affected sections based on direct inspection of the implementation files.
 
 ---
 
 ## Executive Summary
 
-Two findings dominate this review:
-
-1. **The `/internal/*` adapter profile endpoint surface described in the integration design does not exist in `conexus`.** There are no internal endpoints for profile registration, canary activation, promotion, rollback, active profile lookup, or observability. `conexus` is currently a clean, functional LLM gateway and operations back-office with no awareness of adapter profiles.
-
-2. **The gateway registration client in `conexus.adaptation` is a complete stub.** `DeterministicGatewayRegistrationClient` returns `gw-{profileId:N}` with no HTTP calls. No real `HttpConexusGatewayRegistrationClient` exists.
-
-**What works today:**
+**What works today (confirmed by code inspection):**
 - `HttpConexusLlmClient` → `POST /v1/chat/completions` — real, tested HTTP integration with full error handling and response body redaction.
-- Adapter profile lifecycle (publish → canary → promote → rollback) — self-contained state machine within `conexus.adaptation`.
+- All six `/internal/*` adapter profile endpoints are implemented and tested in `conexus`:
+  - `POST /internal/adapter-profiles/register` — idempotent by `adapterProfileId`
+  - `POST /internal/adapter-profiles/{gatewayProfileId}/activate-canary`
+  - `POST /internal/adapter-profiles/{gatewayProfileId}/promote`
+  - `POST /internal/adapter-profiles/{gatewayProfileId}/rollback`
+  - `GET /internal/adapter-profiles/{gatewayProfileId}/observability`
+  - `GET /internal/domains/{domainKey}/active-profile`
+- All internal endpoints use `X-Internal-Api-Key` header auth backed by `INTERNAL_ADAPTER_API_KEY` env var.
+- `conexus` DB has `GatewayAdapterProfile` and `GatewayAdapterProfileActivation` tables; `GatewayRequest` rows carry `gateway_profile_id` for per-profile observability queries.
 - `conexus` admin BO — request logs, provider usage, project management, audit trail.
 
-**What does not work today:**
-- Adapter profile registration in the `conexus` gateway.
-- Canary traffic routing in `conexus` based on adaptation profiles.
-- Drift feedback loop from `conexus` to `conexus.adaptation`.
-- Any observability integration between the two services.
+**What is still stub-only in `conexus.adaptation` (confirmed by code inspection):**
+- `DeterministicGatewayRegistrationClient` is the only implementation of `IConexusGatewayRegistrationClient`. No `HttpConexusGatewayRegistrationClient` exists. Registration returns `gw-{profile.Id:N}` with no HTTP call.
+- `DeterministicAdaptationObservabilityClient` is the only implementation of `IAdaptationObservabilityClient`. No HTTP client calls `GET /internal/adapter-profiles/{id}/observability`. Returns hardcoded metrics.
+- Canary activation, promote, and rollback commands in `conexus.adaptation` do NOT call the corresponding `/internal/*` endpoints in `conexus`. They manage state in the adaptation DB only and never notify the gateway.
+
+**The integration gap has shifted:** The problem is not that `conexus` is missing endpoints. The problem is that `conexus.adaptation` has no real HTTP clients for the profile lifecycle or observability endpoints, and the interface signatures have DTO mismatches with the real endpoint shapes.
 
 **Are they conceptually aligned?**  
-Yes. The architecture is coherent: `conexus.adaptation` builds and manages the lifecycle of adapter profiles; `conexus` routes live traffic through active profiles and emits observability signals. The gap is implementation, not design.
+Yes. The architecture is coherent. The implementation gap is one-sided: `conexus` server side is ready; `conexus.adaptation` client side is not wired up.
 
 ---
 
-## Current Inferred Architecture
+## Current Actual Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│               conexus.adaptation (.NET)             │
-│                                                     │
-│  Planning → Approval → Execution → Evaluation       │
-│       ↓                                             │
-│  AdapterProfile (publish/canary/promote/rollback)   │
-│       ↓                                             │
-│  IConexusGatewayRegistrationClient                  │
-│  └─ DeterministicGatewayRegistrationClient (STUB)   │
-│       returns gw-{profileId:N}  (NO HTTP)           │
-└───────────────────┬─────────────────────────────────┘
-                    │ ← STUB — contract does not exist yet
-                    ↓
-┌─────────────────────────────────────────────────────┐
-│                  conexus (FastAPI)                  │
-│                                                     │
-│  POST /v1/chat/completions  ← only real integration │
-│  GET/POST /admin/*          ← BO only               │
-│  GET /health, /health/ready                         │
-│                                                     │
-│  [/internal/* endpoints: NOT IMPLEMENTED]           │
-└─────────────────────────────────────────────────────┘
-```
-
-LLM call flow (real, working today):
-```
-conexus.adaptation evaluation
-  → HttpConexusLlmClient
-  → POST /v1/chat/completions (Bearer cx_live_...)
-  → GatewayProvider (Anthropic primary → OpenAI fallback)
-  → ConexusAnswerResult (answer, tokens, cost, latency)
+┌───────────────────────────────────────────────────────────────┐
+│                  conexus.adaptation (.NET)                    │
+│                                                               │
+│  Planning → Approval → Execution → Evaluation                 │
+│       ↓                                                       │
+│  AdapterProfile lifecycle (publish/canary/promote/rollback)   │
+│  — state managed in adaptation DB only —                      │
+│                                                               │
+│  IConexusGatewayRegistrationClient                            │
+│  └─ DeterministicGatewayRegistrationClient (STUB, no HTTP)    │
+│                                                               │
+│  IAdaptationObservabilityClient                               │
+│  └─ DeterministicAdaptationObservabilityClient (STUB, no HTTP)│
+│       returns hardcoded metrics                               │
+│                                                               │
+│  canary/promote/rollback commands → adaptation DB only        │
+│  (DO NOT call /internal/* endpoints in conexus)               │
+└──────────────┬────────────────────────────────────────────────┘
+               │ POST /v1/chat/completions (HttpConexusLlmClient — REAL)
+               │
+               │ POST /internal/adapter-profiles/register       ← STUB on client side
+               │ POST /internal/.../{id}/activate-canary        ← NOT called
+               │ POST /internal/.../{id}/promote                ← NOT called
+               │ POST /internal/.../{id}/rollback               ← NOT called
+               │ GET  /internal/.../{id}/observability          ← STUB on client side
+               │ GET  /internal/domains/{key}/active-profile    ← NOT called
+               ↓
+┌───────────────────────────────────────────────────────────────┐
+│                     conexus (FastAPI)                         │
+│                                                               │
+│  POST /v1/chat/completions              ✅ implemented         │
+│  POST /internal/adapter-profiles/register ✅ implemented      │
+│  POST /internal/.../{id}/activate-canary  ✅ implemented      │
+│  POST /internal/.../{id}/promote          ✅ implemented      │
+│  POST /internal/.../{id}/rollback         ✅ implemented      │
+│  GET  /internal/.../{id}/observability    ✅ implemented      │
+│  GET  /internal/domains/{key}/active-profile ✅ implemented   │
+│                                                               │
+│  ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=false (default)       │
+│  — profiles registered and tracked, traffic not yet split —   │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -80,18 +99,19 @@ conexus.adaptation evaluation
 - Provider secret management.
 - Admin BO UI and API.
 - Audit trail of admin actions.
-- **(future)** Internal adapter profile registry: active profile per domain, canary routing percentages.
-- **(future)** Internal observability endpoint for drift signal emission to registered clients.
+- Internal adapter profile registry: `GatewayAdapterProfile` records, canary/active/rollback activation state, per-profile observability windows over `gateway_requests`.
+- **(pending flag enable)** Canary traffic routing: `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED` exists in config but defaults to `false`; no routing logic reads this flag yet.
 
 ### What belongs in `conexus.adaptation`
 
 - Adaptation plan creation, approval, and execution.
 - Evaluation pipeline: corpus loading, indexing, QA pair generation, scoring, metric gates.
-- Adapter profile assembly, versioning, and state machine (draft → published → canary → promoted → rolled-back).
+- Adapter profile assembly, versioning, and state machine (draft → published → canary → promoted → rolled-back) in adaptation DB.
 - Deployment authorization (role-based publish/promote/rollback gates).
 - Drift detection and reevaluation triggers.
 - Evaluation evidence projection (BO-safe truncated views).
 - Outbox-based event relay.
+- Calling `conexus` `/internal/*` endpoints to synchronize profile lifecycle state into the gateway (currently stub).
 
 ### What must NOT leak across the boundary
 
@@ -105,86 +125,95 @@ conexus.adaptation evaluation
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Adapter profile lifecycle state machine lives entirely in `conexus.adaptation`, but `conexus` will need a shadow of "active profile per domain" for routing | P1 | State synchronization protocol not defined |
-| `GatewayRegistration:ApiKey` in `conexus.adaptation` duplicates the concept of project API keys in `conexus`, but the key format and issuing mechanism are not shared | P1 | No guidance on whether to reuse `cx_live_*` keys or issue a service-identity key |
-| `conexus.adaptation` has its own deployment authorization (roles in request body); `conexus` has no concept of deployment authorization | P2 | Roles in request body is an internal/dev mechanism only — not suitable for a real security boundary |
-| No shared DTO library exists; DTOs are defined independently in both repos | P2 | Casing conventions differ (Python snake_case vs C# PascalCase); risk of silent field mismatch on any new integrated DTOs |
+| Two parallel lifecycle state machines: adaptation DB tracks `AdapterProfileStatus`; `conexus` DB tracks `GatewayAdapterProfileActivation.status`. They are not synchronized because canary/promote/rollback commands do not call the gateway | P1 | When stub is replaced, both must stay consistent. A failure at the gateway call after adaptation DB commit leaves state split across both systems. |
+| `GatewayRegistration:ApiKey` in `conexus.adaptation` maps to `INTERNAL_ADAPTER_API_KEY` in `conexus`, but the key issuance and rotation process is undocumented | P1 | No guidance on how this key is minted, rotated, or revoked. |
+| `conexus.adaptation` has its own deployment authorization (roles in request body); `conexus` `/internal/*` endpoints use `X-Internal-Api-Key` only — no role awareness | P2 | Roles in request body is an internal/dev mechanism only. `conexus` trusts any caller with the internal key regardless of role. |
+| No shared DTO library; request/response DTOs defined independently in both repos | P2 | Casing conventions differ (Python `camelCase` JSON from `conexus`; C# `PascalCase` DTOs in adaptation); risk of silent field mismatch on any new integration. |
 
 ---
 
 ## Adapter Profile Lifecycle Sequence
 
 ```
-conexus.adaptation                          conexus (gateway)
-─────────────────                           ─────────────────
+conexus.adaptation                              conexus (gateway)
+─────────────────                               ─────────────────
 
 1. Plan created (draft)
 2. Plan approved
 3. Run triggered
 4. Corpus loaded, indexed
 5. QA pairs generated
-6. LLM evaluation via HttpConexusLlmClient ─→ POST /v1/chat/completions
+6. LLM evaluation via HttpConexusLlmClient ───→ POST /v1/chat/completions   ✅ REAL
 7. Metrics scored, gates checked
-8. AdapterProfile assembled                     ↑ only real integration today
-9. PublishAdapterProfile command
+8. AdapterProfile assembled
+9. PublishAdapterProfileCommandHandler
    → IConexusGatewayRegistrationClient
-     .RegisterAsync()                        ─→ [STUB: DeterministicGatewayRegistrationClient]
-                                             ─→ [MISSING: POST /internal/adapter-profiles]
-10. ActivateCanary command
-    → [STUB/no HTTP]                         ─→ [MISSING: PUT /internal/adapter-profiles/{id}/canary]
-11. Live traffic through canary              ─→ [MISSING: canary routing logic in gateway]
-12. Promote command
-    → [STUB/no HTTP]                         ─→ [MISSING: PUT /internal/adapter-profiles/{id}/promote]
-13. Rollback command
-    → [STUB/no HTTP]                         ─→ [MISSING: DELETE/PUT /internal/adapter-profiles/{id}/rollback]
-14. Drift detection
-    → DriftDetectionService                  ─→ [MISSING: GET /internal/adapter-profiles/{id}/metrics]
-15. Reevaluation trigger
+     .RegisterAsync(profile, evidence)      ──→ [STUB: returns gw-{profile.Id:N}]
+                                                 real target: POST /internal/adapter-profiles/register  ✅ ready
+10. ActivateCanaryAdapterProfileCommandHandler
+    → IAdapterProfileActivationRepository   ← adaptation DB only
+    (no HTTP call to conexus)                    real target: POST /internal/.../{id}/activate-canary  ✅ ready
+11. PromoteAdapterProfileCommandHandler
+    → IAdapterProfileActivationRepository   ← adaptation DB only
+    (no HTTP call to conexus)                    real target: POST /internal/.../{id}/promote          ✅ ready
+12. RollbackAdapterProfileCommandHandler
+    → IAdapterProfileActivationRepository   ← adaptation DB only
+    (no HTTP call to conexus)                    real target: POST /internal/.../{id}/rollback         ✅ ready
+13. DriftAssessmentService
+    → IAdaptationObservabilityClient
+      .GetSnapshotAsync(profileId)          ──→ [STUB: hardcoded metrics]
+                                                 real target: GET /internal/.../{id}/observability    ✅ ready
+14. Drift triggers reevaluation
     → repeat from step 3
 ```
+
+Note: Live canary traffic routing in `conexus` requires `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=true`. This flag exists in config but no routing logic currently reads it. Setting it to `true` today would have no effect on request dispatch.
 
 ---
 
 ## Drift / Observability Feedback Sequence
 
 ```
-conexus.adaptation                          conexus (gateway)
-─────────────────                           ─────────────────
+conexus.adaptation                              conexus (gateway)
+─────────────────                               ─────────────────
 
-1. Adaptation profile is active in gateway  ─→ [MISSING: active profile routing]
-2. Real user requests route through profile ─→ request logged in gateway_requests
-3. DriftDetectionService triggered
-   (periodic or event-driven)
-4. Fetch observability window               ─→ [MISSING: GET /internal/adapter-profiles/{id}/observability
-                                                 or direct DB query on gateway_requests]
-5. Compute drift score against baseline
-6. If score > threshold:
-   → Trigger automatic rollback             ─→ [MISSING: PUT /internal/adapter-profiles/{id}/rollback]
-   → Queue reevaluation run
+1. Profile registered via stub (not in        ← gateway_adapter_profiles table NOT populated
+   real conexus DB)                              (until HttpConexusGatewayRegistrationClient is built)
+2. Real user requests routed through           ← gateway_requests rows include gateway_profile_id
+   active profile                                (field exists; populated when profile ID is known)
+3. DriftAssessmentService triggered
+   → IAdaptationObservabilityClient
+     .GetSnapshotAsync(profile.Id)            ──→ [STUB: hardcoded metrics, no HTTP]
+                                                   real target: GET /internal/.../{gatewayProfileId}/observability
+                                                   NOTE: interface takes Guid (adaptation profile ID);
+                                                   endpoint takes string gatewayProfileId → TYPE MISMATCH
+4. Drift score computed against baseline
+5. If score > threshold:
+   → automatic rollback triggered in
+     adaptation DB only
+   (no notification to conexus gateway)
 ```
-
-Currently, steps 1–4 have no implementation in `conexus`. `conexus.adaptation` has the drift detection logic and `DriftOptions`/`RollbackOptions` config, but the observability data feed from `conexus` does not exist.
 
 ---
 
 ## Endpoint / Client Contract Table
 
-### Implemented today (real integration)
+### Real integration (working today)
 
-| Client (adaptation) | Server endpoint (conexus) | Status |
-|---------------------|--------------------------|--------|
-| `HttpConexusLlmClient` → `POST /v1/chat/completions` | ✅ Implemented | Works |
+| Client (adaptation) | Server endpoint (conexus) | Auth | Status |
+|---------------------|--------------------------|------|--------|
+| `HttpConexusLlmClient` → `POST /v1/chat/completions` | ✅ Implemented | `Authorization: Bearer <project_key>` | ✅ Works |
 
-### Designed but not implemented
+### Endpoints implemented in `conexus`; clients stubbed in `conexus.adaptation`
 
-| Intended client call | Intended server endpoint | Status |
-|---------------------|--------------------------|--------|
-| `IConexusGatewayRegistrationClient.RegisterAsync()` | `POST /internal/adapter-profiles` | ❌ Stub client, missing endpoint |
-| Canary activation notification | `PUT /internal/adapter-profiles/{id}/canary` | ❌ Neither side implemented |
-| Canary promotion notification | `PUT /internal/adapter-profiles/{id}/promote` | ❌ Neither side implemented |
-| Rollback notification | `PUT /internal/adapter-profiles/{id}/rollback` | ❌ Neither side implemented |
-| Active profile lookup | `GET /internal/domains/{domainKey}/active-profile` | ❌ Neither side implemented |
-| Observability data pull | `GET /internal/adapter-profiles/{id}/metrics?window=24h` | ❌ Neither side implemented |
+| Intended client call | Server endpoint (conexus) | Server status | Client status |
+|---------------------|--------------------------|---------------|---------------|
+| `IConexusGatewayRegistrationClient.RegisterAsync()` | `POST /internal/adapter-profiles/register` | ✅ Implemented, tested | ❌ Stub only (`DeterministicGatewayRegistrationClient`) |
+| (not called) canary activation notify | `POST /internal/adapter-profiles/{gatewayProfileId}/activate-canary` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
+| (not called) promote notify | `POST /internal/adapter-profiles/{gatewayProfileId}/promote` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
+| (not called) rollback notify | `POST /internal/adapter-profiles/{gatewayProfileId}/rollback` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
+| `IAdaptationObservabilityClient.GetSnapshotAsync()` | `GET /internal/adapter-profiles/{gatewayProfileId}/observability` | ✅ Implemented, tested | ❌ Stub only (`DeterministicAdaptationObservabilityClient`) |
+| (not called) | `GET /internal/domains/{domainKey}/active-profile` | ✅ Implemented, tested | ❌ No client |
 
 ---
 
@@ -194,7 +223,7 @@ Currently, steps 1–4 have no implementation in `conexus`. `conexus.adaptation`
 
 | Field | adaptation sends | conexus expects | Match |
 |-------|-----------------|-----------------|-------|
-| `model` | `<ModelProfile>` string | Any known alias or concrete model name | ⚠ No validation that `ModelProfile` maps to a valid `conexus` alias |
+| `model` | `<ModelProfile>` string | Any known alias or concrete model name | ⚠ No validation that `ModelProfile` maps to a valid `conexus` alias; mismatch returns 400 |
 | `messages[].role` | `"system"` / `"user"` | `"system"` / `"user"` / `"assistant"` | ✅ |
 | `messages[].content` | String | String | ✅ |
 | `temperature` | `0` (hardcoded) | Float optional | ✅ |
@@ -205,25 +234,113 @@ Response parsing:
 | Field | conexus returns | adaptation reads | Match |
 |-------|-----------------|-----------------|-------|
 | `choices[0].message.content` | String | Primary parse path | ✅ |
-| `choices[0].text` | Not returned | Fallback parse path | ⚠ Fallback is dead code — `conexus` never emits `text` field |
+| `choices[0].text` | Not returned | Fallback parse path | ⚠ Dead code — `conexus` never emits `text` field |
 | `usage.prompt_tokens` | Integer | `usage.prompt_tokens` | ✅ |
 | `usage.completion_tokens` | Integer | `usage.completion_tokens` | ✅ |
 | `cost` | **Not returned** | Optional decimal or string | ⚠ `EstimatedCost` will always be null/zero for HTTP-mode evaluations |
 | `provider` | String | Not read | ✅ (ignored) |
 | `fallback_used` | Bool | Not read | ✅ (ignored) |
 
-**P2 issue:** `cost` / `estimated_cost` is not returned by `conexus` in `/v1/chat/completions` responses. `conexus.adaptation` optionally parses it; `EstimatedCost` will be null in all real evaluations until `conexus` adds this field.
+### Gateway registration — current stub vs. real endpoint (DTO mismatch)
 
-**P3 issue:** `choices[0].text` fallback in `HttpConexusLlmClient` is dead code. `conexus` never returns a `text` field.
+`DeterministicGatewayRegistrationClient` signature:
+```csharp
+RegisterAsync(AdapterProfile profile, EvaluationEvidenceProjection evidence, CancellationToken ct)
+// → returns GatewayAdapterProfileRegistrationResult { Succeeded, GatewayProfileId }
+```
 
-### Gateway registration (stub — no real contract yet)
+`conexus` `POST /internal/adapter-profiles/register` expects:
+```json
+{
+  "adapterProfileId": "...",   // required — maps from profile.Id.ToString()
+  "domainKey": "...",           // required — maps from profile.DomainKey
+  "runId": "...",               // optional — maps from profile.RunId
+  "planId": "...",              // optional — maps from profile.PlanId / profile.PlanKey
+  "compositeScore": 0.87,       // optional — maps from evidence.CompositeScore or similar
+  "evidenceHash": "...",        // optional — maps from evidence hash
+  "semanticContextHash": "...", // optional
+  "slodModelVersion": "...",    // optional
+  "profileVersion": "...",      // optional — maps from profile.Version
+  "metadata": {}                // optional
+}
+```
 
-There is no agreed DTO for adapter profile registration. `DeterministicGatewayRegistrationClient` returns `gw-{profileId:N}` with no request payload sent. A real HTTP client would need to define:
+`conexus` returns:
+```json
+{
+  "gatewayProfileId": "gw-...",  // maps to GatewayAdapterProfileRegistrationResult.GatewayProfileId
+  "status": "Registered"
+}
+```
 
-- **Registration request DTO:** profile metadata, domain key, model profile, prompt profile, index metadata, evaluation summary (not raw evidence — see security section).
-- **Registration response DTO:** gateway-assigned profile ID, status, registered timestamp.
+The mapping from `AdapterProfile` + `EvaluationEvidenceProjection` to `RegisterAdapterProfileBody` is plausible but requires explicit field mapping work. The real `HttpConexusGatewayRegistrationClient` will need to decide which evidence fields to include and how to compute `compositeScore` and `evidenceHash`.
 
-This contract is entirely undefined and must be designed before any real HTTP implementation begins.
+**Important:** The stub returns `gw-{profile.Id:N}` — a deterministic `gw-` prefix followed by the adaptation profile GUID. The real endpoint also returns a `gw-` prefixed ID, but generates it via `uuid4().hex`. The two IDs will differ for the same profile. Tests that compare stub vs. real `GatewayProfileId` values will fail.
+
+### Observability client — interface vs. real endpoint (type and field mismatch)
+
+`IAdaptationObservabilityClient`:
+```csharp
+Task<ProfileObservabilitySnapshot> GetSnapshotAsync(Guid profileId, CancellationToken ct)
+// profileId is the adaptation profile GUID (e.g. 3fa85f64-...)
+```
+
+`conexus` `GET /internal/adapter-profiles/{gatewayProfileId}/observability`:
+```
+gatewayProfileId = "gw-3fa85f645717..."  ← string, not a Guid; different value from profile.Id
+Query params: since (ISO datetime), until (ISO datetime)
+```
+
+`conexus` returns `ObservabilityResponse`:
+```json
+{
+  "gatewayProfileId": "gw-...",
+  "windowStart": "...",
+  "windowEnd": "...",
+  "requestCount": 42,
+  "errorRate": 0.02,
+  "latencyP95Ms": 340,
+  "costPerAnswer": 0.0012,
+  "citationFailureRate": null,
+  "refusalRate": null,
+  "userNegativeFeedbackRate": null
+}
+```
+
+`DeterministicAdaptationObservabilityClient` returns `ProfileObservabilitySnapshot`:
+```csharp
+{
+  ProfileId: profileId,          // Guid
+  ObservedAt: DateTimeOffset,
+  Metrics: {
+    "citation_accuracy": 1.0,    // ← different concept from citationFailureRate
+    "latency_ms_p95": 500,       // ← snake_case; real = latencyP95Ms (camelCase, int)
+    "cost_per_answer": 0.001     // ← snake_case; real = costPerAnswer (camelCase, float)
+  }
+}
+```
+
+**Mismatches requiring resolution before a real HTTP client can be written:**
+
+| Issue | Severity |
+|-------|----------|
+| `GetSnapshotAsync(Guid profileId)` passes the adaptation ID; `conexus` endpoint expects the `gatewayProfileId` string. A real HTTP client must translate between them (look up the profile's stored `GatewayProfileId` before calling). | P1 |
+| No time window parameter in the interface (`since` / `until` absent); the real endpoint supports windowed queries. | P1 |
+| `citation_accuracy` (deterministic stub) vs. `citationFailureRate` (real endpoint) — inverse semantics. A drift rule calibrated against the stub's `citation_accuracy=1.0` will fire incorrectly against `citationFailureRate` data. | P1 |
+| Metric key naming: stub uses `snake_case`; `ObservabilityResponse` uses camelCase field names. | P2 |
+| `ProfileObservabilitySnapshot.Metrics` is a `Dictionary<string, double>`; the real response is a typed DTO. The real HTTP client will need to project the typed DTO onto the dict, or the interface will need to be redesigned. | P2 |
+
+### Lifecycle status value alignment
+
+| `conexus.adaptation` `AdapterProfileStatus` | `conexus` activation `status` | Match |
+|---------------------------------------------|-------------------------------|-------|
+| `Draft` | (no row) | n/a |
+| `Approved` | (no row) | n/a |
+| `Published` | `"Registered"` | ⚠ Different names for same concept |
+| `Canary` | `"Canary"` | ✅ |
+| `Promoted` | `"Active"` / `"Promoted"` | ⚠ Promoted in conexus is a transient activation row; Active is the current live row. Not a simple mapping. |
+| `RolledBack` | `"RolledBack"` | ✅ |
+| — | `"Retired"` | Only in conexus; no adaptation equivalent |
 
 ---
 
@@ -231,19 +348,19 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | Risk | Severity | Description |
 |------|----------|-------------|
-| Internal endpoints do not exist yet, so they cannot be accidentally exposed today — but the auth mechanism is also undefined | P0 | When `/internal/*` endpoints are implemented, `X-Internal-Api-Key` or equivalent must be designed and validated before the first deploy. Key issuance, rotation, and network-layer protection must all be specified. |
-| `GatewayRegistration:ApiKey` in `conexus.adaptation` has no corresponding issuance or validation mechanism in `conexus` | P0 | If a real HTTP registration client is added without a matching auth check in `conexus`, the endpoint will be unauthenticated or reject all requests on day one |
-| Deployment authorization uses roles in HTTP request body | P1 | `{ publishedByUserId, roles: ["AdaptationPublisher"] }` — the caller supplies their own roles. Appropriate only for internal calls behind a hard network boundary; not suitable for any externally reachable endpoint |
-| Adapter profile metadata could include prompt content, retrieved context, or PII if not truncated before registration | P1 | `EvaluationEvidenceProjection` applies truncation limits for the BO view, but the registration DTO is undefined — no guarantee that evidence is excluded |
-| `conexus` logs `error_message` from provider responses in the `gateway_requests` table | P2 | If an upstream provider includes user content in error messages, it lands in the DB. Not currently a gap in `conexus.adaptation`, but relevant to the shared request log |
-| No network isolation between internal and public endpoints | P2 | Both would share the same FastAPI process and port. Mitigation requires a separate service, auth middleware, or network policy |
-| `ENCRYPTION_KEY` validated at `conexus` startup; `conexus.adaptation` has no equivalent at-rest encryption for adapter profile data | P3 | Low risk today given SQLite single-host deployment; relevant when moving to shared PostgreSQL |
+| `INTERNAL_ADAPTER_API_KEY` has no documented issuance or rotation process | P1 | The key exists as an env var on the `conexus` side and `GatewayRegistration:ApiKey` on the adaptation side. No guidance on how to mint it, rotate it, or revoke it. If it leaks, all lifecycle endpoints are compromised. |
+| `conexus` returns 503 (not 401) when `INTERNAL_ADAPTER_API_KEY` is not configured | P1 | Safe behavior but could cause confusing failure modes during initial deploy if the env var is forgotten. Test `test_internal_api_key_not_configured_returns_503` covers this. |
+| `ADAPTER_PROFILE_REGISTRY_ENABLED=false` returns 404 for all internal endpoints | P2 | Intended as an emergency kill switch. The 404 (not 403) is intentional to avoid revealing the endpoint surface. Callers must handle 404 as a registration failure, not as "wrong URL." |
+| Deployment authorization uses roles in HTTP request body in `conexus.adaptation` | P2 | `{ publishedByUserId, roles: ["AdaptationPublisher"] }` — caller supplies their own roles. `conexus` internal endpoints have no awareness of this; they accept any call with a valid internal key. Appropriate only behind a hard network boundary. |
+| `conexus` internal endpoints share the same port/process as public endpoints | P2 | No network isolation. Any path misconfiguration that removes the `require_internal_adapter_api_key` dependency would expose lifecycle operations publicly. |
+| Adapter profile `metadata` field in `RegisterAdapterProfileBody` is a free-form `dict` | P2 | A real client must ensure this field does not contain prompt content, retrieved context, or evaluation evidence. The `EvaluationEvidenceProjection` passed to `RegisterAsync` must not be forwarded as-is. |
+| `conexus` logs `error_message` from provider responses in `gateway_requests` | P3 | If an upstream provider includes user content in error messages, it lands in the DB. Not a current gap in `conexus.adaptation`. |
 
 **Future hardening options (do not implement now):**
 - mTLS between `conexus.adaptation` and `conexus` internal surface.
-- Signed service tokens (short-lived JWTs issued by an identity service).
-- Private network only (VPC/subnet isolation for `/internal/*`).
-- Gateway allowlist: `conexus` accepts internal calls only from known source IPs.
+- Signed service tokens (short-lived JWTs).
+- Private subnet isolation for `/internal/*` endpoints.
+- `X-Internal-Actor` header for audit attribution (already supported in `conexus`; adaptation clients should send it).
 
 ---
 
@@ -251,14 +368,15 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | Risk | Severity | Description |
 |------|----------|-------------|
-| Gateway registration is on the critical path — publish fails → profile never activates | P1 | When real, a timeout or 502 from `conexus` blocks the profile lifecycle. Retry and idempotency semantics for `/internal/adapter-profiles` must be defined before implementation |
-| `conexus.adaptation` outbox worker has O(N) claim sorting (TD-002) | P1 | Under load, if deployment events queue up, the outbox degrades. Not a gateway integration issue but affects event relay |
-| `conexus` has no circuit breaker — if `conexus.adaptation` sends many concurrent registration/canary/rollback calls, all hit the FastAPI process directly | P1 | Mitigation: idempotent endpoints + retry backoff in adaptation client (backoff already exists for LLM calls via tenacity/WorkerBackoff) |
-| `conexus` down during profile registration | P1 | `PublishAdapterProfileCommandHandler` would catch a 502/timeout, return error, profile stays in draft. No retry is implemented today |
-| `conexus.adaptation` down | P1 | `conexus` continues serving LLM requests normally — no dependency in that direction. Active profiles (when implemented) remain in last-known state until TTL or manual action. No degraded mode is defined |
-| Internal key missing or wrong | P1 | Registration, canary, promote, rollback all fail with 401/403. Profile lifecycle is blocked. No fallback |
-| Streaming: no mid-stream fallback in `conexus` | P2 | If Anthropic fails mid-stream, the stream terminates. `conexus.adaptation` does not use streaming, so this is not a current integration concern |
-| Single-replica assumption for `conexus.adaptation` | P2 | Workers use distributed DB locking (`LockTimeoutSeconds`), suggesting multi-replica awareness, but SQLite serializes writes — multi-replica is not safe in practice |
+| Dual state: canary/promote/rollback update adaptation DB but do NOT call `conexus` gateway | P1 | Profile status in adaptation and gateway diverge from the moment canary is activated. If the gateway is later called for routing, it will not know about canary state. This is by far the most significant reliability gap. |
+| No retry or transactional compensation for gateway registration failure | P1 | `PublishAdapterProfileCommandHandler` calls `RegisterAsync()`, catches failure, and throws `ExternalServiceException`. The adaptation profile stays in `Approved` state. No automatic retry. If the real HTTP client times out, the operator must retry manually. |
+| `conexus` rollback requires `previous_gateway_profile_id` | P1 | Rollback returns 409 if there is no previous active profile. The adaptation rollback command does not check this precondition. A real HTTP client must handle a 409 from rollback differently from a network failure. |
+| `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=false` by default | P1 | Even if a profile is in `Canary` state in the `conexus` DB, no traffic is split today. Setting this flag to `true` in the future without implementing the routing logic first would have no effect, but it sets a false expectation. |
+| Outbox worker O(N) claim sorting (TD-002) | P1 | Under load, outbox degrades. Affects event relay but not direct gateway calls. |
+| `conexus` down during publish | P1 | `ExternalServiceException` thrown; profile stays in `Approved`. No retry. Operator must re-trigger publish. |
+| `conexus.adaptation` down | P2 | `conexus` continues serving LLM requests normally. Active profiles in gateway remain active. No degraded mode for `conexus`. |
+| Missing internal key at deploy time | P1 | All registration, canary, promote, rollback calls fail with 401 (or 503 if unconfigured). Profile lifecycle blocked. |
+| Single-replica assumption for `conexus.adaptation` (SQLite) | P2 | SQLite serializes writes. Multi-replica not safe until migrated to PostgreSQL. |
 
 ---
 
@@ -266,9 +384,9 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | Risk | Severity | Description |
 |------|----------|-------------|
-| `conexus.adaptation` uses SQLite for persistence | P2 | SQLite does not support concurrent writes. Multi-replica production deployment requires migration to PostgreSQL |
-| Outbox worker polling interval is fixed, not adaptive | P2 | Fixed `Outbox:PollingIntervalMs` — no backpressure under event bursts |
-| `conexus` `gateway_requests` table has no partitioning or TTL strategy | P3 | Long-lived append-only table. Not a demo concern; relevant at production scale |
+| `conexus.adaptation` uses SQLite | P2 | Multi-replica production deployment requires PostgreSQL migration. |
+| Outbox worker polling is fixed, not adaptive | P2 | No backpressure under event bursts. |
+| `conexus` `gateway_requests` table has no partitioning or TTL | P3 | Relevant at production scale; not a demo concern. |
 
 ---
 
@@ -276,67 +394,91 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | Mismatch | Severity | Impact |
 |----------|----------|--------|
-| `cost` / `estimated_cost` field not returned by `conexus` in `/v1/chat/completions` | P2 | `EstimatedCost` is always null in `ConexusAnswerResult` for HTTP-mode evaluations |
-| `choices[0].text` fallback in `HttpConexusLlmClient` is unreachable | P3 | `conexus` never emits the `text` field; dead code path |
-| `GatewayRegistration:ApiKey` has no corresponding validation or issuance in `conexus` | P0 | Real registration will fail auth on the first call |
-| No agreed registration request/response DTO | P0 | No shared contract exists for the profile registration call |
-| No agreed canary/promote/rollback notification DTO | P0 | Entire deployment notification surface is undefined on both sides |
-| Casing: `conexus` uses `snake_case` JSON; `conexus.adaptation` uses `PascalCase` C# DTOs with `[JsonPropertyName]` attributes | P2 | Must be verified field-by-field on any new DTOs; `HttpConexusLlmClient` handles this correctly today, but new integrated DTOs will need the same care |
-| No shared lifecycle status enum | P2 | `conexus.adaptation` has `AdapterProfileStatus` (Draft, Published, Canary, Promoted, RolledBack). `conexus` has no equivalent. Shadow state values must match exactly when added to `conexus` |
+| `IAdaptationObservabilityClient.GetSnapshotAsync(Guid profileId)` passes adaptation ID; real endpoint needs `gatewayProfileId` string | P1 | Cannot build real HTTP client without redesigning the interface or adding a lookup step |
+| No time window parameters in `GetSnapshotAsync`; real endpoint has `since`/`until` | P1 | Drift assessment cannot use windowed observability data without interface change |
+| `citation_accuracy` (stub) vs `citationFailureRate` (real) — inverse semantics | P1 | Drift thresholds calibrated against stub will fire incorrectly on real data |
+| `AdapterProfileStatus.Published` vs `conexus` `status="Registered"` | P2 | "Published" in adaptation is "Registered" in the gateway; documentation must clarify |
+| `AdapterProfileStatus.Promoted` vs `conexus` `status="Active"` | P2 | "Promoted" leaves a `Promoted` activation row; a new `Active` row is created. Not a simple rename. |
+| Stub `GatewayProfileId` format is `gw-{profile.Id:N}` (deterministic); real endpoint generates `gw-{uuid4().hex}` (random) | P2 | Any test comparing stub IDs to real IDs will fail; idempotency tests must be aware |
+| `cost` / `estimated_cost` not returned by `conexus` in `/v1/chat/completions` | P2 | `EstimatedCost` always null in `ConexusAnswerResult` for HTTP-mode evaluations |
+| Metric key casing: stub uses `snake_case`; real observability response uses camelCase fields | P2 | Must be mapped explicitly in any real HTTP observability client |
+| `choices[0].text` fallback in `HttpConexusLlmClient` is dead code | P3 | `conexus` never emits `text` field |
 
 ---
 
 ## Missing Tests
 
-| Test | Priority | Repo |
-|------|----------|------|
-| Contract test: `POST /v1/chat/completions` with a `model` value that is not a valid alias → 400 | P1 | Both — verify adaptation never sends unknown model names |
-| Contract test: `HttpConexusLlmClient` when `conexus` returns a `cost` field → parsed correctly | P2 | adaptation |
-| Contract test: `HttpConexusLlmClient` when `conexus` does NOT return `cost` → null, no exception | P2 | adaptation |
-| `DeterministicGatewayRegistrationClient` vs real client behavior divergence test | P1 | adaptation |
-| Internal registration endpoint contract test (when implemented) | P0 | conexus |
-| Idempotency: duplicate publish call returns `WasDuplicate: true` | P1 | adaptation (API test) |
-| Canary → promote → rollback sequence test | P1 | adaptation (integration test) |
-| Failure mode: registration 502 → profile stays in draft, response body not in exception | P1 | adaptation |
-| Failure mode: registration timeout → profile stays in draft, `CONEXUS_TIMEOUT` error code | P1 | adaptation |
-| Failure mode: internal key missing → registration returns 401 | P1 | conexus (when implemented) |
-| Observability window query returns correct metrics for a given profile ID | P1 | conexus (when implemented) |
-| Drift score > threshold triggers rollback command | P1 | adaptation |
-| Drift score with empty observation window → neutral, no rollback | P1 | adaptation |
+### Tests that should exist now (adaptation side)
+
+| Test | Priority |
+|------|----------|
+| `HttpConexusGatewayRegistrationClient` (once built): success, 401, 503, 404, timeout, non-2xx — response body not in exception | P0 |
+| `HttpConexusGatewayRegistrationClient`: duplicate call (same `adapterProfileId`) → second call returns same `gatewayProfileId` without creating a new row | P1 |
+| Real HTTP canary notify: `POST /internal/.../{id}/activate-canary` success → adaptation status matches | P1 |
+| Real HTTP promote notify: success → gateway status `Active` | P1 |
+| Real HTTP rollback notify: 409 (no previous) handled gracefully | P1 |
+| `HttpAdaptationObservabilityClient` (once built): success, 404, timeout | P1 |
+| Drift threshold calibrated against real `ObservabilityResponse` fields (not stub dict keys) | P1 |
+| `HttpConexusLlmClient`: `conexus` does NOT return `cost` field → null `EstimatedCost`, no exception | P2 |
+| `HttpConexusLlmClient`: valid unknown model alias → 400 surfaced correctly | P1 |
+
+### Tests that should exist now (conexus side)
+
+| Test | Priority |
+|------|----------|
+| `POST /internal/adapter-profiles/register` → idempotent on second call with same `adapterProfileId` | ✅ Already exists (`test_register_adapter_profile_is_idempotent_by_adapterProfileId`) |
+| `POST /internal/adapter-profiles/register` → 401 without key | ✅ Already exists |
+| `POST /internal/adapter-profiles/register` → 503 when key not configured | ✅ Already exists |
+| `POST /internal/adapter-profiles/register` → 404 when registry disabled | ✅ Already exists |
+| Full canary → promote → rollback sequence | Verify coverage in `test_internal_adapter_profile_activations.py` |
+| Rollback with no previous → 409 | Verify coverage |
+| Observability: empty window → `requestCount=0`, no null dereference | Verify coverage in `test_internal_adapter_profile_observability.py` |
+| Observability: `since > until` → 400 | Verify coverage |
+| `GET /internal/domains/{domainKey}/active-profile` → 404 when no active profile | Verify coverage |
+
+### Cross-repo contract tests (not yet possible; require real HTTP clients)
+
+| Test | Priority |
+|------|----------|
+| Round-trip: adaptation publishes → `conexus` DB has `GatewayAdapterProfile` row → adaptation stores `GatewayProfileId` | P0 |
+| Round-trip: adaptation activates canary → `conexus` DB has `Canary` activation row | P1 |
+| Round-trip: adaptation promotes → `conexus` DB has `Active` activation row | P1 |
+| Round-trip: adaptation triggers drift check → receives real `ObservabilityResponse` | P1 |
+| Failure mode: `conexus` returns 502 during publish → adaptation profile stays in `Approved`, no partial state | P1 |
 
 ---
 
 ## Demo Readiness Checklist
 
-### Must resolve before demo (P0)
+### Must resolve before demo
 
-- [ ] **Decide and document:** Will the demo use `DeterministicGatewayRegistrationClient` (stub), or will real `/internal/*` endpoints be implemented? If stub, the demo script must not claim that profiles are "registered in Conexus."
-- [ ] **Verify model profile name alignment:** Confirm that `Conexus:DefaultModelProfile` values used in `conexus.adaptation` match valid model aliases in `conexus` (`conexus-fast`, `conexus-default`, `gpt-4o`, `claude-haiku-4-5-20251001`, etc.). A mismatch returns 400 with no user-visible diagnostic.
-- [ ] **Document `GatewayRegistration:ApiKey` setup:** Without a defined issuance path, any move to real registration fails immediately on auth.
+- [ ] **State clearly** in the demo script: the gateway integration is stub-only. Profiles are stored in the adaptation DB. `conexus` gateway DB does not have these profiles. "Registered in Conexus" is not a true claim until `HttpConexusGatewayRegistrationClient` is built.
+- [ ] **Verify model profile name alignment:** Confirm `Conexus:DefaultModelProfile` values match valid aliases in `conexus` (`conexus-fast`, `conexus-default`, etc.). A mismatch returns 400.
+- [ ] **`INTERNAL_ADAPTER_API_KEY`:** Ensure the demo environment has this set in `conexus` and `GatewayRegistration:ApiKey` set in `conexus.adaptation`. Without both, any future real registration call fails immediately.
 
-### Should document before demo (P1)
+### Should document before demo
 
-- [ ] State clearly in the demo script whether gateway integration is stub or live.
-- [ ] Document the one-way data flow: adaptation calls `conexus` for LLM evaluation; `conexus` does not call adaptation.
-- [ ] Document what "published" means today (profile stored in adaptation DB, stub `gw-*` ID returned) versus what it will mean in production (profile registered in `conexus` routing table).
-- [ ] Document required env vars for a local-dev demo (see Operational Model section).
+- [ ] Document that `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=false` — registering a canary profile does not split traffic yet.
+- [ ] Document required env vars for a working local-dev demo (see Operational Model section).
+- [ ] Document the dual-state gap: adaptation DB and gateway DB are not synchronized for canary/promote/rollback.
 
-### Can safely wait (P2/P3)
+### Can safely wait
 
-- [ ] Real `/internal/*` endpoint implementation.
-- [ ] Real `HttpConexusGatewayRegistrationClient`.
-- [ ] Drift feedback loop.
-- [ ] Canary traffic routing in `conexus`.
-- [ ] `estimated_cost` field added to `/v1/chat/completions` response.
+- [ ] `HttpConexusGatewayRegistrationClient` implementation.
+- [ ] Canary/promote/rollback HTTP notify clients in adaptation.
+- [ ] `HttpAdaptationObservabilityClient` implementation.
+- [ ] `IAdaptationObservabilityClient` interface redesign (add `gatewayProfileId`, `since`/`until`).
+- [ ] `estimated_cost` field in `/v1/chat/completions` response.
+- [ ] `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED` routing logic.
 - [ ] mTLS or signed service tokens for internal auth.
-- [ ] Shared DTO schema library.
+- [ ] `INTERNAL_ADAPTER_API_KEY` rotation runbook.
 
 ### Could embarrass us in a demo if ignored
 
-- Claiming profile is "live in the gateway" when `DeterministicGatewayRegistrationClient` is active — the profile exists only in the adaptation DB.
-- Sending an unknown model profile name to `conexus` — returns 400 with no helpful message surfaced in the BO.
-- `EstimatedCost` always showing null in evaluation results because `conexus` does not return it.
-- Running the demo without `Conexus:BaseUrl` / `Conexus:ApiKey` configured — all LLM evaluation steps silently fall back to the fake client with no warning shown in the UI.
+- Claiming profiles are "live in the gateway" when `DeterministicGatewayRegistrationClient` is active.
+- `EstimatedCost` always null in evaluation results.
+- Running without `Conexus:BaseUrl` / `Conexus:ApiKey` — all LLM steps silently fall back to the fake client.
+- Any test or UI metric showing `citation_accuracy=1.0` (hardcoded stub value) without a disclaimer.
 
 ---
 
@@ -355,6 +497,10 @@ This contract is entirely undefined and must be designed before any real HTTP im
 | `OPENAI_API_KEY` | Conditional | Required if routing to OpenAI |
 | `ANTHROPIC_API_KEY` | Conditional | Required if routing to Anthropic |
 | `LLM_PROVIDER` | No | Default: `gateway` |
+| `INTERNAL_ADAPTER_API_KEY` | Yes (for internal endpoints) | Shared secret for `X-Internal-Api-Key` auth; must be non-empty, not `"change-me"`, ≥ 16 chars in prod |
+| `ADAPTER_PROFILE_REGISTRY_ENABLED` | No | Default: `true`. Set `false` to disable all `/internal/*` endpoints (returns 404). |
+| `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED` | No | Default: `false`. No routing logic reads this flag yet. |
+| `ADAPTER_PROFILE_OBSERVABILITY_ENABLED` | No | Default: `true`. Set `false` to disable observability endpoint (returns 404). |
 
 ### Required env vars — `conexus.adaptation` (.NET)
 
@@ -365,8 +511,8 @@ This contract is entirely undefined and must be designed before any real HTTP im
 | `Conexus:ApiKey` | Yes (HTTP mode) | Project API key issued by `conexus` (`cx_live_*`) |
 | `Conexus:TimeoutSeconds` | No | Default: 30; clamped 1–300 |
 | `Conexus:DefaultModelProfile` | No | Default model alias (must be a valid `conexus` alias) |
-| `GatewayRegistration:BaseUrl` | Yes (when real) | Not needed while stub is active |
-| `GatewayRegistration:ApiKey` | Yes (when real) | Not issued or validated yet |
+| `GatewayRegistration:BaseUrl` | Yes (when real) | Not needed while `DeterministicGatewayRegistrationClient` is active |
+| `GatewayRegistration:ApiKey` | Yes (when real) | Must match `INTERNAL_ADAPTER_API_KEY` in `conexus` |
 | `GatewayRegistration:Enabled` | No | Default: true |
 | `Corpus:BasePath` | Yes | Local corpus directory |
 
@@ -376,7 +522,8 @@ This contract is entirely undefined and must be designed before any real HTTP im
 2. Start `conexus` backend. Wait for `GET /health/ready` → 200.
 3. Create a project and issue an API key in the `conexus` BO (or via admin API).
 4. Set `Conexus:ApiKey` in `conexus.adaptation` config.
-5. Start `conexus.adaptation`. EF migrations run on startup (dev default).
+5. Set `GatewayRegistration:ApiKey` = value of `INTERNAL_ADAPTER_API_KEY` in `conexus.adaptation` config (for future real registration).
+6. Start `conexus.adaptation`. EF migrations run on startup (dev default).
 
 ### Failure modes
 
@@ -384,8 +531,9 @@ This contract is entirely undefined and must be designed before any real HTTP im
 |---------|---------------------|-------------------------------|
 | `conexus` is down | — | LLM evaluation steps fail with `CONEXUS_HTTP_ERROR` or `CONEXUS_TIMEOUT`. Runs cannot complete. Workers retry with jitter. No data loss. |
 | `conexus.adaptation` is down | `conexus` serves LLM requests normally. No dependency. | — |
-| Internal key missing/wrong | — | Registration, canary, promote, rollback (when real) all fail with 401/403. Profile lifecycle blocked. Worker retries with backoff. |
-| SQLite locked (adaptation) | — | Concurrent worker writes serialized. Multi-replica unsupported with SQLite. |
+| `INTERNAL_ADAPTER_API_KEY` missing/wrong | All `/internal/*` return 503 (unconfigured) or 401 (wrong key) | Gateway registration, when real, will fail immediately. Profile stays in `Approved`. |
+| `ADAPTER_PROFILE_REGISTRY_ENABLED=false` | All `/internal/*` return 404 | Real registration client will receive 404; must treat as registration failure, not wrong URL. |
+| SQLite locked (adaptation) | — | Concurrent worker writes serialized. Multi-replica unsupported. |
 
 ### Single-replica vs multi-replica
 
@@ -402,6 +550,8 @@ This contract is entirely undefined and must be designed before any real HTTP im
 | `conexus.adaptation` DB | SQLite | PostgreSQL recommended |
 | LLM client | `FakeConexusLlmClient` (no `Conexus:BaseUrl` set) | `HttpConexusLlmClient` |
 | Gateway registration | `DeterministicGatewayRegistrationClient` (stub) | Real `HttpConexusGatewayRegistrationClient` (not yet built) |
+| Observability | `DeterministicAdaptationObservabilityClient` (stub, hardcoded) | Real `HttpAdaptationObservabilityClient` (not yet built) |
+| Canary routing | Not active (`ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=false`) | Requires routing logic + flag enable |
 | Admin auth | Env-based (`ADMIN_USERNAME`/`ADMIN_PASSWORD`) | DB-backed admin users recommended |
 | CORS | Wildcard allowed | Strict `CORS_ALLOWED_ORIGINS` required |
 
@@ -415,62 +565,83 @@ This contract is entirely undefined and must be designed before any real HTTP im
 2. `POST /v1/chat/completions` with unknown model → 400.
 3. `POST /v1/chat/completions` with revoked API key → 401.
 4. `POST /v1/chat/completions` with project over hard cost limit → 429, body includes `limit_type`, `reset_at`.
-5. `POST /v1/chat/completions` response does NOT include `cost` field → confirm `conexus.adaptation` parses correctly (null `EstimatedCost`, no exception).
+5. Response does NOT include `cost` field → confirm `conexus.adaptation` parses correctly (null `EstimatedCost`, no exception).
 
-### Group 2: `conexus.adaptation` — gateway client contracts (testable today against stub; real when endpoints exist)
+### Group 2: `conexus` — internal endpoint contracts (testable today, mostly covered)
 
-6. `DeterministicGatewayRegistrationClient.RegisterAsync()` returns `gw-{profileId:N}` — verifies stub contract shape.
-7. `HttpConexusLlmClient` with valid config → `ConexusAnswerResult.Answer` non-empty.
-8. `HttpConexusLlmClient` with non-2xx (mock 429) → error code `CONEXUS_NON_2XX`, response body absent from exception message.
-9. `HttpConexusLlmClient` with send timeout → error code `CONEXUS_TIMEOUT`.
-10. `HttpConexusLlmClient` with malformed JSON → error code `CONEXUS_MALFORMED_RESPONSE`.
+6. `POST /internal/adapter-profiles/register` → 401 without `X-Internal-Api-Key`.
+7. `POST /internal/adapter-profiles/register` → 503 when `INTERNAL_ADAPTER_API_KEY` not set.
+8. `POST /internal/adapter-profiles/register` → 404 when `ADAPTER_PROFILE_REGISTRY_ENABLED=false`.
+9. `POST /internal/adapter-profiles/register` idempotent by `adapterProfileId` → same `gatewayProfileId` on repeat.
+10. Full sequence: register → activate-canary → promote → `GET /internal/domains/{key}/active-profile` → correct `gatewayProfileId`.
+11. Register → activate-canary → rollback → 409 (no previous profile to restore).
+12. `GET /internal/adapter-profiles/{id}/observability` with `since > until` → 400.
+13. `GET /internal/adapter-profiles/{id}/observability` when `ADAPTER_PROFILE_OBSERVABILITY_ENABLED=false` → 404.
 
-### Group 3: Adapter profile lifecycle (adaptation self-contained, testable today)
+### Group 3: `conexus.adaptation` — LLM client contracts (testable today)
 
-11. Publish → `WasDuplicate: false` on first call, `WasDuplicate: true` on idempotent repeat.
-12. Publish → ActivateCanary → verify `Status == Canary`, `CanaryPercent` in [1, 50].
-13. Publish → ActivateCanary → Promote → verify `Status == Promoted`.
-14. Publish → ActivateCanary → Rollback → verify `Status == RolledBack`, `RolledBackAt` set.
-15. ActivateCanary with `canaryPercent > 50` → 422.
-16. Promote without prior ActivateCanary → 409 (state conflict).
-17. Rollback without prior Publish → 409 (state conflict).
-18. 403 if caller roles do not match `RequiredRolesForPublish`.
+14. `HttpConexusLlmClient` with valid config → `Answer` non-empty, `PromptTokens` > 0.
+15. `HttpConexusLlmClient` with non-2xx (mock 429) → error code `CONEXUS_NON_2XX`, response body absent from exception message.
+16. `HttpConexusLlmClient` with send timeout → `CONEXUS_TIMEOUT`.
+17. `HttpConexusLlmClient` with malformed JSON → `CONEXUS_MALFORMED_RESPONSE`.
 
-### Group 4: Failure mode and cross-repo (requires real endpoints when built)
+### Group 4: Adapter profile lifecycle in adaptation (testable today, self-contained)
 
-19. `RegisterAsync()` with `conexus` returning 502 → profile remains in draft, error message does not include response body.
-20. `RegisterAsync()` timeout → profile remains in draft, error code `CONEXUS_TIMEOUT`.
-21. `RegisterAsync()` with wrong internal key → 401 from `conexus` → profile blocked.
-22. Drift score > threshold → rollback command triggered, profile transitions to `RolledBack`.
-23. Observability window query returns empty (no requests in window) → drift score neutral, no rollback.
+18. Publish → `WasDuplicate: false` on first call, `WasDuplicate: true` on idempotent repeat.
+19. Publish → ActivateCanary → `Status == Canary`, `CanaryPercent` in [1, 50].
+20. Publish → ActivateCanary → Promote → `Status == Promoted`.
+21. Publish → ActivateCanary → Rollback → `Status == RolledBack`, `RolledBackAt` set.
+22. ActivateCanary with `canaryPercent > 50` → 422.
+23. Promote without prior ActivateCanary → 409 (state conflict).
+24. 403 if caller roles insufficient.
+
+### Group 5: Cross-repo contract tests (require real HTTP clients — not yet possible)
+
+25. Round-trip: adaptation publish → `conexus` `gateway_adapter_profiles` row exists → adaptation stores returned `gatewayProfileId`.
+26. Round-trip: adaptation canary activate → `conexus` `gateway_adapter_profile_activations` has `Canary` row.
+27. Round-trip: adaptation promote → `conexus` activation `status == "Active"`.
+28. Round-trip: observability pull → real `requestCount`, `errorRate`, `latencyP95Ms` returned.
+29. Failure: `conexus` returns 502 during publish → adaptation profile stays in `Approved`; no partial gateway state.
+30. Failure: rollback when no previous profile → `conexus` 409 → adaptation handles gracefully.
 
 ### Cross-repo fixture JSON examples
 
-**Profile registration request (to be defined — not yet implemented):**
+**Profile registration request (actual `conexus` endpoint shape):**
 ```json
 {
-  "profileId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "adapterProfileId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "domainKey": "gaming-crm",
-  "modelProfile": "conexus-fast",
-  "promptProfile": "rag-cite-v1",
-  "indexMetadata": {
-    "chunkCount": 42,
-    "corpusHash": "sha256:abc123"
-  },
-  "evaluationSummary": {
-    "precision": 0.87,
-    "recall": 0.82,
-    "gatesPassed": true
-  }
+  "runId": "run-abc123",
+  "planId": "plan-xyz",
+  "compositeScore": 0.87,
+  "evidenceHash": "sha256:evh...",
+  "semanticContextHash": "sha256:sch...",
+  "slodModelVersion": "v1",
+  "profileVersion": "1.0.0"
 }
 ```
 
-**Profile registration response (to be defined):**
+**Profile registration response (actual `conexus` endpoint shape):**
 ```json
 {
-  "gatewayProfileId": "gw-3fa85f645717...",
-  "status": "registered",
-  "registeredAt": "2026-04-30T12:00:00Z"
+  "gatewayProfileId": "gw-a1b2c3d4e5f6...",
+  "status": "Registered"
+}
+```
+
+**Observability response (actual `conexus` endpoint shape):**
+```json
+{
+  "gatewayProfileId": "gw-a1b2c3d4e5f6...",
+  "windowStart": "2026-04-29T12:00:00+00:00",
+  "windowEnd": "2026-04-30T12:00:00+00:00",
+  "requestCount": 142,
+  "errorRate": 0.014,
+  "latencyP95Ms": 380,
+  "costPerAnswer": 0.0009,
+  "citationFailureRate": null,
+  "refusalRate": null,
+  "userNegativeFeedbackRate": null
 }
 ```
 
@@ -480,11 +651,12 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | # | Decision | Options | Recommendation |
 |---|----------|---------|----------------|
-| 1 | Demo uses stub or real `/internal/*` endpoints? | A) Stub for demo, real later. B) Build minimal registration endpoint now. | **A** — stub is safe for demo; document clearly that profiles are not live in the gateway |
-| 2 | Auth mechanism for `/internal/*` endpoints | A) `X-Internal-Api-Key` header. B) Reuse project API keys with a special service project. C) mTLS. | **A for now** — simplest; document the key rotation process |
-| 3 | Should `conexus` return `estimated_cost` in `/v1/chat/completions` response? | A) Yes, add to response DTO. B) No, adaptation maintains its own cost table. | **A** — single cost source of truth; adaptation reads it passively |
-| 4 | DB for `conexus.adaptation` in production | A) Stay on SQLite. B) Migrate to PostgreSQL. | **B** — required before multi-replica deployment |
-| 5 | Registration DTO design | Owner must define before any real HTTP client is built. | Block on this before implementing Group 4 tests |
+| 1 | Build `HttpConexusGatewayRegistrationClient` now or keep stub for demo? | A) Stub for demo; real in v0.4. B) Build minimal real client now. | **A** — stub is safe for demo; infrastructure is ready on `conexus` side |
+| 2 | Redesign `IAdaptationObservabilityClient` interface before or after building the HTTP client? | A) Add `gatewayProfileId` + window params to the interface now, then build client. B) Build client with an adapter that takes `AdapterProfile` and extracts `GatewayProfileId`. | **A** — interface change is small; avoids a two-level wrapper |
+| 3 | `INTERNAL_ADAPTER_API_KEY` rotation process | Document who issues the key, where it is stored, and what the rotation runbook is. | Required before any production deploy |
+| 4 | Should `conexus` return `estimated_cost` in `/v1/chat/completions` response? | A) Yes, add to response DTO. B) No, adaptation maintains its own cost table. | **A** — avoids null `EstimatedCost` in evaluations |
+| 5 | DB for `conexus.adaptation` in production | A) Stay on SQLite. B) Migrate to PostgreSQL. | **B** — required before multi-replica deployment |
+| 6 | `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED`: when to implement the actual routing logic? | Deferred to v0.5; flag exists but is inert. | Do not enable flag until routing logic is written. |
 
 ---
 
@@ -493,20 +665,20 @@ This contract is entirely undefined and must be designed before any real HTTP im
 ### 30 minutes (demo-blocking)
 
 1. Verify that `Conexus:DefaultModelProfile` values are valid `conexus` model aliases — check `gateway_router.py` alias table against `conexus.adaptation` config.
-2. Add one sentence to `conexus/README.md`: "Adapter profile `/internal/*` endpoints are not yet implemented."
-3. Add one sentence to `conexus.adaptation/README.md`: "Gateway registration currently uses `DeterministicGatewayRegistrationClient` (stub). Profiles are stored in the adaptation DB only; they are not registered in the live `conexus` routing table."
+2. Add one sentence to `conexus.adaptation/README.md`: "Gateway registration uses `DeterministicGatewayRegistrationClient` (stub). Profiles are stored in the adaptation DB only; the `conexus` gateway DB is not populated until `HttpConexusGatewayRegistrationClient` is built."
+3. Add one sentence to `conexus/docs/04_GATEWAY.md` or `README.md`: "`ADAPTER_PROFILE_CANARY_ROUTING_ENABLED` defaults to `false`; canary routing logic is not yet implemented."
 
 ### 60 minutes (should do before demo)
 
-4. Extract the Operational Model section above into `docs/LOCAL_DEV_SETUP.md` in each repo as a quick-start card.
-5. Add contract test Group 1 items 1–4 to the `conexus` test suite.
-6. Verify Group 2 items 7–10 are covered in `conexus.adaptation` — the test gap analysis indicates most are already present.
+4. Verify test coverage for Group 2 items 10–13 in `test_internal_adapter_profile_activations.py` and `test_internal_adapter_profile_observability.py`.
+5. Add Group 1 items 1–4 as explicit contract tests in the `conexus` test suite if not already present.
+6. Document `INTERNAL_ADAPTER_API_KEY` issuance in `conexus/docs/07_DATABASE_AUTH.md`.
 
 ### 90 minutes (quality of life)
 
-7. Add `estimated_cost` field to `conexus` `/v1/chat/completions` response DTO and confirm `HttpConexusLlmClient` parses it without exception when present.
-8. Document Owner Decisions 1–3 as a short ADR in `conexus/docs/ADRs/`.
-9. Cross-link this review from `conexus.adaptation/docs/agent-review/CONEXUS_ADAPTATION_AGENT_CHANGELOG.md`.
+7. Redesign `IAdaptationObservabilityClient` to accept `string gatewayProfileId` and optional window params (Owner Decision 2).
+8. Add `estimated_cost` to `conexus` `/v1/chat/completions` response DTO.
+9. Document Owner Decisions 1–3 as an ADR in `conexus/docs/ADRs/`.
 
 ---
 
@@ -514,13 +686,13 @@ This contract is entirely undefined and must be designed before any real HTTP im
 
 | Phase | Work | Dependency |
 |-------|------|------------|
-| v0.4 | Implement `POST /internal/adapter-profiles` in `conexus` with `X-Internal-Api-Key` auth | Owner Decision 2 |
-| v0.4 | Implement `HttpConexusGatewayRegistrationClient` in `conexus.adaptation` | Endpoint + DTO design (Decision 5) |
-| v0.4 | Add `estimated_cost` to `/v1/chat/completions` response | Owner Decision 3 |
-| v0.5 | Canary routing in `conexus` (`X-Conexus-Profile-Id` header or domain routing table) | Registration endpoint stable |
-| v0.5 | Drift observability endpoint in `conexus` | Canary routing in place |
-| v0.5 | Migrate `conexus.adaptation` to PostgreSQL | Owner Decision 4 |
-| v0.6 | mTLS or signed service tokens for internal endpoint auth | v0.4 endpoints stable |
-| v0.6 | Shared DTO schema (OpenAPI fragment or AsyncAPI) | Both teams aligned |
-| v0.7 | Cross-repo contract test suite in CI | Shared DTO schema |
+| v0.4 | Build `HttpConexusGatewayRegistrationClient` in `conexus.adaptation` | Owner Decision 1 |
+| v0.4 | Build canary/promote/rollback HTTP notify clients in `conexus.adaptation` | Registration client stable |
+| v0.4 | Redesign `IAdaptationObservabilityClient` interface; build `HttpAdaptationObservabilityClient` | Owner Decision 2 |
+| v0.4 | Add `estimated_cost` to `/v1/chat/completions` response | Owner Decision 4 |
+| v0.4 | Document `INTERNAL_ADAPTER_API_KEY` rotation runbook | Owner Decision 3 |
+| v0.5 | Implement canary routing logic in `conexus` and enable `ADAPTER_PROFILE_CANARY_ROUTING_ENABLED` | Owner Decision 6; registration + notify clients stable |
+| v0.5 | Migrate `conexus.adaptation` to PostgreSQL | Owner Decision 5 |
+| v0.6 | Cross-repo contract test suite in CI | Real HTTP clients stable |
+| v0.6 | mTLS or signed service tokens for internal auth | Infrastructure ready |
 | v1.0 | Network isolation: `/internal/*` on separate port or private subnet | Infrastructure ready |
