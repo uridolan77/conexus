@@ -480,6 +480,54 @@ async def test_super_admin_gets_all_adaptation_roles(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_env_admin_has_all_adaptation_permissions(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    # No admin users exist in DB fixture → env fallback session (admin_user_id=None).
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        # If RBAC blocks, the proxy client should never be called.
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    # View
+    assert (await client.get("/admin/adaptation/profiles")).status_code == 200
+    # Approve / publish / operate / rollback
+    assert (await client.post("/admin/adaptation/plans/p1/approve", json={})).status_code == 200
+    assert (await client.post("/admin/adaptation/profiles/p1/publish", json={})).status_code == 200
+    assert (await client.post("/admin/adaptation/profiles/p1/activate-canary", json={"canaryPercent": 10})).status_code == 200
+    assert (await client.post("/admin/adaptation/profiles/p1/promote", json={})).status_code == 200
+    assert (await client.post("/admin/adaptation/profiles/p1/rollback", json={"reason": "x"})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_with_empty_roles_has_no_permissions(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _create_admin_user(client, username="empty", password="pw", roles_json="[]")
+    await _login_db_admin(client, username="empty", password="pw")
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy when forbidden")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    assert (await client.get("/admin/adaptation/profiles")).status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_POST_publish_does_not_forward_browser_roles(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,

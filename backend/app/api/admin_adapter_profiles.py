@@ -11,7 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import get_admin_session
@@ -68,13 +68,13 @@ async def get_runtime_state(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
             GatewayAdapterProfileActivation.status == "Active",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     canary = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
             GatewayAdapterProfileActivation.status == "Canary",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
 
     last24h = None

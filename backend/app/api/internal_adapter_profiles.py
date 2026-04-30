@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -162,7 +162,7 @@ async def activate_canary(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
             GatewayAdapterProfileActivation.status == "Canary",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if existing_canary is not None and existing_canary.gateway_profile_id != gatewayProfileId:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="domain already has a canary profile")
@@ -227,7 +227,7 @@ async def promote(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
             GatewayAdapterProfileActivation.status == "Active",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     previous_id = active.gateway_profile_id if active is not None else None
     if active is not None and active.gateway_profile_id == gatewayProfileId:
@@ -242,12 +242,23 @@ async def promote(
         active.status = "Retired"
         await session.flush()
 
-    await session.execute(
-        delete(GatewayAdapterProfileActivation).where(
-            GatewayAdapterProfileActivation.domain_key == domain_key,
-            GatewayAdapterProfileActivation.status == "Canary",
+    # Preserve canary history: if the promoted profile was previously canary, mark it Promoted.
+    # If a different canary exists, retire it (do not delete).
+    canaries = (
+        await session.execute(
+            select(GatewayAdapterProfileActivation).where(
+                GatewayAdapterProfileActivation.domain_key == domain_key,
+                GatewayAdapterProfileActivation.status == "Canary",
+            )
         )
-    )
+    ).scalars().all()
+    for c in canaries:
+        if c.gateway_profile_id == gatewayProfileId:
+            c.status = "Promoted"
+            c.promoted_at = _utcnow()
+        else:
+            c.status = "Retired"
+        await session.flush()
 
     row = GatewayAdapterProfileActivation(
         domain_key=domain_key,
@@ -296,7 +307,7 @@ async def rollback(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
             GatewayAdapterProfileActivation.status == "Active",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if active is None or active.gateway_profile_id != gatewayProfileId:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="active profile not found")
@@ -308,12 +319,18 @@ async def rollback(
     active.rolled_back_at = _utcnow()
     await session.flush()
 
-    await session.execute(
-        delete(GatewayAdapterProfileActivation).where(
-            GatewayAdapterProfileActivation.domain_key == domain_key,
-            GatewayAdapterProfileActivation.status == "Canary",
+    # Preserve history: retire any current canary rows.
+    canaries = (
+        await session.execute(
+            select(GatewayAdapterProfileActivation).where(
+                GatewayAdapterProfileActivation.domain_key == domain_key,
+                GatewayAdapterProfileActivation.status == "Canary",
+            )
         )
-    )
+    ).scalars().all()
+    for c in canaries:
+        c.status = "Retired"
+    await session.flush()
 
     row = GatewayAdapterProfileActivation(
         domain_key=domain_key,

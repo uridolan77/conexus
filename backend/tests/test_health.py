@@ -69,11 +69,34 @@ def test_readyz_returns_503_when_db_check_fails() -> None:
     assert response.json()["detail"]["checks"]["db"] is False
 
 
+def test_readyz_prod_fails_when_internal_adapter_api_key_is_insecure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "app_env", "prod")
+    monkeypatch.setattr(settings, "auth_secret", "test-prod-auth-secret-not-default-value")
+    monkeypatch.setattr(settings, "admin_password", "not-the-default-admin-password")
+    monkeypatch.setattr(settings, "adapter_profile_registry_enabled", True)
+    settings.database_url = "sqlite+aiosqlite:///:memory:"
+    reset_engine()
+    client = TestClient(app)
+
+    monkeypatch.setattr(settings, "internal_adapter_api_key", None)
+    assert client.get("/readyz").status_code == 503
+
+    monkeypatch.setattr(settings, "internal_adapter_api_key", "change-me")
+    assert client.get("/readyz").status_code == 503
+
+    monkeypatch.setattr(settings, "internal_adapter_api_key", "short-key")
+    assert client.get("/readyz").status_code == 503
+
+
 def test_readyz_503_prod_hides_check_details(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prod 503 bodies must not include per-check flags (operator-safe, no leak surface)."""
     monkeypatch.setattr(settings, "app_env", "prod")
     monkeypatch.setattr(settings, "auth_secret", "test-prod-auth-secret-not-default-value")
     monkeypatch.setattr(settings, "admin_password", "not-the-default-admin-password")
+    monkeypatch.setattr(settings, "adapter_profile_registry_enabled", True)
+    monkeypatch.setattr(settings, "internal_adapter_api_key", "change-me")
     settings.database_url = "sqlite+aiosqlite:///:memory:"
     reset_engine()
     client = TestClient(app)

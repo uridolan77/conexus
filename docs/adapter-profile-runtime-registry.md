@@ -29,3 +29,35 @@ Current behavior:
 
 By default, **canary traffic shifting is not enabled** (`ADAPTER_PROFILE_CANARY_ROUTING_ENABLED=false`). When enabled, Conexus can deterministically bucket requests by `(project_id, api_key_id, request_id)` for “active vs canary” selection (logging-first).
 
+## Internal API key requirements (prod)
+
+Internal endpoints under `/internal/*` are protected by `X-Internal-Api-Key` and are intended for trusted services only.
+
+In **prod** with `ADAPTER_PROFILE_REGISTRY_ENABLED=true`, Conexus readiness (`GET /readyz`) will fail unless:
+
+- `INTERNAL_ADAPTER_API_KEY` is set
+- it is **not** `change-me`
+- it is at least **32 characters**
+
+## Activation history semantics
+
+Conexus records activation transitions in `gateway_adapter_profile_activations` as append-only history.
+
+- Creating canary writes/updates a row with `status="Canary"`.
+- Promoting a profile creates a new row with `status="Active"`.
+  - If the promoted profile previously had a canary row, that canary row is preserved and marked `status="Promoted"`.
+  - If a different canary existed for the domain, it is preserved and marked `status="Retired"`.
+
+When duplicate/corrupt activation rows exist, Conexus selects the newest row deterministically (by `created_at`) for active/canary resolution.
+
+## Observability limitations
+
+`GET /internal/adapter-profiles/{gatewayProfileId}/observability` currently computes only what Conexus can derive from `gateway_requests`:
+
+- request count
+- error rate
+- latency p95
+- cost per answer
+
+Other metrics are returned as `null` until Conexus records those signals.
+

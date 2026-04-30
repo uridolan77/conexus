@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.internal_adapter_profiles import require_internal_adapter_api_key
@@ -38,7 +38,7 @@ async def get_active_profile(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
             GatewayAdapterProfileActivation.status == "Active",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no active profile for domain")

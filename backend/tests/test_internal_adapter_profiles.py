@@ -124,3 +124,38 @@ async def test_register_adapter_profile_is_idempotent_by_adapterProfileId(client
     finally:
         await agen.aclose()
 
+
+@pytest.mark.asyncio
+async def test_register_duplicate_with_conflicts_returns_existing_without_mutation(
+    client: AsyncClient,
+) -> None:
+    settings.internal_adapter_api_key = "secret"
+    first = await client.post(
+        "/internal/adapter-profiles/register",
+        headers={"X-Internal-Api-Key": "secret"},
+        json={"adapterProfileId": "ap-1", "domainKey": "gaming-crm", "evidenceHash": "h1"},
+    )
+    assert first.status_code == 200
+    gwid = first.json()["gatewayProfileId"]
+
+    second = await client.post(
+        "/internal/adapter-profiles/register",
+        headers={"X-Internal-Api-Key": "secret"},
+        json={"adapterProfileId": "ap-1", "domainKey": "other-domain", "evidenceHash": "h2"},
+    )
+    assert second.status_code == 200
+    assert second.json()["gatewayProfileId"] == gwid
+
+    override = app.dependency_overrides[get_session]
+    agen = override()
+    try:
+        session = await anext(agen)
+        row = await session.scalar(
+            select(GatewayAdapterProfile).where(GatewayAdapterProfile.adapter_profile_id == "ap-1")
+        )
+        assert row is not None
+        # No mutation on duplicates: keep the originally-registered domain.
+        assert row.domain_key == "gaming-crm"
+    finally:
+        await agen.aclose()
+

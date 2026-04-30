@@ -64,9 +64,20 @@ async def _ready_checks() -> tuple[bool, dict[str, bool]]:
         logger.exception("readyz_check_db_failed")
 
     if settings.app_env.lower() == "prod" and settings.adapter_profile_registry_enabled:
-        checks["internal_adapter_api_key"] = bool((settings.internal_adapter_api_key or "").strip())
+        checks["internal_adapter_api_key"] = _internal_adapter_api_key_is_prod_safe(
+            settings.internal_adapter_api_key
+        )
 
     return all(checks.values()), checks
+
+
+def _internal_adapter_api_key_is_prod_safe(value: str | None) -> bool:
+    key = (value or "").strip()
+    if not key:
+        return False
+    if key.lower() == "change-me":
+        return False
+    return len(key) >= 32
 
 
 @router.get("/readyz")

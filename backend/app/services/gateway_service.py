@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 from collections.abc import AsyncIterator
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import (
@@ -114,13 +114,13 @@ async def _resolve_adapter_profile_association(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
             GatewayAdapterProfileActivation.status == "Active",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     canary = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
             GatewayAdapterProfileActivation.status == "Canary",
-        )
+        ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if active is None:
         return (None, None, domain, "domain_only")
