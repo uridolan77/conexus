@@ -20,12 +20,14 @@ import {
   Input,
 } from "@/components/ui";
 import { formatApiError } from "@/lib/api";
+import { formatTokens } from "@/lib/format";
 import {
   buildChatCompletionPayload,
   sendPlaygroundChatCompletion,
   type PlaygroundResult,
 } from "@/lib/admin/playground";
 import type { ChatCompletionsResponse } from "@/lib/types";
+import type { ReactNode } from "react";
 
 function safeString(value: unknown): string | null {
   if (typeof value === "string") return value;
@@ -45,6 +47,89 @@ function safeString(value: unknown): string | null {
 function redactApiKey(text: string, apiKey: string) {
   if (!apiKey) return text;
   return text.split(apiKey).join("[REDACTED]");
+}
+
+function redactSecretsDeep(value: unknown, secrets: string[]): unknown {
+  const activeSecrets = secrets.map((s) => s.trim()).filter(Boolean);
+  if (activeSecrets.length === 0) return value;
+
+  const seen = new WeakMap<object, unknown>();
+
+  function redactString(text: string) {
+    return activeSecrets.reduce(
+      (acc, secret) => acc.split(secret).join("[REDACTED]"),
+      text,
+    );
+  }
+
+  function visit(v: unknown): unknown {
+    if (typeof v === "string") return redactString(v);
+    if (v == null) return v;
+    if (typeof v !== "object") return v;
+
+    const obj = v as object;
+    const cached = seen.get(obj);
+    if (cached !== undefined) return cached;
+
+    if (Array.isArray(v)) {
+      const out: unknown[] = [];
+      seen.set(obj, out);
+      for (const item of v) out.push(visit(item));
+      return out;
+    }
+
+    const rec = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    seen.set(obj, out);
+    for (const [k, val] of Object.entries(rec)) {
+      out[k] = visit(val);
+    }
+    return out;
+  }
+
+  try {
+    return visit(value);
+  } catch {
+    return value;
+  }
+}
+
+type UsageTokens = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+};
+
+function isUsageTokens(value: unknown): value is UsageTokens {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.prompt_tokens === "number" &&
+    typeof obj.completion_tokens === "number" &&
+    typeof obj.total_tokens === "number"
+  );
+}
+
+function renderTokens(value: number | null): ReactNode {
+  if (value == null) return <span className="muted">—</span>;
+  return formatTokens(value);
+}
+
+function parseTemperature(value: string): { ok: true; value?: number } | { ok: false } {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return { ok: false };
+  return { ok: true, value: n };
+}
+
+function parseMaxTokens(value: string): { ok: true; value?: number } | { ok: false } {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true };
+  if (!/^\d+$/.test(trimmed)) return { ok: false };
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n <= 0) return { ok: false };
+  return { ok: true, value: n };
 }
 
 export default function PlaygroundPage() {
@@ -76,7 +161,18 @@ export default function PlaygroundPage() {
   const modelIsEmpty = model.trim().length === 0;
   const userIsEmpty = userMessage.trim().length === 0;
 
-  const canSend = !submitting && !keyIsEmpty && !modelIsEmpty && !userIsEmpty;
+  const temperatureParsed = useMemo(() => parseTemperature(temperature), [temperature]);
+  const maxTokensParsed = useMemo(() => parseMaxTokens(maxTokens), [maxTokens]);
+  const temperatureInvalid = !temperatureParsed.ok;
+  const maxTokensInvalid = !maxTokensParsed.ok;
+
+  const canSend =
+    !submitting &&
+    !keyIsEmpty &&
+    !modelIsEmpty &&
+    !userIsEmpty &&
+    !temperatureInvalid &&
+    !maxTokensInvalid;
 
   const summary = useMemo(() => {
     if (!result?.ok) return null;
@@ -121,6 +217,14 @@ export default function PlaygroundPage() {
       setFormError("User message is required.");
       return;
     }
+    if (temperatureInvalid) {
+      setFormError("Temperature must be a finite number (or empty).");
+      return;
+    }
+    if (maxTokensInvalid) {
+      setFormError("Max tokens must be a positive integer (or empty).");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -150,20 +254,7 @@ export default function PlaygroundPage() {
   const safeRawValue = useMemo(() => {
     if (!result) return null;
     const trimmedKey = apiKey.trim();
-    if (!trimmedKey) return result;
-
-    if (result.ok) {
-      // Ensure we never accidentally include the key in a debug block
-      return result;
-    }
-
-    const errStr = safeString(result.error);
-    if (!errStr) return result;
-
-    return {
-      ...result,
-      error: redactApiKey(errStr, trimmedKey),
-    };
+    return redactSecretsDeep(result, trimmedKey ? [trimmedKey] : []);
   }, [result, apiKey]);
 
   return (
@@ -208,7 +299,7 @@ export default function PlaygroundPage() {
               type={showKey ? "text" : "password"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="cnx_..."
+              placeholder="cx_live_..."
               autoComplete="off"
               spellCheck={false}
             />
@@ -255,6 +346,9 @@ export default function PlaygroundPage() {
                 inputMode="decimal"
                 placeholder="0.2"
               />
+              {temperatureInvalid && (
+                <FieldError>Temperature must be a finite number.</FieldError>
+              )}
             </Field>
             <Field label="Max tokens (optional)" hint="Must be a positive integer.">
               <Input
@@ -263,6 +357,9 @@ export default function PlaygroundPage() {
                 inputMode="numeric"
                 placeholder="256"
               />
+              {maxTokensInvalid && (
+                <FieldError>Max tokens must be a positive integer.</FieldError>
+              )}
             </Field>
           </FormRow>
 
@@ -346,22 +443,22 @@ export default function PlaygroundPage() {
                   {
                     label: "prompt_tokens",
                     value:
-                      summary.usage && typeof (summary.usage as any).prompt_tokens === "number"
-                        ? (summary.usage as any).prompt_tokens
+                      summary.usage && isUsageTokens(summary.usage)
+                        ? renderTokens(summary.usage.prompt_tokens)
                         : <span className="muted">unknown</span>,
                   },
                   {
                     label: "completion_tokens",
                     value:
-                      summary.usage && typeof (summary.usage as any).completion_tokens === "number"
-                        ? (summary.usage as any).completion_tokens
+                      summary.usage && isUsageTokens(summary.usage)
+                        ? renderTokens(summary.usage.completion_tokens)
                         : <span className="muted">unknown</span>,
                   },
                   {
                     label: "total_tokens",
                     value:
-                      summary.usage && typeof (summary.usage as any).total_tokens === "number"
-                        ? (summary.usage as any).total_tokens
+                      summary.usage && isUsageTokens(summary.usage)
+                        ? renderTokens(summary.usage.total_tokens)
                         : <span className="muted">unknown</span>,
                   },
                   { label: "assistant_message", value: <pre>{summary.assistantText}</pre> },
@@ -370,7 +467,9 @@ export default function PlaygroundPage() {
             </div>
           )}
 
-          {safeRawValue && <JsonBlock value={safeRawValue} title="Raw JSON" defaultOpen={false} />}
+          {safeRawValue != null ? (
+            <JsonBlock value={safeRawValue} title="Raw JSON" defaultOpen={false} />
+          ) : null}
         </Card>
       )}
     </>
