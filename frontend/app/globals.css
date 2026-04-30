@@ -615,6 +615,173 @@ pre {
   padding: 4px 6px;
 }
 
+/* ---------------------------------------------------------------------------
+   Navigation groups
+--------------------------------------------------------------------------- */
+
+.nav-section {
+  margin-bottom: var(--space-3);
+}
+
+.nav-group-label {
+  color: var(--color-text-soft);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-1) var(--space-2);
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------------------
+   Progress bar
+--------------------------------------------------------------------------- */
+
+.progress-bar {
+  background: var(--color-border);
+  border-radius: 999px;
+  height: 8px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  background: var(--color-primary);
+  height: 100%;
+  transition: width 0.2s ease;
+}
+
+.progress-bar-fill-danger {
+  background: var(--color-danger);
+}
+
+/* ---------------------------------------------------------------------------
+   Toolbar
+--------------------------------------------------------------------------- */
+
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Filter bar
+--------------------------------------------------------------------------- */
+
+.filter-bar {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* ---------------------------------------------------------------------------
+   Detail drawer
+--------------------------------------------------------------------------- */
+
+.drawer {
+  inset: 0;
+  position: fixed;
+  z-index: 200;
+}
+
+.drawer-backdrop {
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  inset: 0;
+  position: absolute;
+}
+
+.drawer-panel {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 480px;
+  overflow-y: auto;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 90vw;
+}
+
+.drawer-header {
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+}
+
+.drawer-header h3 {
+  margin: 0;
+}
+
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+/* ---------------------------------------------------------------------------
+   Inline code / chip
+--------------------------------------------------------------------------- */
+
+.inline-code {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--font-xs);
+  padding: 2px 6px;
+}
+
+.chip {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  display: inline-block;
+  font-size: var(--font-xs);
+  padding: 2px 8px;
+}
+
+.code-chip {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: var(--font-xs);
+  padding: 2px 6px;
+}
+
+.copyable-code {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Section gap / metric delta
+--------------------------------------------------------------------------- */
+
+.section-gap {
+  margin-top: var(--space-6);
+}
+
+.metric-delta-up {
+  color: var(--color-success);
+}
+
+.metric-delta-down {
+  color: var(--color-danger);
+}
+
+/* ---------------------------------------------------------------------------
+   Auth pages
+--------------------------------------------------------------------------- */
+
 .auth-page {
   display: grid;
   min-height: calc(100vh - 64px);

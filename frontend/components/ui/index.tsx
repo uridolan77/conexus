@@ -6,7 +6,7 @@ import type {
   ComponentPropsWithoutRef,
   ReactNode,
 } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -233,26 +233,6 @@ export function Table({
   );
 }
 
-export function CopyButton({
-  value,
-  label = "Copy",
-}: {
-  value: string;
-  label?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
-  return (
-    <Button type="button" variant="secondary" onClick={copy}>
-      {copied ? "Copied" : label}
-    </Button>
-  );
-}
-
 export function SecretValue({ value }: { value: string }) {
   return <code className="secret-value">{value}</code>;
 }
@@ -353,5 +333,231 @@ export function JsonBlock({
       <summary>{title}</summary>
       <pre>{JSON.stringify(value, null, 2)}</pre>
     </details>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// New primitives
+// ---------------------------------------------------------------------------
+
+export function CopyButton({
+  value,
+  label = "Copy",
+}: {
+  value: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // Fallback for non-secure contexts (tests, older browsers)
+      const el = document.createElement("textarea");
+      el.value = value;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <Button type="button" variant="secondary" onClick={copy}>
+      {copied ? "Copied" : label}
+    </Button>
+  );
+}
+
+export function PageState({
+  loading,
+  loadingLabel,
+  error,
+  empty,
+  emptyTitle,
+  emptyBody,
+  children,
+}: {
+  loading?: boolean;
+  loadingLabel?: string;
+  error?: string | null;
+  empty?: boolean;
+  emptyTitle?: string;
+  emptyBody?: ReactNode;
+  children: ReactNode;
+}) {
+  if (loading) return <LoadingState label={loadingLabel} />;
+  if (error) return <ErrorState message={error} />;
+  if (empty) {
+    return (
+      <EmptyState title={emptyTitle ?? "No data"}>
+        {emptyBody ?? "Nothing to show yet."}
+      </EmptyState>
+    );
+  }
+  return <>{children}</>;
+}
+
+export function Toolbar({ children }: { children: ReactNode }) {
+  return <div className="toolbar">{children}</div>;
+}
+
+export function FilterBar({ children }: { children: ReactNode }) {
+  return <div className="filter-bar">{children}</div>;
+}
+
+export function InlineCode({ children }: { children: ReactNode }) {
+  return <code className="inline-code">{children}</code>;
+}
+
+export function CopyableCode({ value }: { value: string }) {
+  return (
+    <span className="copyable-code">
+      <InlineCode>{value}</InlineCode>
+      <CopyButton value={value} label="Copy" />
+    </span>
+  );
+}
+
+export function RefreshButton({
+  onClick,
+  loading,
+}: {
+  onClick: () => void;
+  loading?: boolean;
+}) {
+  return (
+    <Button type="button" variant="secondary" onClick={onClick} disabled={loading}>
+      {loading ? "Refreshing…" : "↻ Refresh"}
+    </Button>
+  );
+}
+
+export function ConfirmButton({
+  children,
+  message,
+  onConfirm,
+  disabled,
+  variant = "danger",
+}: {
+  children: ReactNode;
+  message: string;
+  onConfirm: () => void;
+  disabled?: boolean;
+  variant?: "danger" | "secondary";
+}) {
+  return (
+    <ConfirmAction
+      message={message}
+      onConfirm={onConfirm}
+      disabled={disabled}
+      variant={variant}
+    >
+      {children}
+    </ConfirmAction>
+  );
+}
+
+export function MetricCard({
+  label,
+  value,
+  hint,
+  delta,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  delta?: { value: string; positive: boolean };
+}) {
+  return (
+    <div className="stat-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {delta && (
+        <small className={delta.positive ? "metric-delta-up" : "metric-delta-down"}>
+          {delta.value}
+        </small>
+      )}
+      {hint && <small>{hint}</small>}
+    </div>
+  );
+}
+
+type DataTableColumn<T> = {
+  key: string;
+  header: string;
+  render: (row: T) => ReactNode;
+};
+
+export function DataTable<T extends { id?: string }>({
+  columns,
+  rows,
+  "aria-label": ariaLabel,
+  getRowKey,
+}: {
+  columns: DataTableColumn<T>[];
+  rows: T[];
+  "aria-label": string;
+  getRowKey?: (row: T, index: number) => string;
+}) {
+  return (
+    <Table aria-label={ariaLabel}>
+      <thead>
+        <tr>
+          {columns.map((col) => (
+            <th key={col.key}>{col.header}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={getRowKey ? getRowKey(row, i) : (row.id ?? i)}>
+            {columns.map((col) => (
+              <td key={col.key}>{col.render(row)}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </Table>
+  );
+}
+
+export function DetailDrawer({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="drawer">
+      <div className="drawer-backdrop" onClick={onClose} aria-hidden="true" />
+      <div className="drawer-panel" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="drawer-header">
+          <h3>{title}</h3>
+          <Button type="button" variant="ghost" onClick={onClose} aria-label="Close drawer">
+            ✕
+          </Button>
+        </div>
+        <div className="drawer-body">{children}</div>
+      </div>
+    </div>
   );
 }
