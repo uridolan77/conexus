@@ -74,15 +74,17 @@ frontend/
 ## Database core tables
 
 ```text
-users
-organizations
 projects
 project_api_keys
-llm_providers
-llm_models
 gateway_requests
-usage_events
+provider_configs
+admin_users
 audit_logs
+project_limits
+project_usage_windows
+project_gateway_limit_reservations
+gateway_adapter_profiles
+gateway_adapter_profile_activations
 ```
 
 ## Design preference
