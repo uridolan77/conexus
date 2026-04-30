@@ -597,3 +597,91 @@ async def test_browser_supplied_roles_are_ignored_for_activate_canary(
     assert captured["json"]["activatedByUserId"] == "admin"
     assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
 
+
+@pytest.mark.asyncio
+async def test_POST_publish_malformed_json_returns_400_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    called = {"n": 0}
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/publish",
+        content=b"{not-json",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["title"] == "Invalid JSON body."
+    assert body["status"] == 400
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_POST_activate_canary_malformed_json_returns_400_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    called = {"n": 0}
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/activate-canary",
+        content=b"[1,2,3]",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["title"] == "Invalid JSON body."
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_POST_rollback_malformed_json_returns_400_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    called = {"n": 0}
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/rollback",
+        content=b"null",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["title"] == "Invalid JSON body."
+    assert called["n"] == 0
+

@@ -119,15 +119,36 @@ def _deployment_identity(admin: AdminSession) -> tuple[str, list[str]]:
     return (user_id, list(_DEPLOYMENT_ROLES))
 
 
-async def _read_json_object(request: Request) -> dict[str, Any]:
+async def _read_deployment_request_json(request: Request) -> dict[str, Any] | JSONResponse:
+    """Parse JSON object from deployment POST bodies.
+
+    Returns 400 ProblemDetails (no upstream proxy) when the body is not valid JSON
+    or is not a JSON object.
+    """
     try:
         body = await request.body()
         if not body:
             return {}
         data = json.loads(body.decode("utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
+    except json.JSONDecodeError:
+        return _problem(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Invalid JSON body.",
+            detail="Request body is not valid JSON.",
+        )
+    except UnicodeDecodeError:
+        return _problem(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Invalid JSON body.",
+            detail="Request body is not valid UTF-8.",
+        )
+    if not isinstance(data, dict):
+        return _problem(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Invalid JSON body.",
+            detail="Request body must be a JSON object.",
+        )
+    return data
 
 
 @router.get("/plans")
@@ -307,7 +328,9 @@ async def publish_profile(
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
-    raw = await _read_json_object(request)
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
     notes = raw.get("notes")
     notes_out: str | None
     if notes is None:
@@ -335,7 +358,9 @@ async def activate_canary(
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
-    raw = await _read_json_object(request)
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
     pct_raw = raw.get("canaryPercent") if "canaryPercent" in raw else raw.get("canary_percent")
     try:
         canary_percent = int(pct_raw) if pct_raw is not None else None
@@ -381,7 +406,9 @@ async def rollback_profile(
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
-    raw = await _read_json_object(request)
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
     reason_raw = raw.get("reason")
     reason = (str(reason_raw).strip() if reason_raw is not None else "") or ""
     if not reason:
