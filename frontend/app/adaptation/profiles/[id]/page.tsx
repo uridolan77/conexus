@@ -22,6 +22,7 @@ import {
   adaptationApi,
   type AdapterProfile,
   type AdapterProfileActivation,
+  type AdapterProfileDeploymentEvent,
   type AdaptationResult,
 } from "@/lib/adaptationApi";
 
@@ -33,11 +34,12 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
   const profileId = params.id;
   const [profile, setProfile] = useState<AdapterProfile | null>(null);
   const [activations, setActivations] = useState<AdapterProfileActivation[]>([]);
+  const [deploymentEvents, setDeploymentEvents] = useState<AdapterProfileDeploymentEvent[]>([]);
   const [activeForDomain, setActiveForDomain] = useState<AdapterProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
   const [deploymentError, setDeploymentError] = useState<AdaptationResult<unknown> | null>(null);
-  const [deploymentSuccess, setDeploymentSuccess] = useState<string | null>(null);
+  const [deploymentSuccess, setDeploymentSuccess] = useState<{ message: string; wasDuplicate?: boolean } | null>(null);
 
   async function loadProfileData(options?: { quiet?: boolean }) {
     const quiet = options?.quiet === true;
@@ -51,6 +53,7 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
     if (!res.ok) {
       setProfile(null);
       setActivations([]);
+      setDeploymentEvents([]);
       setActiveForDomain(null);
       setLastError(res);
       if (!quiet) setLoading(false);
@@ -58,8 +61,12 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
     }
     const p = res.data;
     setProfile(p);
-    const actRes = await adaptationApi.listProfileActivations(profileId);
+    const [actRes, evRes] = await Promise.all([
+      adaptationApi.listProfileActivations(profileId),
+      adaptationApi.listProfileDeploymentEvents(profileId),
+    ]);
     setActivations(actRes.ok ? actRes.data : []);
+    setDeploymentEvents(evRes.ok ? evRes.data : []);
     const dk = p.domainKey?.trim();
     if (dk) {
       const domRes = await adaptationApi.getActiveProfile(dk);
@@ -167,7 +174,10 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
 
           {deploymentSuccess && (
             <Card className="card-muted">
-              <p style={{ margin: 0, color: "var(--color-success)" }}>{deploymentSuccess}</p>
+              <div className="inline-actions">
+                <p style={{ margin: 0, color: "var(--color-success)" }}>{deploymentSuccess.message}</p>
+                {deploymentSuccess.wasDuplicate ? <Badge tone="info">Idempotent replay</Badge> : null}
+              </div>
             </Card>
           )}
           {deploymentError && <AdaptationErrorBanner result={deploymentError} />}
@@ -184,11 +194,47 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
               setDeploymentError(r);
               setDeploymentSuccess(null);
             }}
-            onDeploymentSuccess={(msg) => {
-              setDeploymentSuccess(msg);
+            onDeploymentSuccess={(payload) => {
+              setDeploymentSuccess(payload);
               setDeploymentError(null);
             }}
           />
+
+          <Card>
+            <SectionHeader title="Deployment events" description="Audit trail from the adaptation service (v0.4h)." />
+            {deploymentEvents.length === 0 ? (
+              <EmptyState title="No deployment events">No deployment events were returned for this profile.</EmptyState>
+            ) : (
+              <Table aria-label="Deployment events">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Event</th>
+                    <th>Idempotency key</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deploymentEvents.map((ev, idx) => (
+                    <tr key={ev.id || `${ev.createdAt}-${idx}`}>
+                      <td>{formatDate(ev.createdAt)}</td>
+                      <td>
+                        <code className="wrap-anywhere">{ev.eventType || "—"}</code>
+                      </td>
+                      <td>
+                        {ev.idempotencyKey ? (
+                          <code className="wrap-anywhere">{ev.idempotencyKey}</code>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="truncate">{ev.detail ?? ev.userId ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Card>
 
           <Card>
             <SectionHeader title="Runtime Profile Keys" description="These keys map to runtime config objects (not expanded here in v0.3d)." />

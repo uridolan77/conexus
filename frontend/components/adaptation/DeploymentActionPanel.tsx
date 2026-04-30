@@ -11,6 +11,12 @@ function normStatus(s: string | undefined) {
   return (s ?? "").trim().toLowerCase();
 }
 
+function newDeploymentIdempotencyKey(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function DeploymentActionPanel({
   profile,
   profileId,
@@ -26,7 +32,7 @@ export function DeploymentActionPanel({
   activeForDomain: AdapterProfile | null;
   onRefresh: () => Promise<void>;
   onDeploymentError: (r: AdaptationResult<unknown>) => void;
-  onDeploymentSuccess: (msg: string) => void;
+  onDeploymentSuccess: (payload: { message: string; wasDuplicate?: boolean }) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -49,7 +55,7 @@ export function DeploymentActionPanel({
   const terminal = st === "rolledback" || st === "retired";
 
   async function run(
-    action: () => Promise<AdaptationResult<unknown>>,
+    action: () => Promise<AdaptationResult<{ wasDuplicate?: boolean } & Record<string, unknown>>>,
     success: string,
   ) {
     setBusy(true);
@@ -59,7 +65,8 @@ export function DeploymentActionPanel({
       onDeploymentError(res);
       return;
     }
-    onDeploymentSuccess(success);
+    const dup = res.data.wasDuplicate === true;
+    onDeploymentSuccess({ message: success, wasDuplicate: dup });
     setPublishOpen(false);
     setCanaryOpen(false);
     setPromoteOpen(false);
@@ -205,6 +212,7 @@ export function DeploymentActionPanel({
                           () =>
                             adaptationApi.publishProfile(profileId, {
                               notes: publishNotes.trim() || null,
+                              idempotencyKey: newDeploymentIdempotencyKey(),
                             }),
                           "Profile published.",
                         )
@@ -252,7 +260,11 @@ export function DeploymentActionPanel({
                           return;
                         }
                         void run(
-                          () => adaptationApi.activateCanary(profileId, { canaryPercent: n }),
+                          () =>
+                            adaptationApi.activateCanary(profileId, {
+                              canaryPercent: n,
+                              idempotencyKey: newDeploymentIdempotencyKey(),
+                            }),
                           "Canary activated.",
                         );
                       }}
@@ -287,7 +299,15 @@ export function DeploymentActionPanel({
                     <Button
                       type="button"
                       disabled={busy}
-                      onClick={() => void run(() => adaptationApi.promoteProfile(profileId), "Profile promoted to active.")}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            adaptationApi.promoteProfile(profileId, {
+                              idempotencyKey: newDeploymentIdempotencyKey(),
+                            }),
+                          "Profile promoted to active.",
+                        )
+                      }
                     >
                       Confirm promote
                     </Button>
@@ -321,7 +341,14 @@ export function DeploymentActionPanel({
                           });
                           return;
                         }
-                        void run(() => adaptationApi.rollbackProfile(profileId, { reason: r }), "Rollback requested.");
+                        void run(
+                          () =>
+                            adaptationApi.rollbackProfile(profileId, {
+                              reason: r,
+                              idempotencyKey: newDeploymentIdempotencyKey(),
+                            }),
+                          "Rollback requested.",
+                        );
                       }}
                     >
                       Confirm rollback
@@ -365,7 +392,14 @@ export function DeploymentActionPanel({
                           });
                           return;
                         }
-                        void run(() => adaptationApi.rollbackProfile(profileId, { reason: r }), "Rollback requested.");
+                        void run(
+                          () =>
+                            adaptationApi.rollbackProfile(profileId, {
+                              reason: r,
+                              idempotencyKey: newDeploymentIdempotencyKey(),
+                            }),
+                          "Rollback requested.",
+                        );
                       }}
                     >
                       Confirm rollback

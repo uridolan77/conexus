@@ -53,6 +53,14 @@ def _response_from_upstream(upstream: httpx.Response) -> Response:
     return Response(content=upstream.content, status_code=upstream.status_code, headers=headers)
 
 
+def _idempotency_headers_from_request(request: Request) -> dict[str, str]:
+    """Forward Idempotency-Key from the incoming request when present (safe client-generated keys only)."""
+    raw = request.headers.get("idempotency-key")
+    if raw is None or not str(raw).strip():
+        return {}
+    return {"Idempotency-Key": str(raw).strip()}
+
+
 async def proxy_adaptation_request(
     *,
     method: str,
@@ -60,6 +68,7 @@ async def proxy_adaptation_request(
     request: Request,
     json_body: dict[str, Any] | None = None,
     timeout_seconds: float = 10.0,
+    upstream_headers: dict[str, str] | None = None,
 ) -> Response:
     base = _adaptation_base_url()
     if not base:
@@ -72,10 +81,11 @@ async def proxy_adaptation_request(
     url = f"{base}{upstream_path}"
     params = list(request.query_params.multi_items())
     timeout = httpx.Timeout(timeout_seconds)
+    headers = dict(upstream_headers) if upstream_headers else None
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            upstream = await client.request(method, url, params=params, json=json_body)
+            upstream = await client.request(method, url, params=params, json=json_body, headers=headers)
     except httpx.ReadTimeout:
         return _problem(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -322,6 +332,19 @@ async def list_profile_activations(
     )
 
 
+@router.get("/profiles/{profile_id}/deployment-events")
+async def list_profile_deployment_events(
+    profile_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    request: Request,
+) -> Response:
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path=f"/adapter-profiles/{profile_id}/deployment-events",
+        request=request,
+    )
+
+
 @router.post("/profiles/{profile_id}/publish")
 async def publish_profile(
     profile_id: str,
@@ -349,6 +372,7 @@ async def publish_profile(
             "roles": roles,
             "notes": notes_out,
         },
+        upstream_headers=_idempotency_headers_from_request(request),
     )
 
 
@@ -382,6 +406,7 @@ async def activate_canary(
             "roles": roles,
             "canaryPercent": canary_percent,
         },
+        upstream_headers=_idempotency_headers_from_request(request),
     )
 
 
@@ -391,12 +416,16 @@ async def promote_profile(
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     request: Request,
 ) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
     user_id, roles = _deployment_identity(admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adapter-profiles/{profile_id}/promote",
         request=request,
         json_body={"userId": user_id, "roles": roles},
+        upstream_headers=_idempotency_headers_from_request(request),
     )
 
 
@@ -423,6 +452,7 @@ async def rollback_profile(
         upstream_path=f"/adapter-profiles/{profile_id}/rollback",
         request=request,
         json_body={"userId": user_id, "roles": roles, "reason": reason},
+        upstream_headers=_idempotency_headers_from_request(request),
     )
 
 

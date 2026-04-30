@@ -122,22 +122,36 @@ export type PublishAdapterProfileResult = {
   adapterProfileId: string;
   gatewayProfileId: string;
   status: string;
+  wasDuplicate?: boolean;
 };
 
 export type AdapterProfileActivationResult = {
   activationId: string;
   adapterProfileId: string;
   status: string;
+  wasDuplicate?: boolean;
 };
 
 export type PromoteAdapterProfileResult = {
   adapterProfileId: string;
   status: string;
+  wasDuplicate?: boolean;
 };
 
 export type RollbackAdapterProfileResult = {
   adapterProfileId: string;
   status: string;
+  wasDuplicate?: boolean;
+};
+
+/** Deployment audit events (tolerant DTO; upstream v0.4h). */
+export type AdapterProfileDeploymentEvent = {
+  id: string;
+  eventType: string;
+  createdAt: string;
+  idempotencyKey?: string | null;
+  detail?: string;
+  userId?: string;
 };
 
 export type AdapterProfileActivation = {

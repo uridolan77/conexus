@@ -73,8 +73,25 @@ class _MockAsyncClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
 
-    async def request(self, method: str, url: str, *, params: Any = None, json: Any = None) -> httpx.Response:
-        return self._handler(method=method, url=url, params=params, json=json, timeout=self.timeout)
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Any = None,
+        json: Any = None,
+        headers: Any = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        return self._handler(
+            method=method,
+            url=url,
+            params=params,
+            json=json,
+            headers=headers,
+            timeout=self.timeout,
+            **kwargs,
+        )
 
 
 @pytest.mark.asyncio
@@ -684,4 +701,84 @@ async def test_POST_rollback_malformed_json_returns_400_without_proxy(
     body = response.json()
     assert body["title"] == "Invalid JSON body."
     assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_POST_promote_malformed_json_returns_400_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    called = {"n": 0}
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        called["n"] += 1
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/promote",
+        content=b"oops",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json()["title"] == "Invalid JSON body."
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_GET_profile_deployment_events_forwards_to_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json=[], headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/profiles/p1/deployment-events")
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adapter-profiles/p1/deployment-events")
+
+
+@pytest.mark.asyncio
+async def test_POST_publish_forwards_idempotency_key_to_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/publish",
+        json={"notes": "n"},
+        headers={"Idempotency-Key": "idem-abc-1"},
+    )
+    assert response.status_code == 200
+    hdrs = captured.get("headers")
+    assert hdrs is not None
+    assert hdrs.get("Idempotency-Key") == "idem-abc-1"
 

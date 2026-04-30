@@ -9,6 +9,7 @@ import type {
   AdapterProfile,
   AdapterProfileActivation,
   AdapterProfileActivationResult,
+  AdapterProfileDeploymentEvent,
   AdapterProfileListItem,
   CitationValidationIssue,
   CitationValidationResult,
@@ -430,15 +431,22 @@ export function normalizeActivationList(raw: unknown): AdapterProfileActivation[
   });
 }
 
+function normalizeWasDuplicate(o: Record<string, unknown>): boolean | undefined {
+  const v = bool(o.wasDuplicate) ?? bool(o.was_duplicate);
+  return v === undefined ? undefined : v;
+}
+
 export function normalizePublishResult(raw: unknown): PublishAdapterProfileResult {
   if (!raw || typeof raw !== "object") {
     return { adapterProfileId: "", gatewayProfileId: "", status: "" };
   }
   const o = raw as Record<string, unknown>;
+  const dup = normalizeWasDuplicate(o);
   return {
     adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
     gatewayProfileId: str(o.gatewayProfileId) ?? str(o.gateway_profile_id) ?? "",
     status: str(o.status) ?? "",
+    ...(dup !== undefined ? { wasDuplicate: dup } : {}),
   };
 }
 
@@ -447,10 +455,12 @@ export function normalizeActivationResult(raw: unknown): AdapterProfileActivatio
     return { activationId: "", adapterProfileId: "", status: "" };
   }
   const o = raw as Record<string, unknown>;
+  const dup = normalizeWasDuplicate(o);
   return {
     activationId: str(o.activationId) ?? str(o.activation_id) ?? str(o.id) ?? "",
     adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? "",
     status: str(o.status) ?? "",
+    ...(dup !== undefined ? { wasDuplicate: dup } : {}),
   };
 }
 
@@ -459,9 +469,11 @@ export function normalizePromoteResult(raw: unknown): PromoteAdapterProfileResul
     return { adapterProfileId: "", status: "" };
   }
   const o = raw as Record<string, unknown>;
+  const dup = normalizeWasDuplicate(o);
   return {
     adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
     status: str(o.status) ?? "",
+    ...(dup !== undefined ? { wasDuplicate: dup } : {}),
   };
 }
 
@@ -470,10 +482,29 @@ export function normalizeRollbackResult(raw: unknown): RollbackAdapterProfileRes
     return { adapterProfileId: "", status: "" };
   }
   const o = raw as Record<string, unknown>;
+  const dup = normalizeWasDuplicate(o);
   return {
     adapterProfileId: str(o.adapterProfileId) ?? str(o.adapter_profile_id) ?? str(o.profileId) ?? str(o.profile_id) ?? "",
     status: str(o.status) ?? "",
+    ...(dup !== undefined ? { wasDuplicate: dup } : {}),
   };
+}
+
+export function normalizeDeploymentEventList(raw: unknown): AdapterProfileDeploymentEvent[] {
+  return asItemArray(raw).map((item) => {
+    if (!item || typeof item !== "object") {
+      return { id: "", eventType: "", createdAt: "" };
+    }
+    const o = item as Record<string, unknown>;
+    return {
+      id: str(o.id) ?? str(o.eventId) ?? str(o.event_id) ?? "",
+      eventType: str(o.eventType) ?? str(o.event_type) ?? str(o.type) ?? "",
+      createdAt: str(o.createdAt) ?? str(o.created_at) ?? str(o.timestamp) ?? "",
+      idempotencyKey: str(o.idempotencyKey) ?? str(o.idempotency_key) ?? null,
+      detail: str(o.detail) ?? str(o.message) ?? str(o.description),
+      userId: str(o.userId) ?? str(o.user_id),
+    };
+  });
 }
 
 /** Active profile for domain — same shape as profile list/detail fragment. */

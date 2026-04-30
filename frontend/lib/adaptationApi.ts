@@ -2,6 +2,7 @@ import {
   normalizeActivationList,
   normalizeActivationResult,
   normalizeActiveProfileDetail,
+  normalizeDeploymentEventList,
   normalizeEvaluationEvidence,
   normalizePlanDetail,
   normalizePlanList,
@@ -26,6 +27,7 @@ import type {
   AdapterProfile,
   AdapterProfileActivation,
   AdapterProfileActivationResult,
+  AdapterProfileDeploymentEvent,
   AdapterProfileListItem,
   EvaluationEvidence,
   ProblemDetailsLike,
@@ -52,6 +54,12 @@ function adminUrl(path: string) {
   return `${BACKEND_BASE}${path}`;
 }
 
+function idempotencyHeaders(key: string | undefined): Record<string, string> | undefined {
+  const k = key?.trim();
+  if (!k) return undefined;
+  return { "Idempotency-Key": k };
+}
+
 async function requestAdaptation<T>(
   path: string,
   successParser: (body: unknown) => T,
@@ -63,7 +71,7 @@ async function requestAdaptation<T>(
       cache: "no-store",
       headers: {
         "content-type": "application/json",
-        ...(init?.headers ?? {}),
+        ...(init?.headers as Record<string, string> | undefined),
       },
     });
     if (res.status === 401) {
@@ -143,40 +151,47 @@ export const adaptationApi = {
       normalizeEvaluationEvidence,
     ),
 
-  publishProfile: (profileId: string, input: { notes?: string | null }) =>
+  publishProfile: (profileId: string, input: { notes?: string | null; idempotencyKey?: string }) =>
     requestAdaptation(
       `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/publish`,
       normalizePublishResult,
       {
         method: "POST",
         body: JSON.stringify({ notes: input.notes ?? null }),
+        headers: idempotencyHeaders(input.idempotencyKey),
       },
     ),
 
-  activateCanary: (profileId: string, input: { canaryPercent: number }) =>
+  activateCanary: (profileId: string, input: { canaryPercent: number; idempotencyKey?: string }) =>
     requestAdaptation(
       `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/activate-canary`,
       normalizeActivationResult,
       {
         method: "POST",
         body: JSON.stringify({ canaryPercent: input.canaryPercent }),
+        headers: idempotencyHeaders(input.idempotencyKey),
       },
     ),
 
-  promoteProfile: (profileId: string) =>
+  promoteProfile: (profileId: string, input?: { idempotencyKey?: string }) =>
     requestAdaptation(
       `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/promote`,
       normalizePromoteResult,
-      { method: "POST", body: JSON.stringify({}) },
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: idempotencyHeaders(input?.idempotencyKey),
+      },
     ),
 
-  rollbackProfile: (profileId: string, input: { reason: string }) =>
+  rollbackProfile: (profileId: string, input: { reason: string; idempotencyKey?: string }) =>
     requestAdaptation(
       `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/rollback`,
       normalizeRollbackResult,
       {
         method: "POST",
         body: JSON.stringify({ reason: input.reason }),
+        headers: idempotencyHeaders(input.idempotencyKey),
       },
     ),
 
@@ -191,6 +206,12 @@ export const adaptationApi = {
       `/admin/adaptation/domains/${encodeURIComponent(domainKey)}/active-profile`,
       normalizeActiveProfileDetail,
     ),
+
+  listProfileDeploymentEvents: (profileId: string) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/deployment-events`,
+      normalizeDeploymentEventList,
+    ),
 };
 
 export type {
@@ -203,6 +224,7 @@ export type {
   AdapterProfile,
   AdapterProfileActivation,
   AdapterProfileActivationResult,
+  AdapterProfileDeploymentEvent,
   AdapterProfileListItem,
   EvaluationEvidence,
   ProblemDetailsLike,
