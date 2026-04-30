@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -329,10 +329,11 @@ async def post_repair_limit_reservation_dry_run(
 @router.post("/limits/reservations/{reservation_id}/repair", response_model=ReservationRepairResponse)
 async def post_repair_limit_reservation(
     reservation_id: str,
-    body: ReservationRepairBody,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    body: ReservationRepairBody | None = Body(default=None),
 ) -> ReservationRepairResponse:
+    reason = body.reason if body else None
     now = datetime.now(timezone.utc)
     result = await repair_stale_reservation(
         session, reservation_id=reservation_id, mode="apply", now=now
@@ -350,7 +351,7 @@ async def post_repair_limit_reservation(
         action=audit_action,
         resource_type="project_gateway_limit_reservation",
         resource_id=reservation_id,
-        metadata=_repair_audit_metadata(result, reason=body.reason),
+        metadata=_repair_audit_metadata(result, reason=reason),
     )
     return _repair_to_response(result)
 

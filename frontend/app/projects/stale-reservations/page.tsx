@@ -13,7 +13,7 @@ import {
   SectionHeader,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatDate } from "@/lib/api";
 import type {
   ReservationRepairResponse,
   StaleReservationItem,
@@ -32,6 +32,20 @@ function formatAge(seconds: number) {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
+/** Rows that need extra judgment (in-flight / below force age), vs safe auto-repair paths. */
+function rowNeedsManualReview(row: StaleReservationItem): boolean {
+  if (row.recommended_action === "manual_review" || row.recommended_action === "hold") {
+    return true;
+  }
+  if (
+    row.repair_kind === "gateway_request_started_but_not_completed" &&
+    row.recommended_action !== "reconcile_from_request"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function StaleReservationsContent() {
   const searchParams = useSearchParams();
   const projectFilter = searchParams.get("project_id");
@@ -40,6 +54,7 @@ function StaleReservationsContent() {
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<ReservationRepairResponse | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,6 +71,7 @@ function StaleReservationsContent() {
         return;
       }
       setData((await res.json()) as StaleReservationsList);
+      setLastRefreshedAt(new Date().toISOString());
     } finally {
       setLoading(false);
     }
@@ -91,13 +107,7 @@ function StaleReservationsContent() {
     try {
       const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/limits/reservations/${reservationId}/repair`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            reason: "stale reservation repair from back office",
-          }),
-        },
+        { method: "POST" },
       );
       if (!res.ok) {
         setError("Repair failed.");
@@ -146,12 +156,23 @@ function StaleReservationsContent() {
         <Card>
           <SectionHeader
             title="Summary"
-            description={`Threshold: older than ${data.older_than_seconds}s (UTC ${data.now}). Total matching: ${data.total_count}.`}
+            description={`Threshold: older than ${data.older_than_seconds}s. Total matching: ${data.total_count}.`}
           />
-          <p className="muted">
-            Oldest stale age:{" "}
-            {data.oldest_age_seconds == null ? "—" : formatAge(data.oldest_age_seconds)}
-          </p>
+          <div className="muted stack-tight" style={{ fontSize: "var(--font-sm)" }}>
+            <p>
+              API clock (UTC): <strong>{formatDate(data.now)}</strong>
+            </p>
+            <p>
+              Last refreshed (browser):{" "}
+              <strong>
+                {lastRefreshedAt == null ? "—" : formatDate(lastRefreshedAt)}
+              </strong>
+            </p>
+            <p>
+              Oldest stale age:{" "}
+              {data.oldest_age_seconds == null ? "—" : formatAge(data.oldest_age_seconds)}
+            </p>
+          </div>
         </Card>
       ) : null}
 
@@ -179,41 +200,60 @@ function StaleReservationsContent() {
               </tr>
             </thead>
             <tbody>
-              {items.map((row) => (
-                <tr key={row.reservation_id}>
-                  <td>
-                    <code>{row.project_id}</code>
-                  </td>
-                  <td>
-                    <code>{row.reservation_id}</code>
-                  </td>
-                  <td>{formatAge(row.age_seconds)}</td>
-                  <td>{row.request_slots}</td>
-                  <td>{row.tokens_reserved.toLocaleString()}</td>
-                  <td>{formatUsd(row.cost_reserved)}</td>
-                  <td>{row.gateway_request_status ?? "—"}</td>
-                  <td>{row.recommended_action}</td>
-                  <td>
-                    <div className="inline-actions">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={acting !== null}
-                        onClick={() => void dryRun(row.reservation_id)}
-                      >
-                        {acting === `${row.reservation_id}:dry` ? "…" : "Dry-run"}
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={acting !== null}
-                        onClick={() => void applyRepair(row.reservation_id)}
-                      >
-                        {acting === `${row.reservation_id}:apply` ? "…" : "Repair"}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {items.map((row) => {
+                const pending = acting !== null || loading;
+                const review = rowNeedsManualReview(row);
+                return (
+                  <tr
+                    key={row.reservation_id}
+                    className={review ? "row-warning" : undefined}
+                    title={
+                      review
+                        ? "Manual review: started/incomplete or below force-repair age. Dry-run is safe; repair may skip or force-fail per policy."
+                        : undefined
+                    }
+                  >
+                    <td>
+                      <code>{row.project_id}</code>
+                    </td>
+                    <td>
+                      <code>{row.reservation_id}</code>
+                    </td>
+                    <td>{formatAge(row.age_seconds)}</td>
+                    <td>{row.request_slots}</td>
+                    <td>{row.tokens_reserved.toLocaleString()}</td>
+                    <td>{formatUsd(row.cost_reserved)}</td>
+                    <td>{row.gateway_request_status ?? "—"}</td>
+                    <td>
+                      {row.recommended_action}
+                      {review ? (
+                        <span className="muted" style={{ display: "block", fontSize: "var(--font-xs)" }}>
+                          {row.repair_kind.replace(/_/g, " ")}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td>
+                      <div className="inline-actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={pending}
+                          onClick={() => void dryRun(row.reservation_id)}
+                        >
+                          {acting === `${row.reservation_id}:dry` ? "…" : "Dry-run"}
+                        </Button>
+                        <Button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => void applyRepair(row.reservation_id)}
+                        >
+                          {acting === `${row.reservation_id}:apply` ? "…" : "Repair"}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </Table>
         </Card>
