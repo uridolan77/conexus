@@ -216,6 +216,48 @@ export type ProviderCandidate = {
   last_tested_at: string | null;
 };
 
+export type GatewayAdapterProfileRow = {
+  gateway_profile_id: string;
+  adapter_profile_id: string;
+  domain_key: string;
+  status: string;
+  composite_score: number | null;
+  profile_version: string | null;
+  evidence_hash: string | null;
+  semantic_context_hash: string | null;
+  slod_model_version: string | null;
+  created_at: string;
+};
+
+export type GatewayAdapterProfileDetail = GatewayAdapterProfileRow & {
+  source_run_id: string | null;
+  source_plan_id: string | null;
+  metadata: unknown | null;
+  updated_at: string;
+  published_at: string | null;
+};
+
+export type GatewayAdapterProfileActivationRow = {
+  id: string;
+  domain_key: string;
+  gateway_profile_id: string;
+  status: string;
+  canary_percent: number | null;
+  previous_gateway_profile_id: string | null;
+  created_at: string;
+  activated_at: string | null;
+  promoted_at: string | null;
+  rolled_back_at: string | null;
+  metadata: unknown | null;
+};
+
+export type GatewayAdapterProfileListResponse = {
+  items: GatewayAdapterProfileRow[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
 export type ChatCompletionsResponse = {
   id: string;
   model: string;

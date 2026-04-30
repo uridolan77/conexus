@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from app.api import (
     admin_adaptation,
     admin_adapter_profiles,
+    admin_adapter_profiles_registry,
     admin_audit,
     admin_auth,
     admin_project_limits,
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_auth.router)
     app.include_router(admin_adaptation.router)
     app.include_router(admin_adapter_profiles.router)
+    app.include_router(admin_adapter_profiles_registry.router)
     app.include_router(admin_audit.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
