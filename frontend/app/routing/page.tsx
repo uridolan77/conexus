@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Badge,
   Card,
   EmptyState,
@@ -12,42 +13,49 @@ import {
   SectionHeader,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 import type { ProviderCandidate, RoutingPolicy } from "@/lib/types";
+import { getProviderCandidates, getRoutingPolicy } from "@/lib/admin/routing";
 
 export default function RoutingPage() {
   const [policy, setPolicy] = useState<RoutingPolicy | null>(null);
   const [candidates, setCandidates] = useState<ProviderCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadPolicy() {
       setLoading(true);
       setError(null);
+      setWarning(null);
       try {
         const [policyRes, candidatesRes] = await Promise.all([
-          adminSessionFetch(`${BACKEND_BASE}/admin/routing/policy`, {
-            cache: "no-store",
-          }),
-          adminSessionFetch(`${BACKEND_BASE}/admin/routing/provider-candidates`, {
-            cache: "no-store",
-          }),
+          getRoutingPolicy(),
+          getProviderCandidates(),
         ]);
-        const [policyBody, candidatesBody] = await Promise.all([
-          readJsonSafe(policyRes),
-          readJsonSafe(candidatesRes),
-        ]);
+
         if (!policyRes.ok) {
-          setError(formatApiError(policyBody));
+          setError(policyRes.error.message);
           return;
         }
+        setPolicy(policyRes.data);
+
         if (!candidatesRes.ok) {
-          setError(formatApiError(candidatesBody));
+          setCandidates([]);
+          setWarning(
+            "Provider candidates could not be loaded. BO provider configs may not fully drive runtime provider selection yet. Verify backend wiring before production.",
+          );
           return;
         }
-        setPolicy(policyBody as RoutingPolicy);
-        setCandidates(candidatesBody as ProviderCandidate[]);
+        setCandidates(candidatesRes.data);
+
+        const hasEnvCandidate = candidatesRes.data.some((c) => c.source === "env");
+        const hasNoCandidates = candidatesRes.data.length === 0;
+        if (hasEnvCandidate || hasNoCandidates) {
+          setWarning(
+            "BO provider configs may not fully drive runtime provider selection yet. Verify backend wiring before production.",
+          );
+        }
       } catch {
         setError("Unable to load routing policy. Check that the backend is reachable.");
       } finally {
@@ -67,6 +75,7 @@ export default function RoutingPage() {
       />
 
       {error && <ErrorState message={error} />}
+      {warning && <Alert tone="warning">{warning}</Alert>}
 
       {loading ? (
         <Card>
