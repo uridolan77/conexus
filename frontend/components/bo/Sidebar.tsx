@@ -44,6 +44,26 @@ const links = [
     label: "Smoke Tests",
     description: "End-to-end checks",
   },
+  {
+    href: "/adaptation/plans",
+    label: "Adaptation Plans",
+    description: "Review and approve plans",
+  },
+  {
+    href: "/adaptation/runs",
+    label: "Adaptation Runs",
+    description: "Inspect run progress and artifacts",
+  },
+  {
+    href: "/adaptation/queue",
+    label: "Adaptation Queue",
+    description: "Diagnostics and repair tools",
+  },
+  {
+    href: "/adaptation/profiles",
+    label: "Adaptation Profiles",
+    description: "Review produced adapter profiles",
+  },
 ];
 
 export function Sidebar({ environment }: { environment: string }) {

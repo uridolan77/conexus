@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -119,6 +120,19 @@ async def test_routing_policy_describes_current_static_aliases(
 
 
 @pytest.mark.asyncio
+async def test_missing_model_alias_config_fails_clearly(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _login(client)
+    monkeypatch.setattr(settings, "model_aliases_path", str(Path("does-not-exist.yaml")))
+
+    response = await client.get("/admin/routing/policy")
+    # We don't define a bespoke error mapping for config failures yet; this is
+    # a guard that the error is not silently swallowed.
+    assert response.status_code >= 500
+
+
+@pytest.mark.asyncio
 async def test_provider_candidates_include_active_configs_and_env_fallback(
     client: AsyncClient,
     db_sessionmaker,
@@ -180,3 +194,25 @@ async def test_provider_candidates_include_active_configs_and_env_fallback(
     _assert_no_secret_fields(body)
     assert "sk-env-secret" not in response.text
     assert "encrypted-secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_model_aliases_endpoint_requires_admin_auth(client: AsyncClient) -> None:
+    res = await client.get("/admin/routing/model-aliases")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_model_aliases_endpoint_returns_current_aliases_and_prefixes(
+    client: AsyncClient,
+) -> None:
+    await _login(client)
+    res = await client.get("/admin/routing/model-aliases")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["default_primary_model"]
+    assert body["default_fallback_model"]
+    assert "conexus-default" in body["aliases"]
+    assert "conexus-fast" in body["aliases"]
+    assert "known_provider_prefixes" in body
+    _assert_no_secret_fields(body)

@@ -19,8 +19,16 @@ from __future__ import annotations
 import logging
 
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from app.core.config import settings
+from app.llm.model_alias_config import (
+    CONCRETE_ANTHROPIC_PREFIXES,
+    CONCRETE_OPENAI_PREFIXES,
+    ModelAliasConfig,
+    load_model_alias_config,
+    match_alias_models,
+)
 from app.llm.anthropic_adapter import (
     ANTHROPIC_FAILOVER_ERRORS,
     AnthropicProvider,
@@ -37,37 +45,40 @@ from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk
 
 logger = logging.getLogger(__name__)
 
-# Default model alias resolution. Can be overridden by passing an explicit
-# model name into ``chat()``. Aliases let clients ask for ``conexus-fast``
-# without knowing whether Anthropic or OpenAI served it.
-DEFAULT_PRIMARY_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_FALLBACK_MODEL = "gpt-4o"
-
-_MODEL_ALIASES: dict[str, tuple[str, str]] = {
-    # alias -> (anthropic_model, openai_model)
-    "conexus-fast": ("claude-haiku-4-5-20251001", "gpt-4o-mini"),
-    "conexus-default": (DEFAULT_PRIMARY_MODEL, DEFAULT_FALLBACK_MODEL),
-}
+_MODEL_ALIAS_CONFIG: ModelAliasConfig | None = None
 
 
-_KNOWN_ANTHROPIC_PREFIXES = ("claude-", "anthropic-")
-_KNOWN_OPENAI_PREFIXES = ("gpt-", "o1-", "openai-")
+_Route = Literal["gateway", "anthropic_only", "openai_only"]
 
 
-_Route = str  # "gateway" | "anthropic_only" | "openai_only"
+def _get_alias_config() -> ModelAliasConfig:
+    global _MODEL_ALIAS_CONFIG
+    if _MODEL_ALIAS_CONFIG is None:
+        _MODEL_ALIAS_CONFIG = load_model_alias_config(settings.model_aliases_path)
+    return _MODEL_ALIAS_CONFIG
+
+
+def _reset_model_alias_config_for_tests() -> None:
+    global _MODEL_ALIAS_CONFIG
+    _MODEL_ALIAS_CONFIG = None
 
 
 def get_model_aliases() -> dict[str, tuple[str, str]]:
     """Return a copy of current alias -> provider model mappings."""
-    return dict(_MODEL_ALIASES)
+    return dict(_get_alias_config().aliases)
 
 
 def get_known_provider_prefixes() -> dict[str, tuple[str, ...]]:
     """Return concrete-model prefixes that bypass alias routing."""
     return {
-        "anthropic": _KNOWN_ANTHROPIC_PREFIXES,
-        "openai": _KNOWN_OPENAI_PREFIXES,
+        "anthropic": CONCRETE_ANTHROPIC_PREFIXES,
+        "openai": CONCRETE_OPENAI_PREFIXES,
     }
+
+
+def get_model_alias_config() -> ModelAliasConfig:
+    """Shared alias config (same cache as gateway routing)."""
+    return _get_alias_config()
 
 
 def _resolve_models(model: str) -> tuple[_Route, str, str]:
@@ -77,17 +88,24 @@ def _resolve_models(model: str) -> tuple[_Route, str, str]:
     alias nor a recognised provider prefix — typos must not silently fall
     through to default models.
     """
-    if model in _MODEL_ALIASES:
-        anthropic_model, openai_model = _MODEL_ALIASES[model]
+    cfg = _get_alias_config()
+    pair = match_alias_models(cfg, model)
+    if pair is not None:
+        anthropic_model, openai_model = pair
         return "gateway", anthropic_model, openai_model
-    if model.startswith(_KNOWN_ANTHROPIC_PREFIXES):
+    m = model.strip()
+    if m.startswith(CONCRETE_ANTHROPIC_PREFIXES):
         # Concrete Anthropic model: do not attempt OpenAI unless the client
         # explicitly asked for a Conexus alias.
-        return "anthropic_only", model, DEFAULT_FALLBACK_MODEL
-    if model.startswith(_KNOWN_OPENAI_PREFIXES):
+        return "anthropic_only", m, cfg.default_fallback_model
+    if m.startswith(CONCRETE_OPENAI_PREFIXES):
         # Concrete OpenAI model: bypass Anthropic entirely.
-        return "openai_only", DEFAULT_PRIMARY_MODEL, model
-    raise UnknownModelError(model, known_aliases=list(_MODEL_ALIASES))
+        return "openai_only", cfg.default_primary_model, m
+    raise UnknownModelError(
+        model,
+        known_aliases=list(cfg.aliases),
+        provider_prefixes=get_known_provider_prefixes(),
+    )
 
 
 class GatewayProvider(LLMProvider):

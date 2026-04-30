@@ -6,6 +6,8 @@ Keep settings flat for v1; nest them once we have many provider/budget knobs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,6 +33,22 @@ class Settings(BaseSettings):
     frontend_base_url: str = Field(
         default="http://localhost:3000", alias="FRONTEND_BASE_URL"
     )
+    adaptation_api_base_url: str | None = Field(
+        default=None, alias="ADAPTATION_API_BASE_URL"
+    )
+
+    internal_adapter_api_key: str | None = Field(default=None, alias="INTERNAL_ADAPTER_API_KEY")
+
+    adapter_profile_registry_enabled: bool = Field(
+        default=True, alias="ADAPTER_PROFILE_REGISTRY_ENABLED"
+    )
+    adapter_profile_canary_routing_enabled: bool = Field(
+        default=False, alias="ADAPTER_PROFILE_CANARY_ROUTING_ENABLED"
+    )
+
+    adapter_profile_observability_enabled: bool = Field(
+        default=True, alias="ADAPTER_PROFILE_OBSERVABILITY_ENABLED"
+    )
 
     cors_allowed_origins: str | None = Field(default=None, alias="CORS_ALLOWED_ORIGINS")
     frontend_origins: str | None = Field(default=None, alias="FRONTEND_ORIGINS")
@@ -51,6 +69,96 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
     llm_provider: str = Field(default="gateway", alias="LLM_PROVIDER")
+
+    llm_request_timeout_seconds: int = Field(
+        default=60, alias="LLM_REQUEST_TIMEOUT_SECONDS", ge=1
+    )
+    llm_stream_timeout_seconds: int = Field(
+        default=180, alias="LLM_STREAM_TIMEOUT_SECONDS", ge=1
+    )
+
+    # Stale limit reservation repair (v0.8): classify unreconciled rows older than this.
+    limit_reservation_stale_after_seconds: int = Field(
+        default=900, alias="LIMIT_RESERVATION_STALE_AFTER_SECONDS", ge=60
+    )
+    # After this age, "started but not completed" reservations may be force-repaired as failed.
+    limit_reservation_force_repair_after_seconds: int = Field(
+        default=3600, alias="LIMIT_RESERVATION_FORCE_REPAIR_AFTER_SECONDS", ge=300
+    )
+
+    admin_login_max_failures: int = Field(default=5, alias="ADMIN_LOGIN_MAX_FAILURES", ge=1)
+    admin_login_window_seconds: int = Field(
+        default=600, alias="ADMIN_LOGIN_WINDOW_SECONDS", ge=30
+    )
+    # Only ``in_memory`` is implemented; values other than ``in_memory`` are rejected at
+    # validation time. Redis/distributed limiting is not wired yet.
+    admin_login_rate_limit_backend: str = Field(
+        default="in_memory",
+        alias="ADMIN_LOGIN_RATE_LIMIT_BACKEND",
+        description='Login rate limit store: only "in_memory" is supported today.',
+    )
+
+    model_aliases_path: str = Field(
+        default_factory=lambda: str(
+            Path(__file__).resolve().parents[2] / "static_config" / "model_aliases.yaml"
+        ),
+        alias="MODEL_ALIASES_PATH",
+    )
+
+    @field_validator("model_aliases_path", mode="before")
+    @classmethod
+    def _resolve_model_aliases_path(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("MODEL_ALIASES_PATH must be a string")
+        raw = value.strip()
+        if not raw:
+            raise ValueError("MODEL_ALIASES_PATH must not be empty")
+        p = Path(raw)
+        if p.is_absolute():
+            return str(p)
+
+        # Support common relative values from `.env` like:
+        # - backend/static_config/model_aliases.yaml (repo-root relative)
+        # - static_config/model_aliases.yaml (backend-root relative)
+        backend_root = Path(__file__).resolve().parents[2]  # .../backend
+        repo_root = backend_root.parent  # .../conexus
+
+        candidates = [
+            (repo_root / p),
+            (backend_root / p),
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        # Fall back to repo-root relative (helps error messages be stable)
+        return str(repo_root / p)
+
+    @field_validator("admin_login_rate_limit_backend", mode="before")
+    @classmethod
+    def _normalize_admin_login_rate_limit_backend(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("ADMIN_LOGIN_RATE_LIMIT_BACKEND must be a string")
+        return value.strip().lower()
+
+    @field_validator("admin_username")
+    @classmethod
+    def _validate_admin_username_no_pipe(cls, value: str) -> str:
+        if "|" in value:
+            raise ValueError(
+                "ADMIN_USERNAME must not contain '|' (reserved for admin session token encoding)"
+            )
+        return value
+
+    @field_validator("admin_login_rate_limit_backend")
+    @classmethod
+    def _validate_admin_login_rate_limit_backend(cls, value: str) -> str:
+        allowed = {"in_memory"}  # extend with ``redis`` when implemented
+        if value not in allowed:
+            raise ValueError(
+                'ADMIN_LOGIN_RATE_LIMIT_BACKEND must be "in_memory" '
+                "(distributed backends are not wired yet)"
+            )
+        return value
 
     @field_validator("cookie_samesite", mode="before")
     @classmethod

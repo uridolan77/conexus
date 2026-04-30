@@ -278,6 +278,9 @@ async def test_successful_mutations_write_audit_rows_and_no_secrets_leak(
     ]:
         assert required in actions
 
+    # Auth events should also be audited.
+    assert "admin.login" in actions
+
     # Ensure no sensitive values appear in the audit response.
     audit_text = audit.text
     assert provider_secret not in audit_text
@@ -293,6 +296,47 @@ async def test_successful_mutations_write_audit_rows_and_no_secrets_leak(
         assert provider_secret not in combined
         assert plaintext_key not in combined
         assert "secret_hash" not in combined
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_is_audited(client: AsyncClient) -> None:
+    await _login_env_admin(client)
+    logout = await client.post("/admin/auth/logout")
+    assert logout.status_code == 200
+
+    # Logout clears the admin session cookie; log in again to view audit logs.
+    await _login_env_admin(client)
+    audit = await client.get("/admin/audit?limit=200&offset=0&action=admin.logout")
+    assert audit.status_code == 200
+    body = audit.json()
+    assert body["items"]
+
+
+@pytest.mark.asyncio
+async def test_admin_login_failure_and_rate_limited_are_audited(
+    client: AsyncClient, db_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "admin_login_max_failures", 1)
+    monkeypatch.setattr(settings, "admin_login_window_seconds", 600)
+
+    bad = await client.post("/admin/auth/login", json={"username": "admin", "password": "wrong"})
+    assert bad.status_code == 429
+
+    # When locked out, correct credentials must also remain blocked; verify audit via DB.
+    async with db_sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(models.AuditLog)
+                    .where(models.AuditLog.action == "admin.login")
+                    .order_by(models.AuditLog.created_at.desc())
+                    .limit(10)
+                )
+            ).scalars()
+        )
+        assert rows
+        combined = "\n".join([r.metadata_json or "" for r in rows])
+        assert "rate_limited" in combined
 
 
 @pytest.mark.asyncio

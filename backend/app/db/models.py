@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -50,6 +51,7 @@ class AdminUser(Base):
     username: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    roles_json: Mapped[str] = mapped_column(Text, nullable=False, default='["Admin"]')
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
@@ -90,6 +92,70 @@ class Project(Base):
 
     api_keys: Mapped[list[ProjectApiKey]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectUsageWindow(Base):
+    """Aggregated reserved/completed usage per UTC window for strict limit admission."""
+
+    __tablename__ = "project_usage_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "window_kind",
+            "window_start_utc",
+            name="uq_project_usage_windows_project_kind_start",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    window_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    window_start_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    window_end_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    request_count_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_count_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_count_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_reserved: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cost_completed: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ProjectGatewayLimitReservation(Base):
+    """Per-gateway-call reservation snapshot for reconcile after provider completes."""
+
+    __tablename__ = "project_gateway_limit_reservations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    daily_window_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("project_usage_windows.id"), nullable=False
+    )
+    monthly_window_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("project_usage_windows.id"), nullable=True
+    )
+    request_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tokens_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_reserved: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
 
@@ -178,12 +244,58 @@ class GatewayRequest(Base):
     fallback_used: Mapped[bool] = mapped_column(default=False, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gateway_profile_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    adapter_profile_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    domain_key: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    adaptation_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    limit_reservation_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("project_gateway_limit_reservations.id"), nullable=True
+    )
+
+
+class GatewayAdapterProfile(Base):
+    __tablename__ = "gateway_adapter_profiles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    gateway_profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    adapter_profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    domain_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    profile_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="Registered", index=True)
+    source_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_plan_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    composite_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    semantic_context_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    slod_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GatewayAdapterProfileActivation(Base):
+    __tablename__ = "gateway_adapter_profile_activations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    domain_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    gateway_profile_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    canary_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    previous_gateway_profile_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ProviderConfig(Base):

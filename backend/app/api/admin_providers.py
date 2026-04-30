@@ -21,7 +21,8 @@ from app.services.provider_config_service import (
     test_provider_config,
 )
 from app.services.audit_service import log_admin_action, sanitize_audit_text
-from app.llm.gateway_router import DEFAULT_PRIMARY_MODEL
+from app.core.config import settings
+from app.llm.model_alias_config import ModelAliasConfig, load_model_alias_config
 
 router = APIRouter(prefix="/admin/providers", tags=["admin"])
 
@@ -75,7 +76,8 @@ def _to_view(row: ProviderConfig) -> ProviderConfigView:
 def _default_model(provider: str) -> str:
     if provider == "openai":
         return "gpt-4o-mini"
-    return DEFAULT_PRIMARY_MODEL
+    cfg: ModelAliasConfig = load_model_alias_config(settings.model_aliases_path)
+    return cfg.default_primary_model
 
 
 @router.get("", response_model=list[ProviderConfigView])

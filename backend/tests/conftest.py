@@ -38,7 +38,9 @@ def _no_retry_wait():
 
     targets = (
         openai_adapter._retried_openai_create,
+        openai_adapter._retried_openai_stream,
         anthropic_adapter._retried_anthropic_create,
+        anthropic_adapter._retried_anthropic_stream_begin,
     )
     originals = [t.retry.wait for t in targets]
     for t in targets:
@@ -75,3 +77,21 @@ def _reset_settings_overrides():
         yield
     finally:
         settings.allow_env_admin_fallback = original_allow_env_admin_fallback
+
+
+@pytest.fixture(autouse=True)
+def _reset_model_alias_config_cache():
+    from app.llm.gateway_router import _reset_model_alias_config_for_tests
+
+    _reset_model_alias_config_for_tests()
+    yield
+    _reset_model_alias_config_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_admin_login_rate_limiter():
+    from app.services.admin_login_rate_limiter import reset_admin_login_rate_limiter_for_tests
+
+    reset_admin_login_rate_limiter_for_tests()
+    yield
+    reset_admin_login_rate_limiter_for_tests()

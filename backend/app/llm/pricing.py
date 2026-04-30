@@ -21,6 +21,8 @@ from pathlib import Path
 
 import yaml
 
+from app.llm.model_alias_config import ModelAliasConfig, resolve_pricing_model_candidates
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PRICING_PATH = (
@@ -79,3 +81,53 @@ def get_cost(model: str, input_tokens: int, output_tokens: int) -> float:
         model, (_FALLBACK_INPUT_PER_1M, _FALLBACK_OUTPUT_PER_1M)
     )
     return (input_tokens * inp_price + output_tokens * out_price) / 1_000_000
+
+
+def model_has_explicit_rates(model: str) -> bool:
+    """True if *model* appears in the loaded pricing table (not only fallback defaults)."""
+    _ensure_loaded()
+    return model in _pricing_cache
+
+
+def estimate_reservation_cost_usd(model: str, reserved_total_tokens: int) -> float | None:
+    """Upper-bound style USD estimate for admission when *reserved_total_tokens* is a budget cap.
+
+    Uses known rates only. Returns ``None`` if the model is not in the pricing table
+    (hard monthly cost limits must then block — see gateway reservation policy).
+    """
+    if reserved_total_tokens <= 0:
+        return 0.0
+    if not model_has_explicit_rates(model):
+        return None
+    # Conservative: price all reserved tokens at output-token rates.
+    return get_cost(model, 0, reserved_total_tokens)
+
+
+def estimate_hard_monthly_reservation_cost_usd(
+    requested_model: str,
+    reserved_total_tokens: int,
+    *,
+    alias_cfg: ModelAliasConfig,
+) -> float | None:
+    """Monthly hard-cap reservation: explicit requested model keeps single-model estimate.
+
+    If the requested name is not in the pricing table, expand Conexus aliases to
+    underlying Anthropic/OpenAI models and take the **maximum** per-candidate
+    reservation estimate (most conservative). If any candidate lacks explicit
+    pricing, return ``None`` (block with ``pricing_unavailable_for_hard_cost_limit``).
+    """
+    _ensure_loaded()
+    if reserved_total_tokens <= 0:
+        return 0.0
+    rm = requested_model.strip()
+    if model_has_explicit_rates(rm):
+        return estimate_reservation_cost_usd(rm, reserved_total_tokens)
+
+    candidates = resolve_pricing_model_candidates(requested_model, alias_cfg)
+    max_est: float | None = None
+    for c in candidates:
+        est = estimate_reservation_cost_usd(c, reserved_total_tokens)
+        if est is None:
+            return None
+        max_est = est if max_est is None else max(max_est, est)
+    return max_est

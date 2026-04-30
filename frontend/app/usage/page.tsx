@@ -14,7 +14,7 @@ import {
   StatCard,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
 import type {
   UsageBreakdownResponse,
   UsageProjectRow,
@@ -63,33 +63,19 @@ export default function UsagePage() {
       try {
         const params = new URLSearchParams({ window: windowValue });
         const [summaryRes, projectRes, providerRes, timeseriesRes] = await Promise.all([
-          fetch(`${BACKEND_BASE}/admin/usage/summary?${params.toString()}`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/usage/summary?${params.toString()}`, {
             cache: "no-store",
           }),
-          fetch(`${BACKEND_BASE}/admin/usage/by-project?${params.toString()}`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/usage/by-project?${params.toString()}`, {
             cache: "no-store",
           }),
-          fetch(`${BACKEND_BASE}/admin/usage/by-provider?${params.toString()}`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/usage/by-provider?${params.toString()}`, {
             cache: "no-store",
           }),
-          fetch(`${BACKEND_BASE}/admin/usage/timeseries?${params.toString()}`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/usage/timeseries?${params.toString()}`, {
             cache: "no-store",
           }),
         ]);
-
-        if (
-          summaryRes.status === 401 ||
-          projectRes.status === 401 ||
-          providerRes.status === 401 ||
-          timeseriesRes.status === 401
-        ) {
-          window.location.href = "/login";
-          return;
-        }
 
         const [summaryBody, projectBody, providerBody, timeseriesBody] = await Promise.all([
           readJsonSafe(summaryRes),

@@ -24,3 +24,4 @@ npm-debug.log*
 # Build artifacts
 dist/
 build/
+frontend/tsconfig.tsbuildinfo

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db import models
 from app.db.session import get_session
 from app.main import app
+from app.services.project_limit_reservation_service import reserve_gateway_request
 
 
 @pytest_asyncio.fixture
@@ -151,4 +155,110 @@ async def test_get_limits_usage_returns_daily_and_monthly_windows(
     assert body["monthly"]["window"] == "utc_month"
     assert body["monthly"]["estimated_cost"] == 0.0
     assert body["monthly"]["currency"] == "USD"
+
+
+@pytest.mark.asyncio
+async def test_get_limits_reservations_null_when_no_usage_windows(
+    client: AsyncClient,
+) -> None:
+    await _login(client)
+    created = await client.post("/admin/projects", json={"name": "p"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/admin/projects/{project_id}/limits/reservations")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == project_id
+    assert body["daily"] is None
+    assert body["monthly"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_stale_reservations_requires_admin(client: AsyncClient) -> None:
+    response = await client.get("/admin/projects/limits/reservations/stale")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_stale_reservations_returns_shape(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.get("/admin/projects/limits/reservations/stale")
+    assert response.status_code == 200
+    body = response.json()
+    assert "now" in body
+    assert "older_than_seconds" in body
+    assert "total_count" in body
+    assert "oldest_age_seconds" in body
+    assert "items" in body
+    assert body["total_count"] == 0
+    assert body["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_post_repair_dry_run_404_when_missing(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.post(
+        "/admin/projects/limits/reservations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/repair/dry-run"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_repair_apply_404_when_missing(client: AsyncClient) -> None:
+    await _login(client)
+    response = await client.post(
+        "/admin/projects/limits/reservations/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/repair",
+        json={"reason": "test"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_repair_succeeds_without_request_body(
+    client: AsyncClient, db_sessionmaker
+) -> None:
+    await _login(client)
+    created = await client.post("/admin/projects", json={"name": "repair-no-body"})
+    project_id = created.json()["id"]
+    await client.put(
+        f"/admin/projects/{project_id}/limits",
+        json={
+            "limit_mode": "hard",
+            "daily_request_limit": 10,
+            "daily_token_limit": 10_000,
+            "monthly_cost_limit": None,
+        },
+    )
+
+    now = datetime.now(timezone.utc)
+    rid: str
+    async with db_sessionmaker() as session:
+        async with session.begin():
+            lim = (
+                await session.execute(
+                    select(models.ProjectLimit).where(models.ProjectLimit.project_id == project_id)
+                )
+            ).scalar_one()
+            r = await reserve_gateway_request(
+                session,
+                project_id=project_id,
+                limits=lim,
+                model="gpt-4o-mini",
+                requested_max_tokens=50,
+                estimated_prompt_tokens=None,
+                now=now,
+            )
+            assert r.reservation_id
+            rid = r.reservation_id  # type: ignore[assignment]
+            await session.execute(
+                update(models.ProjectGatewayLimitReservation)
+                .where(models.ProjectGatewayLimitReservation.id == rid)
+                .values(created_at=now - timedelta(minutes=30))
+            )
+
+    response = await client.post(f"/admin/projects/limits/reservations/{rid}/repair")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reservation_id"] == rid
+    assert body["applied"] is True
 

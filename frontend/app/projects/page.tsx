@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import {
   Alert,
@@ -19,13 +20,15 @@ import {
   StatusBadge,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatDate } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatDate } from "@/lib/api";
 import type {
   ApiKeyCreated,
   ApiKeyRow,
   ProjectLimits,
+  ProjectLimitsReservations,
   ProjectLimitsUsage,
   ProjectRow,
+  StaleReservationsList,
 } from "@/lib/types";
 
 export default function ProjectsPage() {
@@ -37,8 +40,16 @@ export default function ProjectsPage() {
   const [latestIssuedKey, setLatestIssuedKey] = useState<ApiKeyCreated | null>(null);
   const [limits, setLimits] = useState<ProjectLimits | null>(null);
   const [limitsUsage, setLimitsUsage] = useState<ProjectLimitsUsage | null>(null);
+  const [limitsReservations, setLimitsReservations] = useState<ProjectLimitsReservations | null>(
+    null,
+  );
   const [loadingLimits, setLoadingLimits] = useState(false);
   const [loadingLimitsUsage, setLoadingLimitsUsage] = useState(false);
+  const [loadingLimitsReservations, setLoadingLimitsReservations] = useState(false);
+  const [staleReservationsSummary, setStaleReservationsSummary] = useState<StaleReservationsList | null>(
+    null,
+  );
+  const [loadingStaleReservations, setLoadingStaleReservations] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
   const [limitMode, setLimitMode] = useState<ProjectLimits["limit_mode"]>("disabled");
   const [monthlyCostLimit, setMonthlyCostLimit] = useState("");
@@ -56,13 +67,7 @@ export default function ProjectsPage() {
     setLoadingProjects(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`);
       if (!res.ok) {
         setError("Unable to load projects.");
         return;
@@ -81,13 +86,7 @@ export default function ProjectsPage() {
     setLoadingKeys(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${projectId}/keys`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${projectId}/keys`);
       if (!res.ok) {
         setError("Unable to load project keys.");
         return;
@@ -102,13 +101,7 @@ export default function ProjectsPage() {
     setLoadingLimits(true);
     setError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${projectId}/limits`, {
-        credentials: "include",
-      });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${projectId}/limits`);
       if (!res.ok) {
         setError("Unable to load project limits.");
         return;
@@ -128,16 +121,9 @@ export default function ProjectsPage() {
     setLoadingLimitsUsage(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${projectId}/limits/usage`,
-        {
-          credentials: "include",
-        },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to load project limit usage.");
         return;
@@ -145,6 +131,44 @@ export default function ProjectsPage() {
       setLimitsUsage((await res.json()) as ProjectLimitsUsage);
     } finally {
       setLoadingLimitsUsage(false);
+    }
+  }
+
+  async function fetchLimitsReservations(projectId: string) {
+    setLoadingLimitsReservations(true);
+    setError(null);
+    try {
+      const res = await adminSessionFetch(
+        `${BACKEND_BASE}/admin/projects/${projectId}/limits/reservations`,
+      );
+      if (!res.ok) {
+        setError("Unable to load reservation counters.");
+        return;
+      }
+      setLimitsReservations((await res.json()) as ProjectLimitsReservations);
+    } finally {
+      setLoadingLimitsReservations(false);
+    }
+  }
+
+  async function fetchStaleReservationsSummary(projectId: string) {
+    setLoadingStaleReservations(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        project_id: projectId,
+        limit: "100",
+      });
+      const res = await adminSessionFetch(
+        `${BACKEND_BASE}/admin/projects/limits/reservations/stale?${params.toString()}`,
+      );
+      if (!res.ok) {
+        setError("Unable to load stale reservation summary.");
+        return;
+      }
+      setStaleReservationsSummary((await res.json()) as StaleReservationsList);
+    } finally {
+      setLoadingStaleReservations(false);
     }
   }
 
@@ -158,10 +182,14 @@ export default function ProjectsPage() {
       void fetchKeys(selectedProjectId);
       void fetchLimits(selectedProjectId);
       void fetchLimitsUsage(selectedProjectId);
+      void fetchLimitsReservations(selectedProjectId);
+      void fetchStaleReservationsSummary(selectedProjectId);
     } else {
       setKeys([]);
       setLimits(null);
       setLimitsUsage(null);
+      setLimitsReservations(null);
+      setStaleReservationsSummary(null);
     }
   }, [selectedProjectId]);
 
@@ -176,16 +204,11 @@ export default function ProjectsPage() {
     }
     setCreatingProject(true);
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to create project.");
         return;
@@ -210,16 +233,11 @@ export default function ProjectsPage() {
     setSuccess(null);
     const label = newKeyLabel.trim();
     try {
-      const res = await fetch(`${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: label || null }),
       });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to issue project key.");
         return;
@@ -243,17 +261,12 @@ export default function ProjectsPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys/${keyId}/revoke`,
         {
           method: "POST",
-          credentials: "include",
         },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to revoke project key.");
         return;
@@ -312,19 +325,14 @@ export default function ProjectsPage() {
 
     setSavingLimits(true);
     try {
-      const res = await fetch(
+      const res = await adminSessionFetch(
         `${BACKEND_BASE}/admin/projects/${selectedProjectId}/limits`,
         {
           method: "PUT",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         },
       );
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) {
         setError("Unable to save project limits.");
         return;
@@ -338,6 +346,7 @@ export default function ProjectsPage() {
       setSuccess("Project limits updated.");
       await fetchProjects();
       await fetchLimitsUsage(selectedProjectId);
+      await fetchLimitsReservations(selectedProjectId);
     } finally {
       setSavingLimits(false);
     }
@@ -358,6 +367,12 @@ export default function ProjectsPage() {
   function _percent(current: number, limit: number | null) {
     if (!limit || limit <= 0) return null;
     return Math.min(999, (current / limit) * 100);
+  }
+
+  function _formatStaleAge(seconds: number) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   }
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -511,6 +526,74 @@ export default function ProjectsPage() {
                     {formatDate(limitsUsage.daily.reset_at)}. Monthly reset:{" "}
                     {formatDate(limitsUsage.monthly.reset_at)}.
                   </div>
+
+                  {loadingLimitsReservations ? (
+                    <LoadingState label="Loading reservation counters..." />
+                  ) : limitsReservations ? (
+                    <div className="stack" style={{ marginBottom: 12 }}>
+                      <div className="muted">
+                        Admission counters (UTC): reserved slots vs completed for the active
+                        windows. Empty until the first hard-limit gateway call creates rows.
+                      </div>
+                      <KeyValueGrid
+                        items={[
+                          {
+                            label: "Daily requests (reserved / completed)",
+                            value:
+                              limitsReservations.daily == null
+                                ? "—"
+                                : `${_formatNumber(limitsReservations.daily.request_count_reserved)} / ${_formatNumber(limitsReservations.daily.request_count_completed)}`,
+                          },
+                          {
+                            label: "Daily tokens (reserved / completed)",
+                            value:
+                              limitsReservations.daily == null
+                                ? "—"
+                                : `${_formatNumber(limitsReservations.daily.token_count_reserved)} / ${_formatNumber(limitsReservations.daily.token_count_completed)}`,
+                          },
+                          {
+                            label: "Monthly cost (reserved / completed)",
+                            value:
+                              limitsReservations.monthly == null
+                                ? "—"
+                                : `${_formatUsd(limitsReservations.monthly.cost_reserved)} / ${_formatUsd(limitsReservations.monthly.cost_completed)}`,
+                          },
+                        ]}
+                      />
+                      {loadingStaleReservations ? (
+                        <LoadingState label="Loading stale reservation summary..." />
+                      ) : staleReservationsSummary ? (
+                        <div className="stack" style={{ marginBottom: 12 }}>
+                          <div className="muted">
+                            Stale reservations are unreconciled limit rows older than the configured
+                            threshold.{" "}
+                            <Link
+                              className="nav-link"
+                              href={`/projects/stale-reservations?project_id=${selectedProjectId}`}
+                            >
+                              View stale reservations
+                            </Link>{" "}
+                            for this project.
+                          </div>
+                          <KeyValueGrid
+                            items={[
+                              {
+                                label: "Stale reservations (count)",
+                                value: _formatNumber(staleReservationsSummary.total_count),
+                              },
+                              {
+                                label: "Oldest stale age",
+                                value:
+                                  staleReservationsSummary.oldest_age_seconds == null
+                                    ? "—"
+                                    : _formatStaleAge(staleReservationsSummary.oldest_age_seconds),
+                              },
+                            ]}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="stack">
                     {(() => {

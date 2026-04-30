@@ -10,6 +10,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
+COPY static_config ./static_config
 COPY app ./app
 
 EXPOSE 8000

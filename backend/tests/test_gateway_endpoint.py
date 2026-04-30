@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import asyncio
 import uuid
+from typing import Any
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.api.gateway import REQUEST_ID_HEADER
 from app.db import models
@@ -26,7 +29,27 @@ from app.llm.errors import (
 from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
+from app.services.gateway_service import GatewayClientError
 from app.services.project_key_service import create_api_key
+from app.core.config import settings
+
+
+async def _insert_gateway_adapter_profile(
+    db_sessionmaker: async_sessionmaker,
+    *,
+    gateway_profile_id: str,
+    adapter_profile_id: str,
+    domain_key: str,
+) -> None:
+    async with db_sessionmaker() as session:
+        row = models.GatewayAdapterProfile(
+            gateway_profile_id=gateway_profile_id,
+            adapter_profile_id=adapter_profile_id,
+            domain_key=domain_key,
+            status="Registered",
+        )
+        session.add(row)
+        await session.commit()
 
 
 class _StubProvider(LLMProvider):
@@ -79,9 +102,49 @@ class _StubProvider(LLMProvider):
         pass
 
 
+class _SlowProvider(LLMProvider):
+    def __init__(self, *, sleep_seconds: float) -> None:
+        self.sleep_seconds = sleep_seconds
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> ChatResult:
+        await asyncio.sleep(self.sleep_seconds)
+        return ChatResult(
+            content="too late",
+            model=model,
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        yield ChatStreamChunk(provider="openai", model=model, role_delta="assistant")
+        await asyncio.sleep(self.sleep_seconds)
+        yield ChatStreamChunk(provider="openai", model=model, content_delta="never")
+
+    async def aclose(self) -> None:
+        pass
+
+
 @pytest_asyncio.fixture
 async def db_engine():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
     try:
@@ -685,6 +748,8 @@ async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
         app.dependency_overrides.pop(get_provider, None)
 
     assert "data: [DONE]" in payload
+    assert "\"error\"" in payload
+    assert "Stream interrupted." in payload
 
     async with db_sessionmaker() as session:
         log = (
@@ -902,6 +967,80 @@ async def test_hard_daily_request_limit_blocks_streaming_before_provider_call(
     assert stub.stream_calls == []
 
 
+class _DelayedStubProvider(_StubProvider):
+    """Widen the race window so preflight runs for many requests before any log row commits."""
+
+    def __init__(self, *, delay_s: float = 0.08, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._delay_s = delay_s
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> ChatResult:
+        await asyncio.sleep(self._delay_s)
+        return await super().chat(
+            messages, model=model, max_tokens=max_tokens, temperature=temperature
+        )
+
+
+@pytest.mark.asyncio
+async def test_hard_daily_request_limit_under_concurrent_burst(
+    client, seeded, db_sessionmaker
+) -> None:
+    """With daily_request_limit=1, at most one request should succeed per strict admission.
+
+    PostgreSQL (CI with a real DB URL) must allow exactly one 200. SQLite ``:memory:``
+    pools may isolate connections; we still require at least one 429 and no 5xx.
+    See docs/strict-limit-reservations.md.
+    """
+    plaintext, project, _api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=1,
+    )
+    stub = _DelayedStubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    n = 5
+    try:
+
+        async def one() -> int:
+            r = await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {plaintext}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            return r.status_code
+
+        codes = await asyncio.gather(*[one() for _ in range(n)])
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    oks = sum(1 for c in codes if c == 200)
+    rate429 = sum(1 for c in codes if c == 429)
+    assert all(c in (200, 429) for c in codes)
+    assert oks + rate429 == n
+    assert oks == 1
+    assert rate429 == n - 1
+    assert len(stub.calls) == oks
+
+
 @pytest.mark.asyncio
 async def test_hard_daily_token_limit_blocks_before_provider_call(
     client, seeded, db_sessionmaker
@@ -1062,6 +1201,93 @@ async def test_soft_limits_allow_provider_call(client, seeded, db_sessionmaker) 
     assert len(stub.calls) == 1
 
 # ── Error path ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_gateway_client_error_returns_400_with_request_id(
+    client, seeded, monkeypatch
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="should not happen",
+                model="gpt-4o-mini",
+                provider="openai",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+
+    request_id = "req_test_gateway_client_error"
+
+    async def _raise(*args, **kwargs):
+        raise GatewayClientError(
+            "bad input",
+            code="bad_input",
+            request_id=request_id,
+        )
+
+    monkeypatch.setattr("app.api.gateway.run_chat_completion", _raise)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+    body = response.json()
+    assert body["detail"]["code"] == "bad_input"
+    assert body["detail"]["message"] == "bad input"
+    assert body["detail"]["request_id"] == request_id
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_gateway_client_error_returns_400_with_request_id(
+    client, seeded, monkeypatch
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            stream_chunks=[
+                ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="nope")
+            ]
+        )
+    )
+
+    request_id = "req_test_gateway_client_error_stream"
+
+    async def _raise(*args, **kwargs):
+        raise GatewayClientError(
+            "bad input",
+            code="bad_input",
+            request_id=request_id,
+        )
+
+    monkeypatch.setattr("app.api.gateway.run_chat_completion_stream", _raise)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.headers[REQUEST_ID_HEADER] == request_id
+    body = response.json()
+    assert body["detail"]["code"] == "bad_input"
+    assert body["detail"]["message"] == "bad input"
+    assert body["detail"]["request_id"] == request_id
 
 
 @pytest.mark.asyncio
@@ -1230,3 +1456,207 @@ async def test_chat_completions_direct_openai_model_failure_is_logged(
         assert log.status == "failed"
         assert log.error_code == type(exc).__name__
         assert log.requested_model == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_times_out_and_returns_502(client, seeded, db_sessionmaker) -> None:
+    plaintext, _project, _api_key = seeded
+    original = settings.llm_request_timeout_seconds
+    settings.llm_request_timeout_seconds = 1
+    _set_provider(_SlowProvider(sleep_seconds=2.0))
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        settings.llm_request_timeout_seconds = original
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["detail"]["code"] == "ProviderUnavailableError"
+    request_id = body["detail"]["request_id"]
+    assert request_id
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "ProviderUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    original = settings.llm_stream_timeout_seconds
+    settings.llm_stream_timeout_seconds = 1
+    _set_provider(_SlowProvider(sleep_seconds=2.0))
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        settings.llm_stream_timeout_seconds = original
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "\"error\"" in payload
+    assert "data: [DONE]" in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "ProviderUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_tokens(
+    client, seeded, db_sessionmaker
+) -> None:
+    """Stream completes normally but the provider never emits a usage chunk.
+
+    Expected DB outcome: status=completed, prompt_tokens=None, completion_tokens=None,
+    total_tokens=None, estimated_cost=None.  This is the documented best-effort
+    accounting posture for providers that omit usage in streaming mode.
+    """
+    plaintext, project, api_key = seeded
+    stub = _StubProvider(
+        stream_chunks=[
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", role_delta="assistant"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", content_delta="hi"),
+            ChatStreamChunk(provider="openai", model="gpt-4o-mini", finish_reason="stop"),
+            # Intentionally no usage chunk.
+        ]
+    )
+    _set_provider(stub)
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {plaintext}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            request_id = response.headers[REQUEST_ID_HEADER]
+            payload = (await response.aread()).decode("utf-8")
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert "data: [DONE]" in payload
+    assert "error" not in payload
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "completed"
+        assert log.provider == "openai"
+        assert log.model == "gpt-4o-mini"
+        assert log.prompt_tokens is None
+        assert log.completion_tokens is None
+        assert log.total_tokens is None
+        assert log.estimated_cost is None
+        assert log.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_gateway_request_with_gateway_profile_logs_profile_id(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="ok",
+                model="gpt-4o-mini",
+                provider="stub",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+    try:
+        await _insert_gateway_adapter_profile(
+            db_sessionmaker,
+            gateway_profile_id="gw-1",
+            adapter_profile_id="ap-1",
+            domain_key="gaming-crm",
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Conexus-Gateway-Profile-Id": "gw-1",
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 200
+    request_id = response.headers[REQUEST_ID_HEADER]
+
+    async with db_sessionmaker() as session:
+        row = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert row.gateway_profile_id == "gw-1"
+        assert row.adapter_profile_id == "ap-1"
+        assert row.domain_key == "gaming-crm"
+        assert row.adaptation_mode == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_gateway_request_with_unknown_gateway_profile_returns_400(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="ok",
+                model="gpt-4o-mini",
+                provider="stub",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Conexus-Gateway-Profile-Id": "gw-missing",
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unknown_gateway_profile_id"

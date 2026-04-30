@@ -56,11 +56,19 @@ export function SectionHeader({
 export function Card({
   children,
   className,
+  ...props
 }: {
   children: ReactNode;
   className?: string;
-}) {
-  return <section className={["card", className].filter(Boolean).join(" ")}>{children}</section>;
+} & Omit<ComponentPropsWithoutRef<"section">, "className" | "children">) {
+  return (
+    <section
+      className={["card", className].filter(Boolean).join(" ")}
+      {...props}
+    >
+      {children}
+    </section>
+  );
 }
 
 export function Button({

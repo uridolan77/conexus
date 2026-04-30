@@ -3,15 +3,19 @@ import type { NextRequest } from "next/server";
 
 const SESSION_COOKIE = "conexus_admin_session";
 
+/** Public paths: keep in sync with `config.matcher` exclusions below. */
+export function shouldProtectPathname(pathname: string): boolean {
+  if (pathname.startsWith("/_next")) return false;
+  if (pathname.startsWith("/api")) return false;
+  if (pathname === "/favicon.ico") return false;
+  if (pathname === "/login" || pathname.startsWith("/login/")) return false;
+  return true;
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/api") ||
-    pathname === "/favicon.ico" ||
-    pathname === "/login"
-  ) {
+  if (!shouldProtectPathname(pathname)) {
     return NextResponse.next();
   }
 
@@ -23,5 +27,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/audit", "/providers", "/projects", "/requests", "/usage", "/routing", "/smoke-tests"],
+  matcher: [
+    "/",
+    "/((?!api/|api$|_next/static|_next/image|favicon.ico|login(?:/|$)).*)",
+  ],
 };

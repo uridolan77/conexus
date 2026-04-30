@@ -12,7 +12,7 @@ import {
   SectionHeader,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 import type { ProviderCandidate, RoutingPolicy } from "@/lib/types";
 
 export default function RoutingPage() {
@@ -27,19 +27,13 @@ export default function RoutingPage() {
       setError(null);
       try {
         const [policyRes, candidatesRes] = await Promise.all([
-          fetch(`${BACKEND_BASE}/admin/routing/policy`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/routing/policy`, {
             cache: "no-store",
           }),
-          fetch(`${BACKEND_BASE}/admin/routing/provider-candidates`, {
-            credentials: "include",
+          adminSessionFetch(`${BACKEND_BASE}/admin/routing/provider-candidates`, {
             cache: "no-store",
           }),
         ]);
-        if (policyRes.status === 401 || candidatesRes.status === 401) {
-          window.location.href = "/login";
-          return;
-        }
         const [policyBody, candidatesBody] = await Promise.all([
           readJsonSafe(policyRes),
           readJsonSafe(candidatesRes),

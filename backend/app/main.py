@@ -8,8 +8,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api import (
+    admin_adaptation,
+    admin_adapter_profiles,
     admin_audit,
     admin_auth,
     admin_project_limits,
@@ -20,12 +23,18 @@ from app.api import (
     admin_usage,
     gateway,
     health,
+    internal_adapter_profiles,
+    internal_domains,
 )
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
 from app.llm.dependencies import shutdown_provider
+from app.services.admin_login_rate_limiter import (
+    should_warn_admin_login_rate_limiter_in_memory_prod,
+)
 from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
+from app.llm.model_alias_config import ModelAliasConfigError, load_model_alias_config
 
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -65,6 +74,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.warning(
                 "prod_startup_schema_notice create_all_enabled=false run_alembic_upgrade_head=true"
             )
+        if should_warn_admin_login_rate_limiter_in_memory_prod(
+            app_env=settings.app_env,
+            admin_login_rate_limit_backend=settings.admin_login_rate_limit_backend,
+        ):
+            logger.warning(
+                "admin_login_rate_limiter_in_memory_prod_warning "
+                "admin login rate limiting is process-local and not shared across "
+                "workers or replicas; use a distributed limiter before multi-replica production"
+            )
+
+    # Validate static model-alias routing config early so config issues fail fast.
+    load_model_alias_config(settings.model_aliases_path)
 
     await init_db(allow_create_all=settings.effective_allow_create_all)
     logger.info("conexus_db_ready url=%s", _redacted_db_url(settings.database_url))
@@ -102,6 +123,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(gateway.router)
     app.include_router(admin_auth.router)
+    app.include_router(admin_adaptation.router)
+    app.include_router(admin_adapter_profiles.router)
     app.include_router(admin_audit.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
@@ -109,6 +132,13 @@ def create_app() -> FastAPI:
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
     app.include_router(admin_routing.router)
+    app.include_router(internal_adapter_profiles.router)
+    app.include_router(internal_domains.router)
+
+    @app.exception_handler(ModelAliasConfigError)
+    async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
     logger.info("conexus_app_started env=%s", settings.app_env)
     return app
 

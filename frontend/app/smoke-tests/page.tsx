@@ -20,7 +20,7 @@ import {
   Stepper,
   Textarea,
 } from "@/components/ui";
-import { BACKEND_BASE, formatApiError, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch, formatApiError, readJsonSafe } from "@/lib/api";
 import type {
   ApiKeyCreated,
   ChatCompletionsResponse,
@@ -34,7 +34,7 @@ async function runStep(
   init?: RequestInit,
 ): Promise<StepResult> {
   try {
-    const res = await fetch(input, init);
+    const res = await adminSessionFetch(input, init);
     const data = await readJsonSafe(res);
     if (!res.ok) {
       return { ok: false, status: res.status, error: data };
@@ -93,7 +93,6 @@ export default function SmokeTestsPage() {
     setRunningStep("session");
     setSession(null);
     const result = await runStep(`${BACKEND_BASE}/admin/auth/session`, {
-      credentials: "include",
       cache: "no-store",
     });
     setSession(result);
@@ -104,7 +103,6 @@ export default function SmokeTestsPage() {
     setRunningStep("projects");
     setProjects(null);
     const result = await runStep(`${BACKEND_BASE}/admin/projects`, {
-      credentials: "include",
       cache: "no-store",
     });
     setProjects(result);
@@ -127,7 +125,6 @@ export default function SmokeTestsPage() {
       `${BACKEND_BASE}/admin/projects/${selectedProjectId}/keys`,
       {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: "smoke-test" }),
       },

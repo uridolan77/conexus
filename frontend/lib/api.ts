@@ -17,6 +17,21 @@ export function getEnvironmentLabel() {
     : "Dev";
 }
 
+/** Cookie-authenticated admin API calls. On 401, redirects to `/login` in the browser. Do not use for `POST /admin/auth/login` or unauthenticated routes (`/health`, gateway `/v1/...`). */
+export async function adminSessionFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(input, {
+    ...init,
+    credentials: init?.credentials ?? "include",
+  });
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.href = "/login";
+  }
+  return res;
+}
+
 export async function readJsonSafe(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return null;

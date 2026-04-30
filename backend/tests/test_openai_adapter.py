@@ -16,6 +16,30 @@ from app.llm.errors import ProviderRateLimitError, ProviderUnavailableError
 from app.llm.openai_adapter import OPENAI_RETRY_ATTEMPTS, OpenAIProvider
 
 
+class _FakeAsyncStream:
+    """Minimal async iterator returned as ``stream=True`` result."""
+
+    def __init__(self) -> None:
+        self._done = False
+
+    def __aiter__(self) -> "_FakeAsyncStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._done:
+            raise StopAsyncIteration
+        self._done = True
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(role=None, content="x"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+
 class _FakeChatCompletions:
     """Fake ``client.chat.completions`` whose ``create`` either returns a single
     response, raises a single exception, or replays a scripted sequence of
@@ -205,6 +229,47 @@ async def test_openai_transient_429_then_success_returns_chat_result() -> None:
     assert result.usage.input_tokens == 2
     assert result.usage.output_tokens == 3
     assert len(completions.calls) == 3
+
+
+async def _collect_stream(provider: OpenAIProvider) -> list[Any]:
+    chunks: list[Any] = []
+    async for chunk in provider.stream_chat(
+        [{"role": "user", "content": "x"}],
+        model="gpt-4o-mini",
+    ):
+        chunks.append(chunk)
+    return chunks
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_transient_429_then_success_yields_chunks() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[
+            _rate_limit_error(),
+            _rate_limit_error(),
+            _FakeAsyncStream(),
+        ]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    chunks = await _collect_stream(provider)
+
+    assert len(chunks) == 1
+    assert chunks[0].content_delta == "x"
+    assert len(completions.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_persistent_429_retries_then_raises_normalized() -> None:
+    completions = _FakeChatCompletions(
+        sequence=[_rate_limit_error() for _ in range(OPENAI_RETRY_ATTEMPTS)]
+    )
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderRateLimitError):
+        await _collect_stream(provider)
+
+    assert len(completions.calls) == OPENAI_RETRY_ATTEMPTS
 
 
 @pytest.mark.asyncio
