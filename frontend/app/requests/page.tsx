@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   CopyButton,
+  DetailDrawer,
   EmptyState,
   ErrorState,
   Field,
@@ -21,7 +22,9 @@ import {
   StatCard,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
+import { formatCost, formatDateTime, formatLatency, formatTokens } from "@/lib/format";
+import { getRequest, listRequests } from "@/lib/admin/requests";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
 const DEFAULT_LIMIT = "50";
@@ -82,30 +85,24 @@ function empty(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "—" : value;
 }
 
-function formatMs(value: number | null) {
-  return value === null ? "—" : `${value.toLocaleString()} ms`;
-}
-
-function formatTokens(value: number | null) {
-  return value === null ? "—" : value.toLocaleString();
-}
-
-function formatCost(value: number | null) {
-  if (value === null) return "—";
-  if (value === 0) return "$0";
-  if (value < 0.0001) return "<$0.0001";
-  return `$${value.toFixed(4)}`;
-}
-
-function formatOptionalDate(value: string | null | undefined) {
-  return value ? formatDate(value) : "—";
-}
-
 function badgeTone(status: string): "neutral" | "success" | "danger" | "info" {
   if (status === "completed") return "success";
   if (status === "failed") return "danger";
   if (status === "started") return "info";
   return "neutral";
+}
+
+function asSortBy(value: string): "created_at" | "completed_at" | "latency_ms" | "total_tokens" | "estimated_cost" {
+  return value === "completed_at" ||
+    value === "latency_ms" ||
+    value === "total_tokens" ||
+    value === "estimated_cost"
+    ? value
+    : "created_at";
+}
+
+function asSortDir(value: string): "asc" | "desc" {
+  return value === "asc" ? "asc" : "desc";
 }
 
 function filtersFromLocation(): Filters {
@@ -173,17 +170,42 @@ export default function RequestsPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = toQuery(nextFilters, nextOffset);
-      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/requests?${params.toString()}`, {
-        cache: "no-store",
+      const result = await listRequests({
+        limit: Number(nextFilters.limit || DEFAULT_LIMIT),
+        offset: nextOffset,
+        request_id: nextFilters.request_id || undefined,
+        status: nextFilters.status || undefined,
+        project_id: nextFilters.project_id || undefined,
+        api_key_id: nextFilters.api_key_id || undefined,
+        provider: nextFilters.provider || undefined,
+        requested_model: nextFilters.requested_model || undefined,
+        model: nextFilters.model || undefined,
+        model_search: nextFilters.model_search || undefined,
+        fallback_used:
+          nextFilters.fallback_used === ""
+            ? undefined
+            : nextFilters.fallback_used === "true",
+        error_code: nextFilters.error_code || undefined,
+        created_from: nextFilters.created_from || undefined,
+        created_to: nextFilters.created_to || undefined,
+        completed_from: nextFilters.completed_from || undefined,
+        completed_to: nextFilters.completed_to || undefined,
+        min_latency_ms: nextFilters.min_latency_ms ? Number(nextFilters.min_latency_ms) : undefined,
+        max_latency_ms: nextFilters.max_latency_ms ? Number(nextFilters.max_latency_ms) : undefined,
+        min_total_tokens: nextFilters.min_total_tokens ? Number(nextFilters.min_total_tokens) : undefined,
+        max_total_tokens: nextFilters.max_total_tokens ? Number(nextFilters.max_total_tokens) : undefined,
+        min_estimated_cost: nextFilters.min_estimated_cost ? Number(nextFilters.min_estimated_cost) : undefined,
+        max_estimated_cost: nextFilters.max_estimated_cost ? Number(nextFilters.max_estimated_cost) : undefined,
+        sort_by: asSortBy(nextFilters.sort_by),
+        sort_dir: asSortDir(nextFilters.sort_dir),
       });
-      const body = await readJsonSafe(res);
-      if (!res.ok) {
-        setError(formatApiError(body));
+      if (!result.ok) {
+        setError(result.error.message);
         return;
       }
-      setResponse(body as RequestListResponse);
+      setResponse(result.data as RequestListResponse);
       setOffset(nextOffset);
+
       const visibleParams = toQuery(nextFilters, nextOffset);
       visibleParams.delete("offset");
       const query = visibleParams.toString();
@@ -199,19 +221,13 @@ export default function RequestsPage() {
     setDetailError(null);
     setSelectedRequestId(requestId);
     try {
-      const res = await adminSessionFetch(
-        `${BACKEND_BASE}/admin/requests/${encodeURIComponent(requestId)}`,
-        {
-          cache: "no-store",
-        },
-      );
-      const body = await readJsonSafe(res);
-      if (!res.ok) {
+      const result = await getRequest(requestId);
+      if (!result.ok) {
         setDetail(null);
-        setDetailError(formatApiError(body));
+        setDetailError(result.error.message);
         return;
       }
-      setDetail(body as RequestDetail);
+      setDetail(result.data as RequestDetail);
     } finally {
       setLoadingDetail(false);
     }
@@ -246,6 +262,7 @@ export default function RequestsPage() {
     setFilters(defaultFilters);
     setSelectedRequestId("");
     setDetail(null);
+    setDetailError(null);
     void loadRequests(defaultFilters, 0);
   }
 
@@ -257,6 +274,19 @@ export default function RequestsPage() {
     const params = toQuery(nextFilters, offset);
     params.delete("offset");
     window.history.replaceState(null, "", `/requests?${params.toString()}`);
+  }
+
+  function closeDetail() {
+    setSelectedRequestId("");
+    setDetail(null);
+    setDetailError(null);
+    // Preserve current filters but clear request_id from URL for shareable state.
+    const nextFilters = { ...filters, request_id: "" };
+    setFilters(nextFilters);
+    const params = toQuery(nextFilters, offset);
+    params.delete("offset");
+    const q = params.toString();
+    window.history.replaceState(null, "", q ? `/requests?${q}` : "/requests");
   }
 
   const items = response?.items ?? [];
@@ -534,17 +564,19 @@ export default function RequestsPage() {
             <Table aria-label="Gateway requests">
               <thead>
                 <tr>
+                  <th>Created</th>
+                  <th>Status</th>
                   <th>Request ID</th>
                   <th>Project</th>
-                  <th>API key</th>
-                  <th>Status</th>
-                  <th>Client requested model</th>
-                  <th>Actual served provider/model</th>
+                  <th>API key prefix</th>
+                  <th>Requested model</th>
+                  <th>Provider</th>
+                  <th>Served model</th>
                   <th>Latency</th>
                   <th>Tokens</th>
                   <th>Cost</th>
                   <th>Fallback</th>
-                  <th>Created</th>
+                  <th>Error code</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -554,6 +586,8 @@ export default function RequestsPage() {
                     key={item.request_id}
                     className={item.status === "failed" ? "row-warning" : undefined}
                   >
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td><Badge tone={badgeTone(item.status)}>{item.status}</Badge></td>
                     <td>
                       <div className="stack-tight">
                         <code className="wrap-anywhere">{item.request_id}</code>
@@ -561,24 +595,15 @@ export default function RequestsPage() {
                       </div>
                     </td>
                     <td>{item.project_name ?? item.project_id ?? "—"}</td>
-                    <td>
-                      <div className="stack-tight">
-                        <code>{item.api_key_prefix ?? "—"}</code>
-                        <span className="muted wrap-anywhere">{item.api_key_id ?? ""}</span>
-                      </div>
-                    </td>
-                    <td><Badge tone={badgeTone(item.status)}>{item.status}</Badge></td>
-                    <td>{item.requested_model}</td>
-                    <td>
-                      <span>{empty(item.provider)}</span>
-                      <br />
-                      <code>{empty(item.model)}</code>
-                    </td>
-                    <td>{formatMs(item.latency_ms)}</td>
+                    <td><code>{item.api_key_prefix ?? "—"}</code></td>
+                    <td><code>{item.requested_model}</code></td>
+                    <td>{empty(item.provider)}</td>
+                    <td><code>{empty(item.model)}</code></td>
+                    <td>{formatLatency(item.latency_ms)}</td>
                     <td>{formatTokens(item.total_tokens)}</td>
                     <td>{formatCost(item.estimated_cost)}</td>
                     <td>{item.fallback_used ? <Badge tone="warning">fallback</Badge> : "—"}</td>
-                    <td>{formatDate(item.created_at)}</td>
+                    <td>{item.error_code ?? "—"}</td>
                     <td>
                       <Button type="button" variant="secondary" onClick={() => selectRequest(item)}>
                         {selectedRequestId === item.request_id ? "Viewing" : "View details"}
@@ -615,88 +640,51 @@ export default function RequestsPage() {
         )}
       </Card>
 
-      {(selectedRequestId || detailError || loadingDetail) && (
-        <Card>
-          <SectionHeader
-            title="Request Details"
-            description="Structured metadata for the selected gateway request."
-          />
-          {loadingDetail ? (
-            <LoadingState label="Loading request details..." />
-          ) : detailError ? (
-            <ErrorState message={detailError} />
-          ) : detail ? (
-            <div className="stack">
-              <KeyValueGrid
-                items={[
-                  {
-                    label: "request_id",
-                    value: (
-                      <span className="inline-actions">
-                        <code className="wrap-anywhere">{detail.request_id}</code>
-                        <CopyButton value={detail.request_id} />
-                      </span>
-                    ),
-                  },
-                  { label: "project", value: detail.project_name ?? detail.project_id ?? "—" },
-                  { label: "api_key_prefix", value: detail.api_key_prefix ?? "—" },
-                  { label: "status", value: <Badge tone={badgeTone(detail.status)}>{detail.status}</Badge> },
-                  { label: "status_group", value: detail.normalized_status_group },
-                  { label: "created_at", value: formatDate(detail.created_at) },
-                  { label: "completed_at", value: formatOptionalDate(detail.completed_at) },
-                  { label: "latency_ms", value: empty(detail.latency_ms) },
-                  { label: "request_age_seconds", value: empty(detail.request_age_seconds) },
-                  { label: "completed_age_seconds", value: empty(detail.completed_age_seconds) },
-                ]}
-              />
-              <div className="grid grid-3">
-                <Card className="card-muted">
-                  <SectionHeader title="Routing Summary" />
-                  <KeyValueGrid
-                    items={[
-                      { label: "client requested model", value: detail.routing_summary.requested_model },
-                      { label: "actual served provider", value: detail.routing_summary.served_provider ?? "—" },
-                      { label: "actual served model", value: detail.routing_summary.served_model ?? "—" },
-                      { label: "fallback_used", value: String(detail.routing_summary.fallback_used) },
-                    ]}
-                  />
-                </Card>
-                <Card className="card-muted">
-                  <SectionHeader title="Token Summary" />
-                  <KeyValueGrid
-                    items={[
-                      { label: "prompt_tokens", value: empty(detail.token_summary.prompt_tokens) },
-                      { label: "completion_tokens", value: empty(detail.token_summary.completion_tokens) },
-                      { label: "total_tokens", value: empty(detail.token_summary.total_tokens) },
-                    ]}
-                  />
-                </Card>
-                <Card className="card-muted">
-                  <SectionHeader title="Cost Summary" />
-                  <KeyValueGrid
-                    items={[
-                      { label: "estimated_cost", value: formatCost(detail.cost_summary.estimated_cost) },
-                      { label: "currency", value: detail.cost_summary.currency },
-                    ]}
-                  />
-                </Card>
-              </div>
-              {detail.normalized_status_group === "failure" && (
-                <Card className="card-muted">
-                  <SectionHeader title="Error Summary" />
-                  <KeyValueGrid
-                    items={[
-                      { label: "code", value: detail.error_summary.code ?? "—" },
-                      { label: "message", value: detail.error_summary.message ?? "—" },
-                    ]}
-                  />
-                </Card>
-              )}
-              <JsonBlock value={detail} title="Raw Metadata JSON" />
-            </div>
-          ) : null}
-        </Card>
-      )}
+      <DetailDrawer
+        open={Boolean(selectedRequestId) || Boolean(detailError) || loadingDetail}
+        onClose={closeDetail}
+        title="Request details"
+      >
+        {loadingDetail ? (
+          <LoadingState label="Loading request details..." />
+        ) : detailError ? (
+          <ErrorState message={detailError} />
+        ) : detail ? (
+          <div className="stack">
+            <KeyValueGrid
+              items={[
+                {
+                  label: "request_id",
+                  value: (
+                    <span className="inline-actions">
+                      <code className="wrap-anywhere">{detail.request_id}</code>
+                      <CopyButton value={detail.request_id} />
+                    </span>
+                  ),
+                },
+                { label: "project_id", value: detail.project_id ?? "—" },
+                { label: "project_name", value: detail.project_name ?? "—" },
+                { label: "api_key_prefix", value: detail.api_key_prefix ?? "—" },
+                { label: "requested_model", value: detail.requested_model },
+                { label: "served_provider", value: detail.provider ?? "—" },
+                { label: "served_model", value: detail.model ?? "—" },
+                { label: "status", value: <Badge tone={badgeTone(detail.status)}>{detail.status}</Badge> },
+                { label: "latency", value: formatLatency(detail.latency_ms) },
+                { label: "prompt_tokens", value: empty(detail.prompt_tokens) },
+                { label: "completion_tokens", value: empty(detail.completion_tokens) },
+                { label: "total_tokens", value: empty(detail.total_tokens) },
+                { label: "estimated_cost", value: formatCost(detail.estimated_cost) },
+                { label: "fallback_used", value: String(detail.fallback_used) },
+                { label: "error_code", value: detail.error_code ?? "—" },
+                { label: "error_message", value: detail.error_message ?? "—" },
+                { label: "created_at", value: formatDateTime(detail.created_at) },
+                { label: "completed_at", value: detail.completed_at ? formatDateTime(detail.completed_at) : "—" },
+              ]}
+            />
+            <JsonBlock value={detail} title="Raw row JSON" />
+          </div>
+        ) : null}
+      </DetailDrawer>
     </>
   );
 }
