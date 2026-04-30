@@ -65,7 +65,7 @@ Security properties:
 - requires adaptation view permission (`ADAPTATION_VIEW`)
 - read-only (no mutations)
 - does not call adaptation service
-- does not expose secrets (metadata is parsed and returned as-is; callers must not render secrets)
+- adapter profile metadata is redacted server-side (`_redact_metadata`) before the response is returned
 
 ## Security notes
 
@@ -80,6 +80,22 @@ Security properties:
   - provider secrets
   - full project API keys (prefix only is shown)
   - raw prompt/response bodies in Requests
+- Activity and Adapter Profiles pages apply frontend redaction (`frontend/lib/redaction.ts`) before rendering metadata JSON.
+- Redaction is defense-in-depth — it is not a license to render secrets carelessly.
+
+## Follow-up hardening
+
+- `frontend/lib/redaction.ts`: client-side metadata redaction utility applied by Activity and Adapter Profiles pages before rendering.
+- `backend/_redact_metadata`: server-side redaction applied before adapter profile metadata is returned by the registry API.
+- Requests page: project-loading logic cleaned up to avoid unnecessary project list fetches on mount.
+- Playground: parser and test utilities extracted from the page component for testability.
+
+## Validation results
+
+- Frontend tests: 213 passed, 0 failed.
+- Frontend build: clean, 23 routes.
+- Backend tests: 296 passed, 0 failed.
+- Linter (`ruff`): clean.
 
 ## Placeholders / gaps
 
@@ -102,4 +118,5 @@ Security properties:
 - [ ] Routing page loads.
 - [ ] Adapter Profiles page shows manual internal registration row if present.
 - [ ] No full secrets are displayed.
+- [ ] UX tightening reviewed for tables, drawers, empty states, route clarity, and responsive behavior.
 

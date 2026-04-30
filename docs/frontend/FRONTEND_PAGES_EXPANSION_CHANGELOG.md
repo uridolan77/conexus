@@ -41,6 +41,14 @@ Changelog for the BO frontend pages expansion work described in `docs/frontend/F
   - `GET /admin/adapter-profiles`
   - `GET /admin/adapter-profiles/{gateway_profile_id}`
   - `GET /admin/adapter-profiles/{gateway_profile_id}/activations`
+  - Adapter profile metadata is redacted server-side (`_redact_metadata`) before the response is returned.
+
+## Follow-up hardening
+
+- `frontend/lib/redaction.ts`: client-side metadata redaction applied by Activity and Adapter Profiles pages before rendering metadata JSON. Redaction is defense-in-depth — not a license to render secrets carelessly.
+- `backend/_redact_metadata`: server-side metadata redaction applied before adapter profile data is returned by the registry API.
+- Requests page: project-loading logic cleaned up to avoid unnecessary fetches on mount.
+- Playground: parser and test utilities extracted from the page component for testability.
 
 ## Tests added/updated
 
@@ -53,4 +61,15 @@ Changelog for the BO frontend pages expansion work described in `docs/frontend/F
   - `useAdminResource`
 - Updated existing tests for:
   - Requests, Usage, CopyButton
+
+## Validation results
+
+- Frontend tests: 213 passed, 0 failed.
+- Frontend build: clean, 23 routes.
+- Backend tests: 296 passed, 0 failed.
+- Linter (`ruff`): clean.
+
+## Manual sanity checklist
+
+- [ ] UX tightening reviewed for tables, drawers, empty states, route clarity, and responsive behavior.
 
