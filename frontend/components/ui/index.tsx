@@ -6,7 +6,7 @@ import type {
   ComponentPropsWithoutRef,
   ReactNode,
 } from "react";
-import { useEffect, useId, useState } from "react";
+import { forwardRef, useEffect, useId, useRef, useState } from "react";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -71,23 +71,20 @@ export function Card({
   );
 }
 
-export function Button({
-  children,
-  variant = "primary",
-  className,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "danger" | "ghost";
-}) {
+export const Button = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger" | "ghost" }
+>(function Button({ children, variant = "primary", className, ...props }, ref) {
   return (
     <button
+      ref={ref}
       className={["button", `button-${variant}`, className].filter(Boolean).join(" ")}
       {...props}
     >
       {children}
     </button>
   );
-}
+});
 
 export function LinkButton({
   href,
@@ -152,39 +149,34 @@ export function Badge({
 export function StatusBadge({
   status,
 }: {
-  status:
-    | "active"
-    | "revoked"
-    | "ok"
-    | "passed"
-    | "failed"
-    | "never"
-    | "running"
-    | "not-run"
-    | "completed"
-    | "started"
-    | "registered"
-    | "canary"
-    | "promoted"
-    | "rolled_back"
-    | "draft"
-    | "approved"
-    | "unknown";
+  status: string;
 }) {
+  const raw = status ?? "";
+  const normalized = raw.trim().toLowerCase();
+
   const tone: Tone =
-    status === "active" || status === "ok" || status === "passed" || status === "completed" || status === "promoted" || status === "approved"
+    normalized === "active" ||
+    normalized === "ok" ||
+    normalized === "passed" ||
+    normalized === "completed" ||
+    normalized === "promoted" ||
+    normalized === "approved"
       ? "success"
-      : status === "failed" || status === "revoked" || status === "rolled_back"
+      : normalized === "failed" || normalized === "revoked" || normalized === "rolled_back"
         ? "danger"
-        : status === "running" || status === "started" || status === "registered"
+        : normalized === "running" || normalized === "started" || normalized === "registered"
           ? "info"
-          : status === "canary"
+          : normalized === "canary"
             ? "warning"
             : "neutral";
+
   const label =
-    status === "not-run" ? "not run" :
-    status === "rolled_back" ? "rolled back" :
-    status;
+    normalized === "not-run"
+      ? "not run"
+      : normalized === "rolled_back"
+        ? "rolled back"
+        : raw || "—";
+
   return <Badge tone={tone}>{label}</Badge>;
 }
 
@@ -366,6 +358,7 @@ export function CopyButton({
   onError?: (err: unknown) => void;
 }) {
   const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const buttonText = status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label;
   async function copy() {
     let ok = false;
     try {
@@ -398,8 +391,13 @@ export function CopyButton({
     window.setTimeout(() => setStatus("idle"), 1500);
   }
   return (
-    <Button type="button" variant="secondary" onClick={copy}>
-      {status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label}
+    <Button
+      type="button"
+      variant="secondary"
+      onClick={copy}
+      aria-label={buttonText}
+    >
+      {buttonText}
     </Button>
   );
 }
@@ -581,14 +579,56 @@ export function DetailDrawer({
   onClose: () => void;
   title: string;
   children: ReactNode;
-  // Note: no focus trap yet. Keyboard navigation stays in page until that is added.
 }) {
   const titleId = useId();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    restoreFocusRef.current =
+      (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    // Focus close button by default for predictable keyboard navigation.
+    window.setTimeout(() => closeRef.current?.focus(), 0);
+
+    return () => {
+      restoreFocusRef.current?.focus?.();
+      restoreFocusRef.current = null;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
+      if (e.key !== "Tab") return;
+
+      const panel = panelRef.current;
+      if (!panel) return;
+
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
+
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey) {
+        if (active === first || !panel.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -600,6 +640,7 @@ export function DetailDrawer({
       <div className="drawer-backdrop" onClick={onClose} aria-hidden="true" />
       <div
         className="drawer-panel"
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -607,6 +648,7 @@ export function DetailDrawer({
         <div className="drawer-header">
           <h3 id={titleId}>{title}</h3>
           <Button
+            ref={closeRef}
             type="button"
             variant="ghost"
             onClick={onClose}

@@ -53,6 +53,10 @@ export default function RoutingPage() {
           setWarning(
             "No provider candidates found. Add active provider credentials before sending gateway traffic.",
           );
+        } else if (candidatesRes.data.some((c) => c.source === "env")) {
+          setWarning(
+            "Some provider candidates come from environment fallback keys. Verify BO provider-config runtime wiring before production.",
+          );
         }
       } catch {
         setError("Unable to load routing policy. Check that the backend is reachable.");

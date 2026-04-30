@@ -158,7 +158,7 @@ export default function AdapterProfilesPage() {
                     <td><code className="wrap-anywhere">{r.gateway_profile_id}</code></td>
                     <td><code className="wrap-anywhere">{r.adapter_profile_id}</code></td>
                     <td><code className="wrap-anywhere">{r.domain_key}</code></td>
-                    <td><StatusBadge status={r.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
+                    <td><StatusBadge status={r.status} /></td>
                     <td>{formatNullable(r.composite_score)}</td>
                     <td>{formatNullable(r.profile_version)}</td>
                     <td><code className="wrap-anywhere">{formatNullable(r.evidence_hash)}</code></td>
@@ -166,7 +166,12 @@ export default function AdapterProfilesPage() {
                     <td>{formatNullable(r.slod_model_version)}</td>
                     <td>{formatDateTime(r.created_at)}</td>
                     <td>
-                      <Button type="button" variant="secondary" onClick={() => void loadDetail(r.gateway_profile_id)}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void loadDetail(r.gateway_profile_id)}
+                        aria-label="View"
+                      >
                         View
                       </Button>
                     </td>
@@ -204,7 +209,7 @@ export default function AdapterProfilesPage() {
                 { label: "gateway_profile_id", value: <code className="wrap-anywhere">{detail.gateway_profile_id}</code> },
                 { label: "adapter_profile_id", value: <code className="wrap-anywhere">{detail.adapter_profile_id}</code> },
                 { label: "domain_key", value: <code className="wrap-anywhere">{detail.domain_key}</code> },
-                { label: "status", value: <StatusBadge status={detail.status as Parameters<typeof StatusBadge>[0]["status"]} /> },
+                { label: "status", value: <StatusBadge status={detail.status} /> },
                 { label: "composite_score", value: formatNullable(detail.composite_score) },
                 { label: "profile_version", value: formatNullable(detail.profile_version) },
                 { label: "evidence_hash", value: <code className="wrap-anywhere">{formatNullable(detail.evidence_hash)}</code> },

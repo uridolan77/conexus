@@ -267,7 +267,12 @@ export default function ActivityPage() {
                     <td>
                       <span className="inline-actions">
                         <code className="wrap-anywhere">{item.resource_id ?? "—"}</code>
-                        <Button type="button" variant="secondary" onClick={() => setSelected(item)}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => setSelected(item)}
+                          aria-label="View"
+                        >
                           View
                         </Button>
                       </span>

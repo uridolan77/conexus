@@ -26,6 +26,7 @@ import {
 import { formatCost, formatDateTime, formatLatency, formatTokens } from "@/lib/format";
 import { getRequest, listRequests } from "@/lib/admin/requests";
 import { listProjects } from "@/lib/admin/projects";
+import { redactSensitiveObject } from "@/lib/redaction";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
 const DEFAULT_LIMIT = "50";
@@ -84,13 +85,6 @@ const defaultFilters: Filters = {
 
 function empty(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "—" : value;
-}
-
-function badgeTone(status: string): "neutral" | "success" | "danger" | "info" {
-  if (status === "completed") return "success";
-  if (status === "failed") return "danger";
-  if (status === "started") return "info";
-  return "neutral";
 }
 
 function asSortBy(value: string): "created_at" | "completed_at" | "latency_ms" | "total_tokens" | "estimated_cost" {
@@ -596,7 +590,7 @@ export default function RequestsPage() {
                     className={item.status === "failed" ? "row-warning" : undefined}
                   >
                     <td>{formatDateTime(item.created_at)}</td>
-                    <td><StatusBadge status={item.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
+                    <td><StatusBadge status={item.status} /></td>
                     <td>
                       <div className="stack-tight">
                         <code className="wrap-anywhere">{item.request_id}</code>
@@ -675,7 +669,7 @@ export default function RequestsPage() {
                 { label: "requested_model", value: detail.requested_model },
                 { label: "served_provider", value: detail.provider ?? "—" },
                 { label: "served_model", value: detail.model ?? "—" },
-                { label: "status", value: <Badge tone={badgeTone(detail.status)}>{detail.status}</Badge> },
+                { label: "status", value: <StatusBadge status={detail.status} /> },
                 { label: "latency", value: formatLatency(detail.latency_ms) },
                 { label: "prompt_tokens", value: empty(detail.prompt_tokens) },
                 { label: "completion_tokens", value: empty(detail.completion_tokens) },
@@ -688,7 +682,7 @@ export default function RequestsPage() {
                 { label: "completed_at", value: detail.completed_at ? formatDateTime(detail.completed_at) : "—" },
               ]}
             />
-            <JsonBlock value={detail} title="Raw row JSON" />
+            <JsonBlock value={redactSensitiveObject(detail)} title="Raw row JSON" />
           </div>
         ) : null}
       </DetailDrawer>
