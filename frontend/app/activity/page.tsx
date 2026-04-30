@@ -49,10 +49,32 @@ const defaultFilters: Filters = {
 
 function activeFiltersSummary(filters: Filters) {
   const parts: string[] = [];
-  if (filters.action) parts.push(`action=${filters.action}`);
-  if (filters.resource_type) parts.push(`resource_type=${filters.resource_type}`);
-  if (filters.resource_id) parts.push(`resource_id=${filters.resource_id}`);
-  if (filters.limit) parts.push(`limit=${filters.limit}`);
+
+  function clean(value: string) {
+    return value.trim();
+  }
+
+  function short(value: string, max = 28) {
+    const v = clean(value);
+    if (!v) return "";
+    return v.length <= max ? v : `${v.slice(0, max - 1)}…`;
+  }
+
+  function add(label: string, value: string) {
+    const v = clean(value);
+    if (!v) return;
+    parts.push(`${label}=${short(v)}`);
+  }
+
+  add("act", filters.action);
+  add("type", filters.resource_type);
+  add("rid", filters.resource_id);
+  add("user", filters.actor_username);
+  add("admin", filters.actor_admin_user_id);
+  add("from", filters.created_from);
+  add("to", filters.created_to);
+  add("limit", filters.limit);
+
   return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
 }
 

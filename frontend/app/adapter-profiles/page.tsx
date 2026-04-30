@@ -232,7 +232,7 @@ export default function AdapterProfilesPage() {
                     {activations.map((a) => (
                       <tr key={a.id}>
                         <td>{formatDateTime(a.created_at)}</td>
-                        <td><StatusBadge status={a.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
+                        <td><StatusBadge status={a.status} /></td>
                         <td>{formatNullable(a.canary_percent)}</td>
                         <td><code className="wrap-anywhere">{formatNullable(a.previous_gateway_profile_id)}</code></td>
                       </tr>

@@ -90,12 +90,62 @@ function empty(value: string | number | null | undefined) {
 }
 
 function activeFiltersSummary(filters: Filters) {
+  function clean(value: string) {
+    return value.trim();
+  }
+
+  function short(value: string, max = 28) {
+    const v = clean(value);
+    if (!v) return "";
+    return v.length <= max ? v : `${v.slice(0, max - 1)}…`;
+  }
+
+  function add(label: string, value: string) {
+    const v = clean(value);
+    if (!v) return;
+    parts.push(`${label}=${short(v)}`);
+  }
+
+  function addBool(label: string, value: string) {
+    const v = clean(value);
+    if (!v) return;
+    parts.push(`${label}=${v === "true" ? "yes" : v === "false" ? "no" : short(v)}`);
+  }
+
+  function addRange(label: string, min: string, max: string, unit?: string) {
+    const a = clean(min);
+    const b = clean(max);
+    if (!a && !b) return;
+    const u = unit ?? "";
+    if (a && b) parts.push(`${label}=${short(a)}–${short(b)}${u}`);
+    else if (a) parts.push(`${label}>=${short(a)}${u}`);
+    else parts.push(`${label}<=${short(b)}${u}`);
+  }
+
   const parts: string[] = [];
-  if (filters.request_id) parts.push(`request_id=${filters.request_id}`);
-  if (filters.status) parts.push(`status=${filters.status}`);
-  if (filters.project_id) parts.push(`project=${filters.project_id}`);
-  if (filters.model_search) parts.push(`model~${filters.model_search}`);
-  if (filters.limit) parts.push(`limit=${filters.limit}`);
+
+  add("req", filters.request_id);
+  add("st", filters.status);
+  add("proj", filters.project_id);
+  add("key", filters.api_key_id);
+  add("prov", filters.provider);
+  add("reqModel", filters.requested_model);
+  add("model", filters.model);
+  add("search", filters.model_search);
+  addBool("fb", filters.fallback_used);
+  add("err", filters.error_code);
+  add("from", filters.created_from);
+  add("to", filters.created_to);
+  add("doneFrom", filters.completed_from);
+  add("doneTo", filters.completed_to);
+  addRange("lat", filters.min_latency_ms, filters.max_latency_ms, "ms");
+  addRange("tok", filters.min_total_tokens, filters.max_total_tokens);
+  addRange("$", filters.min_estimated_cost, filters.max_estimated_cost);
+  if (clean(filters.sort_by) || clean(filters.sort_dir)) {
+    parts.push(`sort=${short(filters.sort_by || "created_at")}.${short(filters.sort_dir || "desc", 6)}`);
+  }
+  add("limit", filters.limit);
+
   return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
 }
 
