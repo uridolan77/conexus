@@ -77,6 +77,16 @@ function idempotencyHeaders(key: string | undefined): Record<string, string> | u
   return { "Idempotency-Key": k };
 }
 
+function stripIdentityFields(input: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!input) return {};
+  const out: Record<string, unknown> = { ...input };
+  const norm = (k: string) => k.toLowerCase().replaceAll("_", "");
+  for (const k of Object.keys(out)) {
+    if (norm(k) === "requestedbyuserid") delete out[k];
+  }
+  return out;
+}
+
 async function requestAdaptation<T>(
   path: string,
   successParser: (body: unknown) => T,
@@ -296,7 +306,7 @@ export const adaptationApi = {
       (body) => body as Record<string, unknown>,
       {
         method: "POST",
-        body: JSON.stringify(input ?? {}),
+        body: JSON.stringify(stripIdentityFields(input)),
       },
     ),
 
@@ -306,7 +316,7 @@ export const adaptationApi = {
       (body) => body as Record<string, unknown>,
       {
         method: "POST",
-        body: JSON.stringify(input ?? {}),
+        body: JSON.stringify(stripIdentityFields(input)),
       },
     ),
 };

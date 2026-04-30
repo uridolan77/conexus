@@ -450,6 +450,79 @@ describe("adaptationApi deployment client", () => {
     expect(res.ok).toBe(true);
     expect(bodies.some((b) => b === JSON.stringify({ reason: "bad" }))).toBe(true);
   });
+
+  it("queue repair does not include requestedByUserId in body", async () => {
+    const postedBodies: string[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (typeof init?.body === "string" && url.includes("/admin/adaptation/runs/queue/repair")) {
+        postedBodies.push(init.body);
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ ok: true }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.queueRepairApply({
+      requestedByUserId: "attacker",
+      requested_by_user_id: "attacker2",
+      issueKinds: ["QUEUED_RUN_MISSING_WORK_ITEM"],
+    });
+    expect(res.ok).toBe(true);
+    expect(postedBodies.length).toBeGreaterThan(0);
+    const parsed = JSON.parse(postedBodies[0] ?? "{}") as Record<string, unknown>;
+    expect(parsed.requestedByUserId).toBeUndefined();
+    expect((parsed as Record<string, unknown>).requested_by_user_id).toBeUndefined();
+    expect(parsed.issueKinds).toEqual(["QUEUED_RUN_MISSING_WORK_ITEM"]);
+  });
+
+  it("retryRun sends Idempotency-Key header", async () => {
+    const captured: Array<{ url: string; headers?: HeadersInit }> = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      captured.push({ url, headers: init?.headers });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ ok: true }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.retryRun("run_1", { idempotencyKey: "idem-1" });
+    expect(res.ok).toBe(true);
+    const call = captured.find((c) => c.url.includes("/admin/adaptation/runs/run_1/retry"));
+    expect(call).toBeTruthy();
+    const hdrs = call?.headers as Record<string, string> | undefined;
+    expect(hdrs?.["Idempotency-Key"]).toBe("idem-1");
+  });
+
+  it("resumeRun sends Idempotency-Key header", async () => {
+    const captured: Array<{ url: string; headers?: HeadersInit }> = [];
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      captured.push({ url, headers: init?.headers });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ ok: true }),
+      } as Response;
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const { adaptationApi } = await import("../lib/adaptationApi");
+    const res = await adaptationApi.resumeRun("run_1", { idempotencyKey: "idem-2" });
+    expect(res.ok).toBe(true);
+    const call = captured.find((c) => c.url.includes("/admin/adaptation/runs/run_1/resume"));
+    expect(call).toBeTruthy();
+    const hdrs = call?.headers as Record<string, string> | undefined;
+    expect(hdrs?.["Idempotency-Key"]).toBe("idem-2");
+  });
 });
 
 describe("adaptationApi problem parsing", () => {

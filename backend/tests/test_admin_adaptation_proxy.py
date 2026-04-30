@@ -1333,6 +1333,36 @@ async def test_queue_repair_dry_run_injects_identity_ignores_browser_and_trims_r
 
 
 @pytest.mark.asyncio
+async def test_queue_repair_dry_run_ignores_pascal_case_RequestedByUserId(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/queue/repair/dry-run",
+        json={
+            "RequestedByUserId": "attacker",
+            "issueKinds": ["QUEUED_RUN_MISSING_WORK_ITEM"],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["json"]["requestedByUserId"] == "admin"
+    assert "RequestedByUserId" not in captured["json"]
+
+
+@pytest.mark.asyncio
 async def test_queue_repair_apply_rejects_malformed_json_without_proxy(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,
@@ -1354,6 +1384,60 @@ async def test_queue_repair_apply_rejects_malformed_json_without_proxy(
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_queue_repair_apply_ignores_snake_case_requested_by_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/queue/repair",
+        json={"requested_by_user_id": "attacker", "issueKinds": ["QUEUED_RUN_MISSING_WORK_ITEM"]},
+    )
+    assert response.status_code == 200
+    assert captured["json"]["requestedByUserId"] == "admin"
+    assert "requested_by_user_id" not in captured["json"]
+
+
+@pytest.mark.asyncio
+async def test_queue_repair_apply_ignores_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/queue/repair",
+        json={"roles": ["FakeSuperAdmin"], "issueKinds": ["QUEUED_RUN_MISSING_WORK_ITEM"]},
+    )
+    assert response.status_code == 200
+    assert captured["json"]["requestedByUserId"] == "admin"
+    assert "roles" not in captured["json"]
 
 
 @pytest.mark.asyncio

@@ -105,6 +105,34 @@ class Settings(BaseSettings):
         alias="MODEL_ALIASES_PATH",
     )
 
+    @field_validator("model_aliases_path", mode="before")
+    @classmethod
+    def _resolve_model_aliases_path(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("MODEL_ALIASES_PATH must be a string")
+        raw = value.strip()
+        if not raw:
+            raise ValueError("MODEL_ALIASES_PATH must not be empty")
+        p = Path(raw)
+        if p.is_absolute():
+            return str(p)
+
+        # Support common relative values from `.env` like:
+        # - backend/static_config/model_aliases.yaml (repo-root relative)
+        # - static_config/model_aliases.yaml (backend-root relative)
+        backend_root = Path(__file__).resolve().parents[2]  # .../backend
+        repo_root = backend_root.parent  # .../conexus
+
+        candidates = [
+            (repo_root / p),
+            (backend_root / p),
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        # Fall back to repo-root relative (helps error messages be stable)
+        return str(repo_root / p)
+
     @field_validator("admin_login_rate_limit_backend", mode="before")
     @classmethod
     def _normalize_admin_login_rate_limit_backend(cls, value: object) -> str:

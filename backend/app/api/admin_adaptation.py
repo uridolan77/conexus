@@ -634,6 +634,34 @@ def _trim_optional_reason(raw: dict[str, Any]) -> None:
         raw.pop("reason", None)
 
 
+def _strip_browser_identity_and_roles_fields(raw: dict[str, Any]) -> None:
+    """Remove browser-supplied identity/role fields (case-insensitive, supports snake_case).
+
+    The BO must never send authoritative user IDs / roles from the browser.
+    """
+
+    def norm(key: str) -> str:
+        # requested_by_user_id -> requestedbyuserid, RequestedByUserId -> requestedbyuserid
+        return "".join(ch for ch in key.lower() if ch != "_")
+
+    forbidden = {
+        "requestedbyuserid",
+        "cancelledbyuserid",
+        "createdbyuserid",
+        "userid",
+        "roles",
+        "approverroles",
+    }
+
+    for k in list(raw.keys()):
+        try:
+            nk = norm(str(k))
+        except Exception:
+            continue
+        if nk in forbidden:
+            raw.pop(k, None)
+
+
 @router.post("/runs/queue/repair/dry-run")
 async def queue_repair_dry_run(
     admin: Annotated[AdminSession, Depends(get_admin_session)],
@@ -644,7 +672,7 @@ async def queue_repair_dry_run(
     raw = await _read_deployment_request_json(request)
     if isinstance(raw, JSONResponse):
         return raw
-    raw.pop("requestedByUserId", None)
+    _strip_browser_identity_and_roles_fields(raw)
     _trim_optional_reason(raw)
     requested_by, _roles = await _deployment_identity(session, admin=admin)
     body = {"requestedByUserId": requested_by, **raw}
@@ -666,7 +694,7 @@ async def queue_repair_apply(
     raw = await _read_deployment_request_json(request)
     if isinstance(raw, JSONResponse):
         return raw
-    raw.pop("requestedByUserId", None)
+    _strip_browser_identity_and_roles_fields(raw)
     _trim_optional_reason(raw)
     requested_by, _roles = await _deployment_identity(session, admin=admin)
     body = {"requestedByUserId": requested_by, **raw}
