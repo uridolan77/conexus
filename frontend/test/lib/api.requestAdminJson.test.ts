@@ -45,6 +45,14 @@ describe("getAdminJson — path safety", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("rejects non-leading-slash relative paths without fetching", async () => {
+    const result = await getAdminJson("admin/projects");
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.message).toMatch(/must start with.*\//i);
+    expect(!result.ok && result.error.message).not.toMatch(/admin\/projects/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("accepts relative paths", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ items: [] }));
     const result = await getAdminJson("/admin/projects");

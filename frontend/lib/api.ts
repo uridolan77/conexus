@@ -137,7 +137,16 @@ function assertRelativePath(path: string): AdminResult<never> | null {
     return {
       ok: false,
       error: {
-        message: `Invalid path: absolute URLs are not allowed. Received: ${path}`,
+        message: "Invalid path: absolute URLs are not allowed.",
+        status: 0,
+      },
+    };
+  }
+  if (!path.startsWith("/")) {
+    return {
+      ok: false,
+      error: {
+        message: "Invalid path: admin API paths must start with '/'.",
         status: 0,
       },
     };
@@ -145,16 +154,23 @@ function assertRelativePath(path: string): AdminResult<never> | null {
   return null;
 }
 
-async function _adminRequest<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  options?: AdminRequestOptions,
-): Promise<AdminResult<T>> {
+export type AdminJsonRequest = {
+  method: string;
+  path: string;
+  body?: unknown;
+  signal?: AbortSignal;
+};
+
+export async function requestAdminJson<T>({
+  method,
+  path,
+  body,
+  signal,
+}: AdminJsonRequest): Promise<AdminResult<T>> {
   const guard = assertRelativePath(path);
   if (guard) return guard as AdminResult<T>;
   const url = `${BACKEND_BASE}${path}`;
-  const init: RequestInit = { method, signal: options?.signal };
+  const init: RequestInit = { method, signal };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
@@ -175,7 +191,11 @@ export function getAdminJson<T>(
   path: string,
   options?: AdminRequestOptions,
 ): Promise<AdminResult<T>> {
-  return _adminRequest<T>("GET", path, undefined, options);
+  return requestAdminJson<T>({
+    method: "GET",
+    path,
+    signal: options?.signal,
+  });
 }
 
 export function postAdminJson<TBody, TResult>(
@@ -183,7 +203,12 @@ export function postAdminJson<TBody, TResult>(
   body: TBody,
   options?: AdminRequestOptions,
 ): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("POST", path, body, options);
+  return requestAdminJson<TResult>({
+    method: "POST",
+    path,
+    body,
+    signal: options?.signal,
+  });
 }
 
 export function putAdminJson<TBody, TResult>(
@@ -191,14 +216,23 @@ export function putAdminJson<TBody, TResult>(
   body: TBody,
   options?: AdminRequestOptions,
 ): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("PUT", path, body, options);
+  return requestAdminJson<TResult>({
+    method: "PUT",
+    path,
+    body,
+    signal: options?.signal,
+  });
 }
 
 export function deleteAdminJson<TResult>(
   path: string,
   options?: AdminRequestOptions,
 ): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("DELETE", path, undefined, options);
+  return requestAdminJson<TResult>({
+    method: "DELETE",
+    path,
+    signal: options?.signal,
+  });
 }
 
 // ---------------------------------------------------------------------------
