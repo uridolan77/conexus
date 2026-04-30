@@ -7,6 +7,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.db import models
@@ -158,4 +159,30 @@ async def test_register_duplicate_with_conflicts_returns_existing_without_mutati
         assert row.domain_key == "gaming-crm"
     finally:
         await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unique_constraint_prevents_duplicate_adapter_profile_id(db_sessionmaker) -> None:
+    async with db_sessionmaker() as session:
+        session.add(
+            GatewayAdapterProfile(
+                gateway_profile_id="gw-1",
+                adapter_profile_id="ap-dup",
+                domain_key="dk",
+                status="Registered",
+            )
+        )
+        await session.commit()
+
+    async with db_sessionmaker() as session2:
+        session2.add(
+            GatewayAdapterProfile(
+                gateway_profile_id="gw-2",
+                adapter_profile_id="ap-dup",
+                domain_key="dk",
+                status="Registered",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session2.commit()
 

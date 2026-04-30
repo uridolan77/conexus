@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.db.models import GatewayAdapterProfile, GatewayAdapterProfileActivation
@@ -50,6 +51,13 @@ def require_internal_adapter_api_key(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid internal api key")
 
 
+def get_internal_actor(
+    internal_actor: Annotated[str | None, Header(alias="X-Internal-Actor")] = None,
+) -> str | None:
+    actor = (internal_actor or "").strip()
+    return actor or None
+
+
 class RegisterAdapterProfileBody(BaseModel):
     adapterProfileId: str = Field(..., min_length=1)
     domainKey: str = Field(..., min_length=1)
@@ -76,6 +84,7 @@ class RegisterAdapterProfileResponse(BaseModel):
 async def register_adapter_profile(
     body: RegisterAdapterProfileBody,
     session: Annotated[AsyncSession, Depends(get_session)],
+    internal_actor: Annotated[str | None, Depends(get_internal_actor)],
 ) -> RegisterAdapterProfileResponse:
     adapter_profile_id = body.adapterProfileId.strip()
     domain_key = body.domainKey.strip()
@@ -111,14 +120,43 @@ async def register_adapter_profile(
         published_at=None,
     )
     session.add(row)
-    await session.flush()
+    try:
+        await session.flush()
+    except BaseException as exc:
+        if not isinstance(exc, IntegrityError):
+            raise
+        # Race: another request inserted the same adapter_profile_id concurrently.
+        await session.rollback()
+        existing = None
+        # The winning transaction may not be committed yet; retry briefly.
+        for _ in range(100):
+            existing = await session.scalar(
+                select(GatewayAdapterProfile).where(
+                    GatewayAdapterProfile.adapter_profile_id == adapter_profile_id
+                )
+            )
+            if existing is not None:
+                break
+            import asyncio
+
+            await asyncio.sleep(0.01)
+        if existing is None:
+            raise
+        return RegisterAdapterProfileResponse(
+            gatewayProfileId=existing.gateway_profile_id,
+            status=existing.status,
+        )
     await log_admin_action(
         session,
         actor=None,
         action="gateway.adapter_profile.registered",
         resource_type="gateway_adapter_profile",
         resource_id=row.gateway_profile_id,
-        metadata={"adapter_profile_id": adapter_profile_id, "domain_key": domain_key},
+        metadata={
+            "adapter_profile_id": adapter_profile_id,
+            "domain_key": domain_key,
+            "internal_actor": internal_actor,
+        },
     )
     return RegisterAdapterProfileResponse(gatewayProfileId=row.gateway_profile_id, status=row.status)
 
@@ -154,6 +192,7 @@ async def activate_canary(
     gatewayProfileId: str,
     body: ActivateCanaryBody,
     session: Annotated[AsyncSession, Depends(get_session)],
+    internal_actor: Annotated[str | None, Depends(get_internal_actor)],
 ) -> ActivationResponse:
     profile = await _get_profile_or_404(session, gateway_profile_id=gatewayProfileId)
     domain_key = profile.domain_key
@@ -201,7 +240,11 @@ async def activate_canary(
         action="gateway.adapter_profile.canary_activated",
         resource_type="gateway_adapter_profile_activation",
         resource_id=gatewayProfileId,
-        metadata={"domain_key": domain_key, "canary_percent": existing_canary.canary_percent},
+        metadata={
+            "domain_key": domain_key,
+            "canary_percent": existing_canary.canary_percent,
+            "internal_actor": internal_actor,
+        },
     )
     return ActivationResponse(
         domainKey=domain_key,
@@ -219,6 +262,7 @@ async def activate_canary(
 async def promote(
     gatewayProfileId: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    internal_actor: Annotated[str | None, Depends(get_internal_actor)],
 ) -> ActivationResponse:
     profile = await _get_profile_or_404(session, gateway_profile_id=gatewayProfileId)
     domain_key = profile.domain_key
@@ -280,7 +324,11 @@ async def promote(
         action="gateway.adapter_profile.promoted",
         resource_type="gateway_adapter_profile_activation",
         resource_id=gatewayProfileId,
-        metadata={"domain_key": domain_key, "previous_gateway_profile_id": previous_id},
+        metadata={
+            "domain_key": domain_key,
+            "previous_gateway_profile_id": previous_id,
+            "internal_actor": internal_actor,
+        },
     )
 
     return ActivationResponse(
@@ -299,6 +347,7 @@ async def promote(
 async def rollback(
     gatewayProfileId: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    internal_actor: Annotated[str | None, Depends(get_internal_actor)],
 ) -> ActivationResponse:
     profile = await _get_profile_or_404(session, gateway_profile_id=gatewayProfileId)
     domain_key = profile.domain_key
@@ -352,7 +401,11 @@ async def rollback(
         action="gateway.adapter_profile.rolled_back",
         resource_type="gateway_adapter_profile_activation",
         resource_id=gatewayProfileId,
-        metadata={"domain_key": domain_key, "restored_gateway_profile_id": previous_id},
+        metadata={
+            "domain_key": domain_key,
+            "restored_gateway_profile_id": previous_id,
+            "internal_actor": internal_actor,
+        },
     )
 
     return ActivationResponse(

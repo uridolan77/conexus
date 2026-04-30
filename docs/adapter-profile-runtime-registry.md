@@ -61,3 +61,5 @@ When duplicate/corrupt activation rows exist, Conexus selects the newest row det
 
 Other metrics are returned as `null` until Conexus records those signals.
 
+This v0.9 observability is computed live from `gateway_requests`, which is suitable for local/dev and small deployments. High-volume production deployments should move to aggregated metrics (e.g. rollups in a metrics system) and treat this endpoint as a contract/prototype.
+
