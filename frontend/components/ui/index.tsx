@@ -6,7 +6,7 @@ import type {
   ComponentPropsWithoutRef,
   ReactNode,
 } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -343,31 +343,49 @@ export function JsonBlock({
 export function CopyButton({
   value,
   label = "Copy",
+  onCopied,
+  onError,
 }: {
   value: string;
   label?: string;
+  onCopied?: () => void;
+  onError?: (err: unknown) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
   async function copy() {
+    let ok = false;
     try {
       await navigator.clipboard.writeText(value);
+      ok = true;
     } catch {
       // Fallback for non-secure contexts (tests, older browsers)
-      const el = document.createElement("textarea");
-      el.value = value;
-      el.style.position = "fixed";
-      el.style.opacity = "0";
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
+      try {
+        const el = document.createElement("textarea");
+        el.value = value;
+        el.style.position = "fixed";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch (fallbackErr) {
+        onError?.(fallbackErr);
+        setStatus("failed");
+        window.setTimeout(() => setStatus("idle"), 1500);
+        return;
+      }
     }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    if (ok) {
+      onCopied?.();
+      setStatus("copied");
+    } else {
+      setStatus("failed");
+    }
+    window.setTimeout(() => setStatus("idle"), 1500);
   }
   return (
     <Button type="button" variant="secondary" onClick={copy}>
-      {copied ? "Copied" : label}
+      {status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label}
     </Button>
   );
 }
@@ -379,6 +397,7 @@ export function PageState({
   empty,
   emptyTitle,
   emptyBody,
+  action,
   children,
 }: {
   loading?: boolean;
@@ -387,13 +406,15 @@ export function PageState({
   empty?: boolean;
   emptyTitle?: string;
   emptyBody?: ReactNode;
+  /** Optional action rendered inside the empty state. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   if (loading) return <LoadingState label={loadingLabel} />;
   if (error) return <ErrorState message={error} />;
   if (empty) {
     return (
-      <EmptyState title={emptyTitle ?? "No data"}>
+      <EmptyState title={emptyTitle ?? "No data"} action={action}>
         {emptyBody ?? "Nothing to show yet."}
       </EmptyState>
     );
@@ -497,11 +518,14 @@ export function DataTable<T extends { id?: string }>({
   rows,
   "aria-label": ariaLabel,
   getRowKey,
+  emptyMessage,
 }: {
   columns: DataTableColumn<T>[];
   rows: T[];
   "aria-label": string;
   getRowKey?: (row: T, index: number) => string;
+  /** Rendered as a full-width cell when rows is empty. */
+  emptyMessage?: ReactNode;
 }) {
   return (
     <Table aria-label={ariaLabel}>
@@ -513,13 +537,21 @@ export function DataTable<T extends { id?: string }>({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, i) => (
-          <tr key={getRowKey ? getRowKey(row, i) : (row.id ?? i)}>
-            {columns.map((col) => (
-              <td key={col.key}>{col.render(row)}</td>
-            ))}
+        {rows.length === 0 && emptyMessage ? (
+          <tr>
+            <td colSpan={columns.length} className="state-text">
+              {emptyMessage}
+            </td>
           </tr>
-        ))}
+        ) : (
+          rows.map((row, i) => (
+            <tr key={getRowKey ? getRowKey(row, i) : (row.id ?? i)}>
+              {columns.map((col) => (
+                <td key={col.key}>{col.render(row)}</td>
+              ))}
+            </tr>
+          ))
+        )}
       </tbody>
     </Table>
   );
@@ -535,7 +567,10 @@ export function DetailDrawer({
   onClose: () => void;
   title: string;
   children: ReactNode;
+  // Note: no focus trap yet. Keyboard navigation stays in page until that is added.
 }) {
+  const titleId = useId();
+
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -549,10 +584,20 @@ export function DetailDrawer({
   return (
     <div className="drawer">
       <div className="drawer-backdrop" onClick={onClose} aria-hidden="true" />
-      <div className="drawer-panel" role="dialog" aria-modal="true" aria-label={title}>
+      <div
+        className="drawer-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="drawer-header">
-          <h3>{title}</h3>
-          <Button type="button" variant="ghost" onClick={onClose} aria-label="Close drawer">
+          <h3 id={titleId}>{title}</h3>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onClose}
+            aria-label="Close"
+          >
             ✕
           </Button>
         </div>
@@ -560,4 +605,43 @@ export function DetailDrawer({
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Tiny utility primitives
+// ---------------------------------------------------------------------------
+
+/** Inline field validation error. */
+export function FieldError({ children }: { children: ReactNode }) {
+  return (
+    <span className="field-error" role="alert">
+      {children}
+    </span>
+  );
+}
+
+/** Muted helper text beneath a field or section. */
+export function HelpText({ children }: { children: ReactNode }) {
+  return <p className="help-text">{children}</p>;
+}
+
+/** Monospace chip for short codes, IDs, or model names. */
+export function CodeChip({ children }: { children: ReactNode }) {
+  return <code className="code-chip">{children}</code>;
+}
+
+/** Alias for Badge — use for status-style pills to make intent clear at callsite. */
+export function StatusPill({
+  children,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  tone?: Tone;
+}) {
+  return <Badge tone={tone}>{children}</Badge>;
+}
+
+/** Vertical gap between sections inside a page. */
+export function SectionGap() {
+  return <div className="section-gap" aria-hidden="true" />;
 }

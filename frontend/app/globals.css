@@ -779,6 +779,55 @@ pre {
 }
 
 /* ---------------------------------------------------------------------------
+   Page layout utilities
+--------------------------------------------------------------------------- */
+
+/** Vertical stack of page-level sections with consistent gap. */
+.page-stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/** Toolbar with items spread to opposite ends. */
+.toolbar-spread {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+/** Small inline metadata cluster (timestamps, IDs, counts). */
+.inline-meta {
+  align-items: center;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  font-size: var(--font-sm);
+  gap: var(--space-2);
+}
+
+/** Container that provides standard padding for loading/error/empty states. */
+.data-state {
+  padding: var(--space-4) 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Field primitives
+--------------------------------------------------------------------------- */
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--font-sm);
+}
+
+.help-text {
+  color: var(--color-text-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  margin: var(--space-1) 0 0;
+}
+
+/* ---------------------------------------------------------------------------
    Auth pages
 --------------------------------------------------------------------------- */
 

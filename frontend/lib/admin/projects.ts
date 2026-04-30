@@ -1,5 +1,6 @@
 import {
   AdminResult,
+  buildQuery,
   getAdminJson,
   postAdminJson,
   putAdminJson,
@@ -76,6 +77,7 @@ export function getStaleReservations(
   projectId: string,
   limit = 100,
 ): Promise<AdminResult<StaleReservationsList>> {
-  const params = new URLSearchParams({ project_id: projectId, limit: String(limit) });
-  return getAdminJson(`/admin/projects/limits/reservations/stale?${params.toString()}`);
+  return getAdminJson(
+    `/admin/projects/limits/reservations/stale${buildQuery({ project_id: projectId, limit })}`,
+  );
 }

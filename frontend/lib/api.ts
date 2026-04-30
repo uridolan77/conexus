@@ -105,16 +105,56 @@ export function parseApiError(error: unknown, status?: number): ApiError {
 }
 
 // ---------------------------------------------------------------------------
+// Query string builder
+// ---------------------------------------------------------------------------
+
+/** Build a query string from params, skipping null/undefined/empty-string values.
+ * Returns "" if nothing to add, or "?a=1&b=x" otherwise. */
+export function buildQuery(
+  params: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  );
+  if (entries.length === 0) return "";
+  const qs = entries
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join("&");
+  return `?${qs}`;
+}
+
+// ---------------------------------------------------------------------------
 // Typed admin API helpers — all paths are relative to BACKEND_BASE
 // ---------------------------------------------------------------------------
+
+export type AdminRequestOptions = {
+  signal?: AbortSignal;
+};
+
+/** Guard against accidental absolute URLs being passed as a path. */
+function assertRelativePath(path: string): AdminResult<never> | null {
+  if (/^https?:\/\//i.test(path)) {
+    return {
+      ok: false,
+      error: {
+        message: `Invalid path: absolute URLs are not allowed. Received: ${path}`,
+        status: 0,
+      },
+    };
+  }
+  return null;
+}
 
 async function _adminRequest<T>(
   method: string,
   path: string,
   body?: unknown,
+  options?: AdminRequestOptions,
 ): Promise<AdminResult<T>> {
+  const guard = assertRelativePath(path);
+  if (guard) return guard as AdminResult<T>;
   const url = `${BACKEND_BASE}${path}`;
-  const init: RequestInit = { method };
+  const init: RequestInit = { method, signal: options?.signal };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
@@ -131,26 +171,34 @@ async function _adminRequest<T>(
   }
 }
 
-export function getAdminJson<T>(path: string): Promise<AdminResult<T>> {
-  return _adminRequest<T>("GET", path);
+export function getAdminJson<T>(
+  path: string,
+  options?: AdminRequestOptions,
+): Promise<AdminResult<T>> {
+  return _adminRequest<T>("GET", path, undefined, options);
 }
 
 export function postAdminJson<TBody, TResult>(
   path: string,
   body: TBody,
+  options?: AdminRequestOptions,
 ): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("POST", path, body);
+  return _adminRequest<TResult>("POST", path, body, options);
 }
 
 export function putAdminJson<TBody, TResult>(
   path: string,
   body: TBody,
+  options?: AdminRequestOptions,
 ): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("PUT", path, body);
+  return _adminRequest<TResult>("PUT", path, body, options);
 }
 
-export function deleteAdminJson<TResult>(path: string): Promise<AdminResult<TResult>> {
-  return _adminRequest<TResult>("DELETE", path);
+export function deleteAdminJson<TResult>(
+  path: string,
+  options?: AdminRequestOptions,
+): Promise<AdminResult<TResult>> {
+  return _adminRequest<TResult>("DELETE", path, undefined, options);
 }
 
 // ---------------------------------------------------------------------------

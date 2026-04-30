@@ -59,4 +59,53 @@ describe("CopyButton", () => {
       expect(execCommand).toHaveBeenCalledWith("copy");
     });
   });
+
+  it("shows 'Copy failed' when both clipboard and execCommand fail", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("not allowed")) },
+      writable: true,
+      configurable: true,
+    });
+    document.execCommand = vi.fn().mockImplementation(() => {
+      throw new Error("execCommand failed");
+    });
+
+    render(<CopyButton value="test" />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button")).toHaveTextContent("Copy failed");
+    });
+  });
+
+  it("calls onCopied callback on success", async () => {
+    const onCopied = vi.fn();
+    render(<CopyButton value="test" onCopied={onCopied} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+    await waitFor(() => expect(onCopied).toHaveBeenCalledOnce());
+  });
+
+  it("calls onError callback when copy fails", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("not allowed")) },
+      writable: true,
+      configurable: true,
+    });
+    const fallbackErr = new Error("execCommand failed");
+    document.execCommand = vi.fn().mockImplementation(() => {
+      throw fallbackErr;
+    });
+    const onError = vi.fn();
+
+    render(<CopyButton value="test" onError={onError} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(fallbackErr));
+  });
 });

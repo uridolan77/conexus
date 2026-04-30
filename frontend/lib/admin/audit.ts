@@ -1,4 +1,4 @@
-import { AdminResult, getAdminJson } from "@/lib/api";
+import { AdminResult, buildQuery, getAdminJson } from "@/lib/api";
 import type { AuditListResponse } from "@/lib/types";
 
 export type AuditListParams = {
@@ -12,12 +12,12 @@ export type AuditListParams = {
 export function listAuditLogs(
   params: AuditListParams = {},
 ): Promise<AdminResult<AuditListResponse>> {
-  const q = new URLSearchParams();
-  if (params.limit != null) q.set("limit", String(params.limit));
-  if (params.offset != null) q.set("offset", String(params.offset));
-  if (params.actor) q.set("actor", params.actor);
-  if (params.action) q.set("action", params.action);
-  if (params.resource_type) q.set("resource_type", params.resource_type);
-  const qs = q.toString();
-  return getAdminJson(`/admin/audit${qs ? `?${qs}` : ""}`);
+  const qs = buildQuery({
+    limit: params.limit,
+    offset: params.offset,
+    actor: params.actor,
+    action: params.action,
+    resource_type: params.resource_type,
+  });
+  return getAdminJson(`/admin/audit${qs}`);
 }

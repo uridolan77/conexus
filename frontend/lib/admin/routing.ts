@@ -1,12 +1,10 @@
 import { AdminResult, getAdminJson } from "@/lib/api";
-import type { ProviderCandidate, RoutingPolicy } from "@/lib/types";
+import type { RoutingPolicy } from "@/lib/types";
+// getProviderCandidates is owned by providers.ts to avoid duplication.
+export { listProviderCandidates as getProviderCandidates } from "@/lib/admin/providers";
 
 export function getRoutingPolicy(): Promise<AdminResult<RoutingPolicy>> {
   return getAdminJson("/admin/routing/policy");
-}
-
-export function getProviderCandidates(): Promise<AdminResult<ProviderCandidate[]>> {
-  return getAdminJson("/admin/routing/provider-candidates");
 }
 
 export function getModelAliases(): Promise<AdminResult<unknown>> {

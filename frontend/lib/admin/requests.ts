@@ -1,4 +1,4 @@
-import { AdminResult, getAdminJson } from "@/lib/api";
+import { AdminResult, buildQuery, getAdminJson } from "@/lib/api";
 import type { RequestDetail, RequestListResponse } from "@/lib/types";
 
 export type RequestListParams = {
@@ -13,15 +13,15 @@ export type RequestListParams = {
 export function listRequests(
   params: RequestListParams = {},
 ): Promise<AdminResult<RequestListResponse>> {
-  const q = new URLSearchParams();
-  if (params.limit != null) q.set("limit", String(params.limit));
-  if (params.offset != null) q.set("offset", String(params.offset));
-  if (params.project_id) q.set("project_id", params.project_id);
-  if (params.status) q.set("status", params.status);
-  if (params.sort) q.set("sort", params.sort);
-  if (params.order) q.set("order", params.order);
-  const qs = q.toString();
-  return getAdminJson(`/admin/requests${qs ? `?${qs}` : ""}`);
+  const qs = buildQuery({
+    limit: params.limit,
+    offset: params.offset,
+    project_id: params.project_id,
+    status: params.status,
+    sort: params.sort,
+    order: params.order,
+  });
+  return getAdminJson(`/admin/requests${qs}`);
 }
 
 export function getRequest(requestId: string): Promise<AdminResult<RequestDetail>> {

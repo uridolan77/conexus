@@ -43,13 +43,19 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  /** Set an error and clear any stale success message. */
+  function setPageError(msg: string) {
+    setError(msg);
+    setSuccess(null);
+  }
+
   async function fetchProjects(autoSelectFirst = false) {
     setLoadingProjects(true);
     setError(null);
     try {
       const result = await listProjects();
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setProjects(result.data);
@@ -66,7 +72,7 @@ export default function ProjectsPage() {
     try {
       const result = await listProjectKeys(projectId);
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setKeys(result.data);
@@ -80,7 +86,7 @@ export default function ProjectsPage() {
     try {
       const result = await getProjectLimits(projectId);
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setLimits(result.data);
@@ -94,7 +100,7 @@ export default function ProjectsPage() {
     try {
       const result = await getProjectLimitsUsage(projectId);
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setLimitsUsage(result.data);
@@ -108,7 +114,7 @@ export default function ProjectsPage() {
     try {
       const result = await getProjectReservations(projectId);
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setLimitsReservations(result.data);
@@ -122,7 +128,7 @@ export default function ProjectsPage() {
     try {
       const result = await getStaleReservations(projectId);
       if (!result.ok) {
-        setError(result.error.message);
+        setPageError(result.error.message);
         return;
       }
       setStaleReservationsSummary(result.data);
