@@ -37,6 +37,19 @@ class Settings(BaseSettings):
         default=None, alias="ADAPTATION_API_BASE_URL"
     )
 
+    internal_adapter_api_key: str | None = Field(default=None, alias="INTERNAL_ADAPTER_API_KEY")
+
+    adapter_profile_registry_enabled: bool = Field(
+        default=True, alias="ADAPTER_PROFILE_REGISTRY_ENABLED"
+    )
+    adapter_profile_canary_routing_enabled: bool = Field(
+        default=False, alias="ADAPTER_PROFILE_CANARY_ROUTING_ENABLED"
+    )
+
+    adapter_profile_observability_enabled: bool = Field(
+        default=True, alias="ADAPTER_PROFILE_OBSERVABILITY_ENABLED"
+    )
+
     cors_allowed_origins: str | None = Field(default=None, alias="CORS_ALLOWED_ORIGINS")
     frontend_origins: str | None = Field(default=None, alias="FRONTEND_ORIGINS")
 

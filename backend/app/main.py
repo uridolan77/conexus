@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import (
     admin_adaptation,
+    admin_adapter_profiles,
     admin_audit,
     admin_auth,
     admin_project_limits,
@@ -22,6 +23,8 @@ from app.api import (
     admin_usage,
     gateway,
     health,
+    internal_adapter_profiles,
+    internal_domains,
 )
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -121,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(gateway.router)
     app.include_router(admin_auth.router)
     app.include_router(admin_adaptation.router)
+    app.include_router(admin_adapter_profiles.router)
     app.include_router(admin_audit.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
@@ -128,6 +132,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_requests.router)
     app.include_router(admin_usage.router)
     app.include_router(admin_routing.router)
+    app.include_router(internal_adapter_profiles.router)
+    app.include_router(internal_domains.router)
 
     @app.exception_handler(ModelAliasConfigError)
     async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):

@@ -41,6 +41,23 @@ export type AdaptationResult<T> =
   | { ok: true; data: T }
   | { ok: false; status?: number; error: unknown };
 
+export type GatewayRuntimeState = {
+  adapterProfileId: string;
+  registered: boolean;
+  gatewayProfileId?: string | null;
+  registrationStatus?: string | null;
+  domainKey?: string | null;
+  activeGatewayProfileId?: string | null;
+  canaryGatewayProfileId?: string | null;
+  canaryPercent?: number | null;
+  last24h?: {
+    requestCount: number;
+    errorRate: number | null;
+    latencyP95Ms: number | null;
+    costPerAnswer: number | null;
+  } | null;
+};
+
 function adminUrl(path: string) {
   if (!path.startsWith("/")) return `${BACKEND_BASE}/${path}`;
   if (typeof window !== "undefined") {
@@ -144,6 +161,12 @@ export const adaptationApi = {
 
   getProfile: (profileId: string) =>
     requestAdaptation(`/admin/adaptation/profiles/${encodeURIComponent(profileId)}`, normalizeProfileDetail),
+
+  getGatewayRuntimeState: (profileId: string) =>
+    requestAdaptation(
+      `/admin/adapter-profiles/${encodeURIComponent(profileId)}/runtime-state`,
+      (body) => body as GatewayRuntimeState,
+    ),
 
   getRunEvaluation: (runId: string) =>
     requestAdaptation(

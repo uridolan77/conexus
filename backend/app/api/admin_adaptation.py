@@ -16,7 +16,19 @@ from fastapi.responses import JSONResponse
 
 from app.api.admin_auth import get_admin_session
 from app.core.config import settings
+from app.db.session import get_session
 from app.services.admin_auth_service import AdminSession
+from app.services.admin_permissions_service import (
+    ADAPTATION_APPROVE,
+    ADAPTATION_OPERATE,
+    ADAPTATION_PUBLISH,
+    ADAPTATION_ROLLBACK,
+    ADAPTATION_VIEW,
+    deployment_roles_from_permissions,
+    get_admin_permissions,
+    require_adaptation_permission,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/admin/adaptation", tags=["admin"])
 
@@ -115,18 +127,14 @@ async def proxy_adaptation_request(
     return _response_from_upstream(upstream)
 
 
-# Temporary: all authenticated BO admins receive full adaptation deployment roles until
-# Conexus maps read-only vs operator capabilities.
-_DEPLOYMENT_ROLES = (
-    "ComplianceReviewer",
-    "AdaptationPublisher",
-    "AdaptationOperator",
-)
-
-
-def _deployment_identity(admin: AdminSession) -> tuple[str, list[str]]:
+async def _deployment_identity(
+    session: AsyncSession,
+    *,
+    admin: AdminSession,
+) -> tuple[str, list[str]]:
     user_id = (admin.username or admin.admin_user_id or "admin-user").strip() or "admin-user"
-    return (user_id, list(_DEPLOYMENT_ROLES))
+    perms = await get_admin_permissions(session, admin=admin)
+    return (user_id, deployment_roles_from_permissions(perms))
 
 
 async def _read_deployment_request_json(request: Request) -> dict[str, Any] | JSONResponse:
@@ -164,6 +172,7 @@ async def _read_deployment_request_json(request: Request) -> dict[str, Any] | JS
 @router.get("/plans")
 async def list_plans(
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -177,6 +186,7 @@ async def list_plans(
 async def get_plan(
     plan_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -190,6 +200,7 @@ async def get_plan(
 async def list_runs_for_plan(
     plan_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -203,9 +214,11 @@ async def list_runs_for_plan(
 async def approve_plan(
     plan_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_APPROVE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
-    approved_by, roles = _deployment_identity(admin)
+    approved_by, roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adaptation-plans/{plan_id}/approve",
@@ -218,9 +231,11 @@ async def approve_plan(
 async def start_run(
     plan_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
-    created_by, _roles = _deployment_identity(admin)
+    created_by, _roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adaptation-plans/{plan_id}/run",
@@ -233,6 +248,7 @@ async def start_run(
 @router.get("/runs")
 async def list_runs(
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -246,6 +262,7 @@ async def list_runs(
 async def get_run(
     run_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -259,6 +276,7 @@ async def get_run(
 async def get_run_manifest(
     run_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -272,6 +290,7 @@ async def get_run_manifest(
 async def get_run_evaluation(
     run_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -285,6 +304,7 @@ async def get_run_evaluation(
 async def get_run_adapter_profile(
     run_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -297,6 +317,7 @@ async def get_run_adapter_profile(
 @router.get("/profiles")
 async def list_profiles(
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -310,6 +331,7 @@ async def list_profiles(
 async def get_profile(
     profile_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -323,6 +345,7 @@ async def get_profile(
 async def list_profile_activations(
     profile_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -336,6 +359,7 @@ async def list_profile_activations(
 async def list_profile_deployment_events(
     profile_id: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     return await proxy_adaptation_request(
@@ -349,6 +373,8 @@ async def list_profile_deployment_events(
 async def publish_profile(
     profile_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_PUBLISH))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
     raw = await _read_deployment_request_json(request)
@@ -362,7 +388,7 @@ async def publish_profile(
         notes_out = notes
     else:
         notes_out = str(notes)
-    user_id, roles = _deployment_identity(admin)
+    user_id, roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adapter-profiles/{profile_id}/publish",
@@ -380,6 +406,8 @@ async def publish_profile(
 async def activate_canary(
     profile_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
     raw = await _read_deployment_request_json(request)
@@ -396,7 +424,7 @@ async def activate_canary(
             title="Invalid canary percent.",
             detail="canaryPercent must be an integer between 1 and 50.",
         )
-    user_id, roles = _deployment_identity(admin)
+    user_id, roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adapter-profiles/{profile_id}/activate-canary",
@@ -414,12 +442,14 @@ async def activate_canary(
 async def promote_profile(
     profile_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
     raw = await _read_deployment_request_json(request)
     if isinstance(raw, JSONResponse):
         return raw
-    user_id, roles = _deployment_identity(admin)
+    user_id, roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adapter-profiles/{profile_id}/promote",
@@ -433,6 +463,8 @@ async def promote_profile(
 async def rollback_profile(
     profile_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_ROLLBACK))],
+    session: Annotated[AsyncSession, Depends(get_session)],
     request: Request,
 ) -> Response:
     raw = await _read_deployment_request_json(request)
@@ -446,7 +478,7 @@ async def rollback_profile(
             title="Invalid rollback reason.",
             detail="reason is required and cannot be empty or whitespace only.",
         )
-    user_id, roles = _deployment_identity(admin)
+    user_id, roles = await _deployment_identity(session, admin=admin)
     return await proxy_adaptation_request(
         method="POST",
         upstream_path=f"/adapter-profiles/{profile_id}/rollback",
@@ -460,6 +492,7 @@ async def rollback_profile(
 async def get_domain_active_profile(
     domain_key: str,
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
     request: Request,
 ) -> Response:
     encoded = quote(domain_key, safe="")

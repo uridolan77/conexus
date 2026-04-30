@@ -18,6 +18,7 @@ row never depends on a fragile commit-inside-error-path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -30,7 +31,13 @@ from collections.abc import AsyncIterator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import GatewayRequest, Project, ProjectApiKey
+from app.db.models import (
+    GatewayAdapterProfile,
+    GatewayAdapterProfileActivation,
+    GatewayRequest,
+    Project,
+    ProjectApiKey,
+)
 from app.core.config import settings
 from app.llm import LLMProvider, get_cost
 from app.llm.errors import (
@@ -73,6 +80,76 @@ class _LimitReservedBlocked(Exception):
 
     def __init__(self, block: LimitBlock) -> None:
         self.block = block
+
+
+async def _resolve_adapter_profile_association(
+    session: AsyncSession,
+    *,
+    request_id: str,
+    project_id: str,
+    api_key_id: str,
+    domain_key: str | None,
+    explicit_gateway_profile_id: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (gateway_profile_id, adapter_profile_id, domain_key, adaptation_mode)."""
+    explicit = (explicit_gateway_profile_id or "").strip() or None
+    domain = (domain_key or "").strip() or None
+
+    if explicit is not None:
+        row = await session.scalar(
+            select(GatewayAdapterProfile).where(GatewayAdapterProfile.gateway_profile_id == explicit)
+        )
+        if row is None:
+            raise GatewayClientError(
+                "Unknown gatewayProfileId.",
+                code="unknown_gateway_profile_id",
+                request_id=request_id,
+            )
+        return (row.gateway_profile_id, row.adapter_profile_id, row.domain_key, "explicit")
+
+    if domain is None:
+        return (None, None, None, None)
+
+    active = await session.scalar(
+        select(GatewayAdapterProfileActivation).where(
+            GatewayAdapterProfileActivation.domain_key == domain,
+            GatewayAdapterProfileActivation.status == "Active",
+        )
+    )
+    canary = await session.scalar(
+        select(GatewayAdapterProfileActivation).where(
+            GatewayAdapterProfileActivation.domain_key == domain,
+            GatewayAdapterProfileActivation.status == "Canary",
+        )
+    )
+    if active is None:
+        return (None, None, domain, "domain_only")
+
+    selected_gateway_profile_id = active.gateway_profile_id
+    mode = "active"
+    if (
+        settings.adapter_profile_canary_routing_enabled
+        and canary is not None
+        and canary.canary_percent is not None
+        and 1 <= canary.canary_percent <= 50
+    ):
+        h = hashlib.sha256(f"{project_id}:{api_key_id}:{request_id}".encode("utf-8")).digest()
+        bucket = int.from_bytes(h[:2], "big") % 100
+        if bucket < canary.canary_percent:
+            selected_gateway_profile_id = canary.gateway_profile_id
+            mode = "canary"
+
+    selected = await session.scalar(
+        select(GatewayAdapterProfile).where(
+            GatewayAdapterProfile.gateway_profile_id == selected_gateway_profile_id
+        )
+    )
+    return (
+        selected_gateway_profile_id,
+        None if selected is None else selected.adapter_profile_id,
+        domain,
+        mode,
+    )
 
 
 async def _reserve_hard_limit_or_raise(
@@ -214,6 +291,8 @@ async def run_chat_completion(
     messages: list[ChatMessage],
     max_tokens: int,
     temperature: float,
+    domain_key: str | None = None,
+    explicit_gateway_profile_id: str | None = None,
 ) -> GatewayResponse:
     request_id = new_request_id()
 
@@ -257,6 +336,16 @@ async def run_chat_completion(
         ) from None
 
     async def _start(session: AsyncSession) -> None:
+        gateway_profile_id, adapter_profile_id, domain_key_out, adaptation_mode = (
+            await _resolve_adapter_profile_association(
+                session,
+                request_id=request_id,
+                project_id=project.id,
+                api_key_id=api_key.id,
+                domain_key=domain_key,
+                explicit_gateway_profile_id=explicit_gateway_profile_id,
+            )
+        )
         await start_request(
             session,
             request_id=request_id,
@@ -264,10 +353,48 @@ async def run_chat_completion(
             api_key_id=api_key.id,
             requested_model=model,
             limit_reservation_id=limit_reservation_id,
+            gateway_profile_id=gateway_profile_id,
+            adapter_profile_id=adapter_profile_id,
+            domain_key=domain_key_out,
+            adaptation_mode=adaptation_mode,
         )
 
     try:
         await _with_log_session(sessionmaker, _start)
+    except GatewayClientError as exc:
+        error_code = exc.code
+        error_message = str(exc)
+
+        async def _log_client_error(log_session: AsyncSession) -> None:
+            row = await start_request(
+                log_session,
+                request_id=request_id,
+                project_id=project.id,
+                api_key_id=api_key.id,
+                requested_model=model,
+                limit_reservation_id=limit_reservation_id,
+                gateway_profile_id=(explicit_gateway_profile_id or "").strip() or None,
+                adapter_profile_id=None,
+                domain_key=(domain_key or "").strip() or None,
+                adaptation_mode="explicit",
+            )
+            await finish_request_failure(
+                log_session,
+                row,
+                latency_ms=0,
+                error_code=error_code,
+                error_message=error_message,
+            )
+
+        await _with_log_session(sessionmaker, _log_client_error)
+        await _reconcile_reservation(
+            sessionmaker,
+            limit_reservation_id=limit_reservation_id,
+            actual_tokens=0,
+            actual_cost=0.0,
+            status="failed",
+        )
+        raise
     except BaseException:
         await _reconcile_reservation(
             sessionmaker,
@@ -395,6 +522,8 @@ async def run_chat_completion_stream(
     messages: list[ChatMessage],
     max_tokens: int,
     temperature: float,
+    domain_key: str | None = None,
+    explicit_gateway_profile_id: str | None = None,
 ) -> GatewayStreamResponse:
     request_id = new_request_id()
 
@@ -438,6 +567,16 @@ async def run_chat_completion_stream(
         ) from None
 
     async def _start(session: AsyncSession) -> None:
+        gateway_profile_id, adapter_profile_id, domain_key_out, adaptation_mode = (
+            await _resolve_adapter_profile_association(
+                session,
+                request_id=request_id,
+                project_id=project.id,
+                api_key_id=api_key.id,
+                domain_key=domain_key,
+                explicit_gateway_profile_id=explicit_gateway_profile_id,
+            )
+        )
         await start_request(
             session,
             request_id=request_id,
@@ -445,10 +584,48 @@ async def run_chat_completion_stream(
             api_key_id=api_key.id,
             requested_model=model,
             limit_reservation_id=limit_reservation_id,
+            gateway_profile_id=gateway_profile_id,
+            adapter_profile_id=adapter_profile_id,
+            domain_key=domain_key_out,
+            adaptation_mode=adaptation_mode,
         )
 
     try:
         await _with_log_session(sessionmaker, _start)
+    except GatewayClientError as exc:
+        error_code = exc.code
+        error_message = str(exc)
+
+        async def _log_client_error(log_session: AsyncSession) -> None:
+            row = await start_request(
+                log_session,
+                request_id=request_id,
+                project_id=project.id,
+                api_key_id=api_key.id,
+                requested_model=model,
+                limit_reservation_id=limit_reservation_id,
+                gateway_profile_id=(explicit_gateway_profile_id or "").strip() or None,
+                adapter_profile_id=None,
+                domain_key=(domain_key or "").strip() or None,
+                adaptation_mode="explicit",
+            )
+            await finish_request_failure(
+                log_session,
+                row,
+                latency_ms=0,
+                error_code=error_code,
+                error_message=error_message,
+            )
+
+        await _with_log_session(sessionmaker, _log_client_error)
+        await _reconcile_reservation(
+            sessionmaker,
+            limit_reservation_id=limit_reservation_id,
+            actual_tokens=0,
+            actual_cost=0.0,
+            status="failed",
+        )
+        raise
     except BaseException:
         await _reconcile_reservation(
             sessionmaker,

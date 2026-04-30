@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db import models
 from app.db.session import get_session
 from app.main import app
+from app.services.password_hasher import hash_password
 
 
 @pytest_asyncio.fixture
@@ -54,6 +55,37 @@ async def client(db_sessionmaker):
 
 async def _login_admin(client: AsyncClient) -> None:
     response = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
+    assert response.status_code == 200
+
+
+async def _create_admin_user(
+    client: AsyncClient,
+    *,
+    username: str,
+    password: str,
+    roles_json: str,
+) -> None:
+    override = app.dependency_overrides.get(get_session)
+    if override is None:
+        raise AssertionError("test setup failed: missing db session override")
+    agen = override()
+    try:
+        session = await anext(agen)
+        user = models.AdminUser(
+            username=username,
+            email=None,
+            password_hash=hash_password(password),
+            roles_json=roles_json,
+            is_active=True,
+        )
+        session.add(user)
+        await session.commit()
+    finally:
+        await agen.aclose()
+
+
+async def _login_db_admin(client: AsyncClient, *, username: str, password: str) -> None:
+    response = await client.post("/admin/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
 
 
@@ -367,6 +399,84 @@ async def test_POST_publish_injects_admin_identity_and_roles(
     assert captured["json"]["publishedByUserId"] == "admin"
     assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
     assert captured["json"]["notes"] == "ship it"
+
+
+@pytest.mark.asyncio
+async def test_read_only_can_view_profiles_but_cannot_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _create_admin_user(client, username="ro", password="pw", roles_json='["ReadOnly"]')
+    await _login_db_admin(client, username="ro", password="pw")
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        if kwargs["method"] == "GET" and kwargs["url"].endswith("/adapter-profiles"):
+            return httpx.Response(
+                200, json=[{"id": "p1"}], headers={"content-type": "application/json"}
+            )
+        raise AssertionError(f"unexpected upstream proxy call: {kwargs['method']} {kwargs['url']}")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    ok = await client.get("/admin/adaptation/profiles")
+    assert ok.status_code == 200
+    assert ok.json() == [{"id": "p1"}]
+
+    forbidden = await client.post("/admin/adaptation/profiles/p1/publish", json={})
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_deploy_without_permission_returns_403_before_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _create_admin_user(client, username="viewer", password="pw", roles_json='["ReadOnly"]')
+    await _login_db_admin(client, username="viewer", password="pw")
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy when forbidden")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    assert (await client.post("/admin/adaptation/profiles/p1/publish", json={})).status_code == 403
+    assert (
+        await client.post("/admin/adaptation/profiles/p1/activate-canary", json={"canaryPercent": 10})
+    ).status_code == 403
+    assert (await client.post("/admin/adaptation/profiles/p1/promote", json={})).status_code == 403
+    assert (await client.post("/admin/adaptation/profiles/p1/rollback", json={"reason": "x"})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_super_admin_gets_all_adaptation_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _create_admin_user(client, username="sa", password="pw", roles_json='["SuperAdmin"]')
+    await _login_db_admin(client, username="sa", password="pw")
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/profiles/p1/publish", json={"notes": "x"})
+    assert response.status_code == 200
+    assert captured["json"]["roles"] == list(_DEPLOYMENT_ROLES)
 
 
 @pytest.mark.asyncio

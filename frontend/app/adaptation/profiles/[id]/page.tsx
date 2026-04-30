@@ -24,6 +24,7 @@ import {
   type AdapterProfileActivation,
   type AdapterProfileDeploymentEvent,
   type AdaptationResult,
+  type GatewayRuntimeState,
 } from "@/lib/adaptationApi";
 
 function bool(value: unknown) {
@@ -33,6 +34,7 @@ function bool(value: unknown) {
 export default function AdapterProfileDetailPage({ params }: { params: { id: string } }) {
   const profileId = params.id;
   const [profile, setProfile] = useState<AdapterProfile | null>(null);
+  const [gatewayRuntime, setGatewayRuntime] = useState<GatewayRuntimeState | null>(null);
   const [activations, setActivations] = useState<AdapterProfileActivation[]>([]);
   const [deploymentEvents, setDeploymentEvents] = useState<AdapterProfileDeploymentEvent[]>([]);
   const [activeForDomain, setActiveForDomain] = useState<AdapterProfile | null>(null);
@@ -52,6 +54,7 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
     const res = await adaptationApi.getProfile(profileId);
     if (!res.ok) {
       setProfile(null);
+      setGatewayRuntime(null);
       setActivations([]);
       setDeploymentEvents([]);
       setActiveForDomain(null);
@@ -61,12 +64,14 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
     }
     const p = res.data;
     setProfile(p);
-    const [actRes, evRes] = await Promise.all([
+    const [actRes, evRes, rtRes] = await Promise.all([
       adaptationApi.listProfileActivations(profileId),
       adaptationApi.listProfileDeploymentEvents(profileId),
+      adaptationApi.getGatewayRuntimeState(profileId),
     ]);
     setActivations(actRes.ok ? actRes.data : []);
     setDeploymentEvents(evRes.ok ? evRes.data : []);
+    setGatewayRuntime(rtRes.ok ? rtRes.data : null);
     const dk = p.domainKey?.trim();
     if (dk) {
       const domRes = await adaptationApi.getActiveProfile(dk);
@@ -170,6 +175,93 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
                 },
               ]}
             />
+          </Card>
+
+          <Card>
+            <SectionHeader
+              title="Gateway runtime state"
+              description="This is Conexus Gateway’s runtime view (registration/activation/traffic), not the adaptation lifecycle state."
+            />
+            {!gatewayRuntime ? (
+              <EmptyState title="Runtime state unavailable">
+                Conexus did not return runtime registry data for this profile.
+              </EmptyState>
+            ) : gatewayRuntime.registered !== true ? (
+              <EmptyState title="Not registered in Conexus Gateway">
+                This profile exists in adaptation, but it has not been registered in the Conexus runtime registry yet.
+              </EmptyState>
+            ) : (
+              <KeyValueGrid
+                items={[
+                  { label: "registered", value: <Badge tone="success">true</Badge> },
+                  {
+                    label: "gatewayProfileId",
+                    value: gatewayRuntime.gatewayProfileId ? (
+                      <code className="wrap-anywhere">{gatewayRuntime.gatewayProfileId}</code>
+                    ) : (
+                      "—"
+                    ),
+                  },
+                  {
+                    label: "registrationStatus",
+                    value: gatewayRuntime.registrationStatus ? (
+                      <Badge tone="neutral">{gatewayRuntime.registrationStatus}</Badge>
+                    ) : (
+                      "—"
+                    ),
+                  },
+                  { label: "domainKey", value: <code className="wrap-anywhere">{gatewayRuntime.domainKey ?? "—"}</code> },
+                  {
+                    label: "activeGatewayProfileId",
+                    value: gatewayRuntime.activeGatewayProfileId ? (
+                      <code className="wrap-anywhere">{gatewayRuntime.activeGatewayProfileId}</code>
+                    ) : (
+                      "—"
+                    ),
+                  },
+                  {
+                    label: "canaryGatewayProfileId",
+                    value: gatewayRuntime.canaryGatewayProfileId ? (
+                      <code className="wrap-anywhere">{gatewayRuntime.canaryGatewayProfileId}</code>
+                    ) : (
+                      "—"
+                    ),
+                  },
+                  {
+                    label: "canaryPercent",
+                    value:
+                      gatewayRuntime.canaryPercent !== undefined && gatewayRuntime.canaryPercent !== null
+                        ? String(gatewayRuntime.canaryPercent)
+                        : "—",
+                  },
+                  {
+                    label: "last24h.requestCount",
+                    value: gatewayRuntime.last24h ? String(gatewayRuntime.last24h.requestCount) : "—",
+                  },
+                  {
+                    label: "last24h.errorRate",
+                    value:
+                      gatewayRuntime.last24h && gatewayRuntime.last24h.errorRate !== null
+                        ? `${(gatewayRuntime.last24h.errorRate * 100).toFixed(2)}%`
+                        : "—",
+                  },
+                  {
+                    label: "last24h.latencyP95Ms",
+                    value:
+                      gatewayRuntime.last24h && gatewayRuntime.last24h.latencyP95Ms !== null
+                        ? String(gatewayRuntime.last24h.latencyP95Ms)
+                        : "—",
+                  },
+                  {
+                    label: "last24h.costPerAnswer",
+                    value:
+                      gatewayRuntime.last24h && gatewayRuntime.last24h.costPerAnswer !== null
+                        ? String(gatewayRuntime.last24h.costPerAnswer)
+                        : "—",
+                  },
+                ]}
+              />
+            )}
           </Card>
 
           {deploymentSuccess && (

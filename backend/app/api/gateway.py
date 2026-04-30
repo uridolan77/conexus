@@ -14,7 +14,7 @@ import time
 import json
 from typing import Annotated, Any, Literal, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -168,6 +168,7 @@ def _raise_gateway_http(exc: Exception) -> NoReturn:
 async def chat_completions(
     body: ChatCompletionsBody,
     response: Response,
+    request: Request,
     auth: Annotated[AuthenticatedProject, Depends(require_project_api_key)],
     sessionmaker: Annotated[
         async_sessionmaker[AsyncSession], Depends(get_db_sessionmaker)
@@ -176,6 +177,10 @@ async def chat_completions(
 ) -> ChatCompletionsResponse | StreamingResponse:
     _validate_compat(body)
     created = int(time.time())
+    domain_key = request.headers.get("X-Conexus-Domain-Key")
+    explicit_gateway_profile_id = request.headers.get("X-Conexus-Gateway-Profile-Id") or request.headers.get(
+        "X-Conexus-Adapter-Profile-Id"
+    )
     if body.stream:
         try:
             stream_result = await run_chat_completion_stream(
@@ -187,6 +192,8 @@ async def chat_completions(
                 messages=_to_chat_messages(body.messages),
                 max_tokens=body.max_tokens,
                 temperature=body.temperature,
+                domain_key=domain_key,
+                explicit_gateway_profile_id=explicit_gateway_profile_id,
             )
         except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
             _raise_gateway_http(exc)
@@ -250,6 +257,8 @@ async def chat_completions(
             messages=_to_chat_messages(body.messages),
             max_tokens=body.max_tokens,
             temperature=body.temperature,
+            domain_key=domain_key,
+            explicit_gateway_profile_id=explicit_gateway_profile_id,
         )
     except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
         _raise_gateway_http(exc)

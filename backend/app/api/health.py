@@ -40,6 +40,7 @@ async def _ready_checks() -> tuple[bool, dict[str, bool]]:
         "db": False,
         "encryption": False,
         "model_aliases": False,
+        "internal_adapter_api_key": True,
     }
 
     try:
@@ -61,6 +62,9 @@ async def _ready_checks() -> tuple[bool, dict[str, bool]]:
         checks["db"] = True
     except Exception:
         logger.exception("readyz_check_db_failed")
+
+    if settings.app_env.lower() == "prod" and settings.adapter_profile_registry_enabled:
+        checks["internal_adapter_api_key"] = bool((settings.internal_adapter_api_key or "").strip())
 
     return all(checks.values()), checks
 

@@ -34,6 +34,10 @@ async def start_request(
     api_key_id: str | None,
     requested_model: str,
     limit_reservation_id: str | None = None,
+    gateway_profile_id: str | None = None,
+    adapter_profile_id: str | None = None,
+    domain_key: str | None = None,
+    adaptation_mode: str | None = None,
 ) -> GatewayRequest:
     row = GatewayRequest(
         request_id=request_id,
@@ -42,6 +46,10 @@ async def start_request(
         requested_model=requested_model,
         status="started",
         limit_reservation_id=limit_reservation_id,
+        gateway_profile_id=gateway_profile_id,
+        adapter_profile_id=adapter_profile_id,
+        domain_key=domain_key,
+        adaptation_mode=adaptation_mode,
     )
     session.add(row)
     await session.flush()

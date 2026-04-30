@@ -34,6 +34,24 @@ from app.services.project_key_service import create_api_key
 from app.core.config import settings
 
 
+async def _insert_gateway_adapter_profile(
+    db_sessionmaker: async_sessionmaker,
+    *,
+    gateway_profile_id: str,
+    adapter_profile_id: str,
+    domain_key: str,
+) -> None:
+    async with db_sessionmaker() as session:
+        row = models.GatewayAdapterProfile(
+            gateway_profile_id=gateway_profile_id,
+            adapter_profile_id=adapter_profile_id,
+            domain_key=domain_key,
+            status="Registered",
+        )
+        session.add(row)
+        await session.commit()
+
+
 class _StubProvider(LLMProvider):
     """In-memory provider for endpoint tests — no SDK dependency."""
 
@@ -1505,3 +1523,82 @@ async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
         ).scalar_one()
         assert log.status == "failed"
         assert log.error_code == "ProviderUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_gateway_request_with_gateway_profile_logs_profile_id(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="ok",
+                model="gpt-4o-mini",
+                provider="stub",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+    try:
+        await _insert_gateway_adapter_profile(
+            db_sessionmaker,
+            gateway_profile_id="gw-1",
+            adapter_profile_id="ap-1",
+            domain_key="gaming-crm",
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Conexus-Gateway-Profile-Id": "gw-1",
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 200
+    request_id = response.headers[REQUEST_ID_HEADER]
+
+    async with db_sessionmaker() as session:
+        row = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == request_id)
+            )
+        ).scalar_one()
+        assert row.gateway_profile_id == "gw-1"
+        assert row.adapter_profile_id == "ap-1"
+        assert row.domain_key == "gaming-crm"
+        assert row.adaptation_mode == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_gateway_request_with_unknown_gateway_profile_returns_400(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    _set_provider(
+        _StubProvider(
+            result=ChatResult(
+                content="ok",
+                model="gpt-4o-mini",
+                provider="stub",
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                "X-Conexus-Gateway-Profile-Id": "gw-missing",
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unknown_gateway_profile_id"

@@ -42,6 +42,7 @@ def test_readyz_returns_ok() -> None:
         "db": True,
         "encryption": True,
         "model_aliases": True,
+        "internal_adapter_api_key": True,
     }
 
 

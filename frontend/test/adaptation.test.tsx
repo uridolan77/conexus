@@ -326,6 +326,7 @@ describe("Adaptation BO pages", () => {
       },
       { status: 200, body: [] },
       { status: 200, body: [] },
+      { status: 200, body: { adapterProfileId: "prof_1", registered: false } },
     ]);
 
     const { default: ProfileDetail } = await import("../app/adaptation/profiles/[id]/page");
@@ -351,6 +352,7 @@ describe("Adaptation BO pages", () => {
       },
       { status: 200, body: [] },
       { status: 200, body: [] },
+      { status: 200, body: { adapterProfileId: "prof_1", registered: false } },
       {
         status: 200,
         body: {
