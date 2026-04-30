@@ -3,7 +3,9 @@
 **Scope:** `conexus` (FastAPI LLM gateway) ↔ `conexus.adaptation` (.NET adaptation orchestrator)  
 **Date:** 2026-04-30  
 **Reviewer:** Agent cross-repo review — v2 (corrected after implementation verification)  
-**Status:** Draft — awaiting owner decisions on P1 items
+**Status:** Updated 2026-04-30 — `HttpConexusGatewayRegistrationClient` shipped (Phase v0.6); registration is now real in HTTP mode. Canary/promote/rollback and observability remain stub.
+
+> See also: `REAL_GATEWAY_REGISTRATION_SMOKE_TEST.md` for exact env vars and verification steps.
 
 ---
 
@@ -28,12 +30,15 @@ The first draft of this review contained a material factual error: it incorrectl
 - `conexus` DB has `GatewayAdapterProfile` and `GatewayAdapterProfileActivation` tables; `GatewayRequest` rows carry `gateway_profile_id` for per-profile observability queries.
 - `conexus` admin BO — request logs, provider usage, project management, audit trail.
 
-**What is still stub-only in `conexus.adaptation` (confirmed by code inspection):**
-- `DeterministicGatewayRegistrationClient` is the only implementation of `IConexusGatewayRegistrationClient`. No `HttpConexusGatewayRegistrationClient` exists. Registration returns `gw-{profile.Id:N}` with no HTTP call.
+**What is now real in `conexus.adaptation` (Phase v0.6, 2026-04-30):**
+- `HttpConexusGatewayRegistrationClient` is the real implementation of `IConexusGatewayRegistrationClient` when `GatewayRegistration:Mode=http`. It calls `POST /internal/adapter-profiles/register`, parses `gatewayProfileId` + `status` from the response, and stores the ID in the adaptation DB. `DeterministicGatewayRegistrationClient` remains the default when Mode is not set.
+- DTOs verified: all 9 request fields (`adapterProfileId`, `domainKey`, `runId`, `planId`, `compositeScore`, `evidenceHash`, `semanticContextHash`, `slodModelVersion`, `profileVersion`, `metadata`) align with `RegisterAdapterProfileBody`; response fields (`gatewayProfileId`, `status`) align with `RegisterAdapterProfileResponse`. See DTO table below.
+
+**What is still stub-only in `conexus.adaptation`:**
 - `DeterministicAdaptationObservabilityClient` is the only implementation of `IAdaptationObservabilityClient`. No HTTP client calls `GET /internal/adapter-profiles/{id}/observability`. Returns hardcoded metrics.
 - Canary activation, promote, and rollback commands in `conexus.adaptation` do NOT call the corresponding `/internal/*` endpoints in `conexus`. They manage state in the adaptation DB only and never notify the gateway.
 
-**The integration gap has shifted:** The problem is not that `conexus` is missing endpoints. The problem is that `conexus.adaptation` has no real HTTP clients for the profile lifecycle or observability endpoints, and the interface signatures have DTO mismatches with the real endpoint shapes.
+**The remaining integration gap:** Registration is real. The profile lifecycle (canary/promote/rollback) and observability are still stub-only on the adaptation side.
 
 **Are they conceptually aligned?**  
 Yes. The architecture is coherent. The implementation gap is one-sided: `conexus` server side is ready; `conexus.adaptation` client side is not wired up.
@@ -52,7 +57,8 @@ Yes. The architecture is coherent. The implementation gap is one-sided: `conexus
 │  — state managed in adaptation DB only —                      │
 │                                                               │
 │  IConexusGatewayRegistrationClient                            │
-│  └─ DeterministicGatewayRegistrationClient (STUB, no HTTP)    │
+│  ├─ HttpConexusGatewayRegistrationClient (REAL, Mode=http)    │
+│  └─ DeterministicGatewayRegistrationClient (stub, default)    │
 │                                                               │
 │  IAdaptationObservabilityClient                               │
 │  └─ DeterministicAdaptationObservabilityClient (STUB, no HTTP)│
@@ -63,7 +69,7 @@ Yes. The architecture is coherent. The implementation gap is one-sided: `conexus
 └──────────────┬────────────────────────────────────────────────┘
                │ POST /v1/chat/completions (HttpConexusLlmClient — REAL)
                │
-               │ POST /internal/adapter-profiles/register       ← STUB on client side
+               │ POST /internal/adapter-profiles/register       ← REAL (HttpConexusGatewayRegistrationClient, Mode=http)
                │ POST /internal/.../{id}/activate-canary        ← NOT called
                │ POST /internal/.../{id}/promote                ← NOT called
                │ POST /internal/.../{id}/rollback               ← NOT called
@@ -148,8 +154,9 @@ conexus.adaptation                              conexus (gateway)
 8. AdapterProfile assembled
 9. PublishAdapterProfileCommandHandler
    → IConexusGatewayRegistrationClient
-     .RegisterAsync(profile, evidence)      ──→ [STUB: returns gw-{profile.Id:N}]
-                                                 real target: POST /internal/adapter-profiles/register  ✅ ready
+     .RegisterAsync(profile, evidence)      ──→ POST /internal/adapter-profiles/register  ✅ REAL (Mode=http)
+                                                 ← returns {gatewayProfileId, status}
+                                                 ← adaptation stores gatewayProfileId in adapter_profiles
 10. ActivateCanaryAdapterProfileCommandHandler
     → IAdapterProfileActivationRepository   ← adaptation DB only
     (no HTTP call to conexus)                    real target: POST /internal/.../{id}/activate-canary  ✅ ready
@@ -208,7 +215,7 @@ conexus.adaptation                              conexus (gateway)
 
 | Intended client call | Server endpoint (conexus) | Server status | Client status |
 |---------------------|--------------------------|---------------|---------------|
-| `IConexusGatewayRegistrationClient.RegisterAsync()` | `POST /internal/adapter-profiles/register` | ✅ Implemented, tested | ❌ Stub only (`DeterministicGatewayRegistrationClient`) |
+| `IConexusGatewayRegistrationClient.RegisterAsync()` | `POST /internal/adapter-profiles/register` | ✅ Implemented, tested | ✅ Real (`HttpConexusGatewayRegistrationClient`, requires `Mode=http`) |
 | (not called) canary activation notify | `POST /internal/adapter-profiles/{gatewayProfileId}/activate-canary` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
 | (not called) promote notify | `POST /internal/adapter-profiles/{gatewayProfileId}/promote` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
 | (not called) rollback notify | `POST /internal/adapter-profiles/{gatewayProfileId}/rollback` | ✅ Implemented, tested | ❌ No client; adaptation uses own DB |
@@ -241,41 +248,33 @@ Response parsing:
 | `provider` | String | Not read | ✅ (ignored) |
 | `fallback_used` | Bool | Not read | ✅ (ignored) |
 
-### Gateway registration — current stub vs. real endpoint (DTO mismatch)
+### Gateway registration — verified DTO field map (Phase v0.6)
 
-`DeterministicGatewayRegistrationClient` signature:
-```csharp
-RegisterAsync(AdapterProfile profile, EvaluationEvidenceProjection evidence, CancellationToken ct)
-// → returns GatewayAdapterProfileRegistrationResult { Succeeded, GatewayProfileId }
-```
+`HttpConexusGatewayRegistrationClient.BuildPayload()` field-by-field comparison with `RegisterAdapterProfileBody`:
 
-`conexus` `POST /internal/adapter-profiles/register` expects:
-```json
-{
-  "adapterProfileId": "...",   // required — maps from profile.Id.ToString()
-  "domainKey": "...",           // required — maps from profile.DomainKey
-  "runId": "...",               // optional — maps from profile.RunId
-  "planId": "...",              // optional — maps from profile.PlanId / profile.PlanKey
-  "compositeScore": 0.87,       // optional — maps from evidence.CompositeScore or similar
-  "evidenceHash": "...",        // optional — maps from evidence hash
-  "semanticContextHash": "...", // optional
-  "slodModelVersion": "...",    // optional
-  "profileVersion": "...",      // optional — maps from profile.Version
-  "metadata": {}                // optional
-}
-```
+| JSON field | Adaptation source | Server type | Match |
+|------------|-------------------|-------------|-------|
+| `adapterProfileId` | `profile.Id` (Guid → hyphenated UUID string) | `str` required | ✅ |
+| `domainKey` | `profile.DomainKey` | `str` required | ✅ |
+| `runId` | `profile.RunId` (Guid, always set) | `str \| None` | ✅ |
+| `planId` | `profile.PlanId` (Guid, always set) | `str \| None` | ✅ |
+| `compositeScore` | `evidence.CompositeScore` (double) | `float \| None` | ✅ |
+| `evidenceHash` | `evidence.EvidenceHash` | `str \| None` | ✅ |
+| `semanticContextHash` | `evidence.KgbSemanticContextHash ?? profile.SemanticContextHash` | `str \| None` | ✅ |
+| `slodModelVersion` | `evidence.SlodModelVersion ?? profile.SlodModelVersion` | `str \| None` | ✅ |
+| `profileVersion` | `evidence.ProjectionVersion` (hardcoded `"v0.3j"`) | `str \| None` | ✅ type; ⚠ semantics |
+| `metadata` | anonymous object (tenant/workspace/gate/metric counts) | `dict \| None` | ✅ |
 
-`conexus` returns:
-```json
-{
-  "gatewayProfileId": "gw-...",  // maps to GatewayAdapterProfileRegistrationResult.GatewayProfileId
-  "status": "Registered"
-}
-```
+**`profileVersion` semantic concern:** `EvaluationEvidenceProjection.ProjectionVersion` is a hardcoded schema version (`"v0.3j"`) that describes the evidence format, not a business-level version of the adapter profile. Every registered row will have `profile_version = "v0.3j"`, making the column useless for distinguishing profile generations within a domain. The field is optional and not used in any current `conexus` routing or business logic, so there is no functional breakage today. A true profile version would require a user-defined version tag on `AdapterProfile` (currently not modeled). **Do not change behavior until the correct source field is defined and tested.**
 
-The mapping from `AdapterProfile` + `EvaluationEvidenceProjection` to `RegisterAdapterProfileBody` is plausible but requires explicit field mapping work. The real `HttpConexusGatewayRegistrationClient` will need to decide which evidence fields to include and how to compute `compositeScore` and `evidenceHash`.
+Response field map:
 
-**Important:** The stub returns `gw-{profile.Id:N}` — a deterministic `gw-` prefix followed by the adaptation profile GUID. The real endpoint also returns a `gw-` prefixed ID, but generates it via `uuid4().hex`. The two IDs will differ for the same profile. Tests that compare stub vs. real `GatewayProfileId` values will fail.
+| JSON field | Server returns | Adaptation reads | Match |
+|------------|---------------|------------------|-------|
+| `gatewayProfileId` | `"gw-<uuid4().hex>"` | `TryGetProperty("gatewayProfileId")` | ✅ |
+| `status` | `"Registered"` | `TryGetProperty("status")` (logged, not stored) | ✅ |
+
+**ID format note:** The real `gatewayProfileId` is `gw-{uuid4().hex}` (random 32 hex chars). The old stub returned `gw-{profile.Id:N}` (deterministic). Any test that hardcodes a stub-style ID will fail against the real endpoint.
 
 ### Observability client — interface vs. real endpoint (type and field mismatch)
 
@@ -452,7 +451,7 @@ Query params: since (ISO datetime), until (ISO datetime)
 
 ### Must resolve before demo
 
-- [ ] **State clearly** in the demo script: the gateway integration is stub-only. Profiles are stored in the adaptation DB. `conexus` gateway DB does not have these profiles. "Registered in Conexus" is not a true claim until `HttpConexusGatewayRegistrationClient` is built.
+- [x] **Gateway registration is real** when `GatewayRegistration:Mode=http`. With correct env vars, publishing an adapter profile writes a real row to `conexus.gateway_adapter_profiles`. See `REAL_GATEWAY_REGISTRATION_SMOKE_TEST.md`. Canary/promote/rollback are still stub (adaptation DB only).
 - [ ] **Verify model profile name alignment:** Confirm `Conexus:DefaultModelProfile` values match valid aliases in `conexus` (`conexus-fast`, `conexus-default`, etc.). A mismatch returns 400.
 - [ ] **`INTERNAL_ADAPTER_API_KEY`:** Ensure the demo environment has this set in `conexus` and `GatewayRegistration:ApiKey` set in `conexus.adaptation`. Without both, any future real registration call fails immediately.
 
@@ -464,7 +463,7 @@ Query params: since (ISO datetime), until (ISO datetime)
 
 ### Can safely wait
 
-- [ ] `HttpConexusGatewayRegistrationClient` implementation.
+- [x] `HttpConexusGatewayRegistrationClient` implementation. **Done — Phase v0.6.**
 - [ ] Canary/promote/rollback HTTP notify clients in adaptation.
 - [ ] `HttpAdaptationObservabilityClient` implementation.
 - [ ] `IAdaptationObservabilityClient` interface redesign (add `gatewayProfileId`, `since`/`until`).
