@@ -66,7 +66,7 @@ describe("ActivityPage", () => {
     view.click();
 
     await waitFor(() => expect(screen.getByText("Audit detail")).toBeInTheDocument());
-    expect(screen.getByText("Metadata JSON")).toBeInTheDocument();
+    expect(screen.getByText("Debug JSON")).toBeInTheDocument();
   });
 });
 

@@ -37,8 +37,23 @@ export default function UsagePage() {
   const [byProject, setByProject] = useState<UsageProjectRow[]>([]);
   const [byProvider, setByProvider] = useState<UsageProviderRow[]>([]);
   const [timeseries, setTimeseries] = useState<UsageTimeseriesPoint[]>([]);
+  const [showZeroDays, setShowZeroDays] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  function formatBucketStart(value: string) {
+    if (windowValue === "24h") return formatDateTime(value);
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" }).format(dt);
+  }
+
+  function isZeroBucket(row: UsageTimeseriesPoint) {
+    const cost = row.estimated_cost ?? 0;
+    return row.total_requests === 0 && row.total_tokens === 0 && cost === 0;
+  }
+
+  const visibleTimeseries = showZeroDays ? timeseries : timeseries.filter((row) => !isZeroBucket(row));
 
   useEffect(() => {
     async function loadUsage() {
@@ -186,9 +201,20 @@ export default function UsagePage() {
           <Card>
             <SectionHeader
               title="Usage Over Time"
-              description="Bucketed request metadata for the selected window. Empty buckets are shown so gaps are visible."
+          description={showZeroDays
+            ? "Bucketed request metadata for the selected window, including zero-activity buckets."
+            : "Bucketed request metadata for the selected window, hiding zero-activity buckets by default."}
+          actions={
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setShowZeroDays((s) => !s)}
+            >
+              {showZeroDays ? "Hide zero days" : "Show zero days"}
+            </button>
+          }
             />
-            {timeseries.length === 0 ? (
+        {visibleTimeseries.length === 0 ? (
               <EmptyState title="No usage buckets">
                 No gateway request metadata exists for this time window.
               </EmptyState>
@@ -206,9 +232,9 @@ export default function UsagePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {timeseries.map((row) => (
+              {visibleTimeseries.map((row) => (
                     <tr key={row.bucket_start}>
-                      <td>{formatDateTime(row.bucket_start)}</td>
+                  <td>{formatBucketStart(row.bucket_start)}</td>
                       <td>{row.total_requests.toLocaleString()}</td>
                       <td>{formatPercentRatio(row.success_rate)}</td>
                       <td>{formatPercentRatio(row.fallback_rate)}</td>

@@ -12,7 +12,7 @@ function jsonResponse(body: unknown, init?: ResponseInit) {
 }
 
 describe("RequestsPage", () => {
-  it("renders rows, highlights failures, and shows API key prefix column", async () => {
+  it("renders rows and highlights failures", async () => {
     const projects = [{ id: "p1", name: "Payments", created_at: "", active_key_count: 1, total_request_count: 2 }];
     const requests = {
       items: [
@@ -85,9 +85,6 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByText("req_ok")).toBeInTheDocument();
     expect(await screen.findByText("req_failed")).toBeInTheDocument();
-
-    // API key prefix should be visible in the table.
-    expect(await screen.findByText("cx_live_abcd")).toBeInTheDocument();
 
     // Failed rows should be visually distinct.
     await waitFor(() => {
@@ -170,7 +167,7 @@ describe("RequestsPage", () => {
     render(<RequestsPage />);
     expect(await screen.findByText("req_ok")).toBeInTheDocument();
 
-    const button = await screen.findByRole("button", { name: "View details" });
+    const button = await screen.findByRole("button", { name: "View" });
     button.click();
 
     // Drawer shows request_id

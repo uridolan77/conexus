@@ -14,10 +14,11 @@ import {
   PageHeader,
   SectionHeader,
   Table,
+  UnconfiguredServiceState,
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { formatDateTime } from "@/lib/format";
-import { adaptationApi, type AdaptationResult, type AdaptationRunListItem } from "@/lib/adaptationApi";
+import { adaptationApi, isAdaptationServiceUnconfigured, type AdaptationResult, type AdaptationRunListItem } from "@/lib/adaptationApi";
 
 type Filters = {
   domainKey: string;
@@ -53,6 +54,7 @@ export default function AdaptationRunsPage() {
   const [items, setItems] = useState<AdaptationRunListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
+  const unconfigured = lastError ? isAdaptationServiceUnconfigured(lastError) : false;
 
   async function load(next: Filters) {
     setLoading(true);
@@ -94,125 +96,136 @@ export default function AdaptationRunsPage() {
         description="Inspect adaptation runs, manifests, and produced adapter profiles."
       />
 
-      {lastError && <AdaptationErrorBanner result={lastError} />}
+      {unconfigured ? (
+        <UnconfiguredServiceState
+          serviceName="Adaptation service"
+          envVarName="ADAPTATION_API_BASE_URL"
+          expectedLocalValue="http://localhost:5088"
+          onRetry={() => void load(filters)}
+        />
+      ) : (
+        <>
+          {lastError && <AdaptationErrorBanner result={lastError} />}
 
-      <Card>
-        <SectionHeader title="Filters" description="Filters are passed through to the adaptation service." />
-        <form className="stack" onSubmit={applyFilters}>
-          <FormRow>
-            <Field label="Domain key">
-              <Input
-                value={filters.domainKey}
-                onChange={(e) => setFilters({ ...filters, domainKey: e.target.value })}
-                placeholder="finance-support"
-              />
-            </Field>
-            <Field label="Status">
-              <Input
-                value={filters.status}
-                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                placeholder="Running / Completed / Failed / ..."
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Plan ID">
-              <Input
-                value={filters.planId}
-                onChange={(e) => setFilters({ ...filters, planId: e.target.value })}
-                placeholder="plan_..."
-              />
-            </Field>
-            <Field label="Recipe key">
-              <Input
-                value={filters.recipeKey}
-                onChange={(e) => setFilters({ ...filters, recipeKey: e.target.value })}
-                placeholder="recipe_..."
-              />
-            </Field>
-          </FormRow>
-          <div className="inline-actions">
-            <Button type="submit">Apply filters</Button>
-            <Button type="button" variant="secondary" onClick={clearFilters}>
-              Clear
-            </Button>
-          </div>
-        </form>
-      </Card>
+          <Card>
+            <SectionHeader title="Filters" description="Filters are passed through to the adaptation service." />
+            <form className="stack" onSubmit={applyFilters}>
+              <FormRow>
+                <Field label="Domain key">
+                  <Input
+                    value={filters.domainKey}
+                    onChange={(e) => setFilters({ ...filters, domainKey: e.target.value })}
+                    placeholder="finance-support"
+                  />
+                </Field>
+                <Field label="Status">
+                  <Input
+                    value={filters.status}
+                    onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                    placeholder="Running / Completed / Failed / ..."
+                  />
+                </Field>
+              </FormRow>
+              <FormRow>
+                <Field label="Plan ID">
+                  <Input
+                    value={filters.planId}
+                    onChange={(e) => setFilters({ ...filters, planId: e.target.value })}
+                    placeholder="plan_..."
+                  />
+                </Field>
+                <Field label="Recipe key">
+                  <Input
+                    value={filters.recipeKey}
+                    onChange={(e) => setFilters({ ...filters, recipeKey: e.target.value })}
+                    placeholder="recipe_..."
+                  />
+                </Field>
+              </FormRow>
+              <div className="inline-actions">
+                <Button type="submit">Apply filters</Button>
+                <Button type="button" variant="secondary" onClick={clearFilters}>
+                  Clear
+                </Button>
+              </div>
+            </form>
+          </Card>
 
-      <Card>
-        <SectionHeader title="Run Table" description={`Showing ${items.length} runs.`} />
-        {loading ? (
-          <LoadingState label="Loading runs..." />
-        ) : items.length === 0 ? (
-          <EmptyState title="No runs found">No adaptation runs match the current filters.</EmptyState>
-        ) : (
-          <Table aria-label="Adaptation runs">
-            <thead>
-              <tr>
-                <th>Created</th>
-                <th>Domain key</th>
-                <th>Plan</th>
-                <th>Recipe</th>
-                <th>Status</th>
-                <th>Step count</th>
-                <th>Started</th>
-                <th>Completed</th>
-                <th>Failed</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((run) => {
-                const id = run.runId ?? run.id ?? "";
-                const statusValue = run.status ?? "—";
-                const lower = typeof statusValue === "string" ? statusValue.toLowerCase() : "";
-                const tone =
-                  lower === "failed" ? "danger" : lower === "completed" ? "success" : lower === "running" ? "info" : "neutral";
-                const planId = run.planId ?? "—";
-                const recipeKey = run.recipeKey ?? "—";
-                const domainKey = run.domainKey ?? "—";
-                const stepCount = run.stepCount;
-                return (
-                  <tr key={id || JSON.stringify(run)} className={lower === "failed" ? "row-warning" : undefined}>
-                    <td>{formatDateTime(run.createdAt)}</td>
-                    <td>
-                      <code className="wrap-anywhere">{domainKey}</code>
-                    </td>
-                    <td>
-                      <code className="wrap-anywhere">{planId}</code>
-                    </td>
-                    <td>
-                      <code className="wrap-anywhere">{recipeKey}</code>
-                    </td>
-                    <td>
-                      <Badge tone={tone}>{statusValue}</Badge>
-                    </td>
-                    <td>{typeof stepCount === "number" ? stepCount.toLocaleString() : "—"}</td>
-                    <td>{formatDateTime(run.startedAt)}</td>
-                    <td>{formatDateTime(run.completedAt)}</td>
-                    <td>{formatDateTime(run.failedAt)}</td>
-                    <td>
-                      {id ? (
-                        <div className="inline-actions">
-                          <Link className="button button-secondary" href={`/adaptation/runs/${encodeURIComponent(id)}`}>
-                            View
-                          </Link>
-                          <Link className="button button-ghost" href={`/adaptation/runs/${encodeURIComponent(id)}#manifest`}>
-                            Manifest
-                          </Link>
-                        </div>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
+          <Card>
+            <SectionHeader title="Run Table" description={`Showing ${items.length} runs.`} />
+            {loading ? (
+              <LoadingState label="Loading runs..." />
+            ) : items.length === 0 ? (
+              <EmptyState title="No runs found">No adaptation runs match the current filters.</EmptyState>
+            ) : (
+              <Table aria-label="Adaptation runs">
+                <thead>
+                  <tr>
+                    <th>Created</th>
+                    <th>Domain key</th>
+                    <th>Plan</th>
+                    <th>Recipe</th>
+                    <th>Status</th>
+                    <th>Step count</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                    <th>Failed</th>
+                    <th>Action</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+                </thead>
+                <tbody>
+                  {items.map((run) => {
+                    const id = run.runId ?? run.id ?? "";
+                    const statusValue = run.status ?? "—";
+                    const lower = typeof statusValue === "string" ? statusValue.toLowerCase() : "";
+                    const tone =
+                      lower === "failed" ? "danger" : lower === "completed" ? "success" : lower === "running" ? "info" : "neutral";
+                    const planId = run.planId ?? "—";
+                    const recipeKey = run.recipeKey ?? "—";
+                    const domainKey = run.domainKey ?? "—";
+                    const stepCount = run.stepCount;
+                    return (
+                      <tr key={id || JSON.stringify(run)} className={lower === "failed" ? "row-warning" : undefined}>
+                        <td>{formatDateTime(run.createdAt)}</td>
+                        <td>
+                          <code className="wrap-anywhere">{domainKey}</code>
+                        </td>
+                        <td>
+                          <code className="wrap-anywhere">{planId}</code>
+                        </td>
+                        <td>
+                          <code className="wrap-anywhere">{recipeKey}</code>
+                        </td>
+                        <td>
+                          <Badge tone={tone}>{statusValue}</Badge>
+                        </td>
+                        <td>{typeof stepCount === "number" ? stepCount.toLocaleString() : "—"}</td>
+                        <td>{formatDateTime(run.startedAt)}</td>
+                        <td>{formatDateTime(run.completedAt)}</td>
+                        <td>{formatDateTime(run.failedAt)}</td>
+                        <td>
+                          {id ? (
+                            <div className="inline-actions">
+                              <Link className="button button-secondary" href={`/adaptation/runs/${encodeURIComponent(id)}`}>
+                                View
+                              </Link>
+                              <Link className="button button-ghost" href={`/adaptation/runs/${encodeURIComponent(id)}#manifest`}>
+                                Manifest
+                              </Link>
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
+          </Card>
+        </>
+      )}
     </>
   );
 }

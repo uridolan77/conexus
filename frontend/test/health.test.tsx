@@ -31,7 +31,7 @@ describe("HealthPage", () => {
     });
   });
 
-  it("renders failed readiness state and shows raw JSON", async () => {
+  it("renders failed readiness state and shows debug JSON sections", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: RequestInfo | URL) => {
@@ -51,9 +51,8 @@ describe("HealthPage", () => {
 
     expect(await screen.findByRole("heading", { level: 3, name: "Readiness" })).toBeInTheDocument();
 
-    // Expand raw json blocks to ensure they're present in DOM.
-    expect(await screen.findByText("Raw /readyz JSON")).toBeInTheDocument();
-    expect(await screen.findByText("Raw /health JSON")).toBeInTheDocument();
+    expect(await screen.findByText("Debug JSON (/readyz)")).toBeInTheDocument();
+    expect(await screen.findByText("Debug JSON (/health)")).toBeInTheDocument();
   });
 });
 

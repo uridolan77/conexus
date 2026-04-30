@@ -123,7 +123,7 @@ export default function HealthPage() {
             },
           ]}
         />
-        {health != null && <JsonBlock value={health} title="Raw /health JSON" />}
+        {health != null && <JsonBlock value={health} title="Debug JSON (/health)" defaultOpen={false} />}
       </Card>
 
       <Card>
@@ -144,7 +144,7 @@ export default function HealthPage() {
             },
           ]}
         />
-        {readyz != null && <JsonBlock value={readyz} title="Raw /readyz JSON" />}
+        {readyz != null && <JsonBlock value={readyz} title="Debug JSON (/readyz)" defaultOpen={false} />}
       </Card>
 
       <Card>

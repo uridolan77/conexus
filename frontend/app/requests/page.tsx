@@ -5,11 +5,13 @@ import {
   Badge,
   Button,
   Card,
+  CompactId,
   CopyButton,
   DetailDrawer,
   EmptyState,
   ErrorState,
   Field,
+  FilterPanel,
   FormRow,
   Input,
   JsonBlock,
@@ -85,6 +87,16 @@ const defaultFilters: Filters = {
 
 function empty(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "—" : value;
+}
+
+function activeFiltersSummary(filters: Filters) {
+  const parts: string[] = [];
+  if (filters.request_id) parts.push(`request_id=${filters.request_id}`);
+  if (filters.status) parts.push(`status=${filters.status}`);
+  if (filters.project_id) parts.push(`project=${filters.project_id}`);
+  if (filters.model_search) parts.push(`model~${filters.model_search}`);
+  if (filters.limit) parts.push(`limit=${filters.limit}`);
+  return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
 }
 
 function asSortBy(value: string): "created_at" | "completed_at" | "latency_ms" | "total_tokens" | "estimated_cost" {
@@ -324,221 +336,233 @@ export default function RequestsPage() {
           description="Filter persisted metadata only. Provider and served model describe the actual route; requested model is what the client sent."
         />
         <form className="stack" onSubmit={applyFilters}>
-          <FormRow>
-            <Field label="Request ID">
-              <Input
-                value={filters.request_id}
-                onChange={(e) => setFilters({ ...filters, request_id: e.target.value })}
-                placeholder="req_..."
-              />
-            </Field>
-            <Field label="Limit">
-              <Select
-                value={filters.limit}
-                onChange={(e) => setFilters({ ...filters, limit: e.target.value })}
-              >
-                <option value="25">25</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-                <option value="200">200</option>
-              </Select>
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Status">
-              <Select
-                value={filters.status}
-                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-              >
-                <option value="">Any status</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="started">Started</option>
-              </Select>
-            </Field>
-            <Field label="Project">
-              <Select
-                value={filters.project_id}
-                onChange={(e) => setFilters({ ...filters, project_id: e.target.value })}
-              >
-                <option value="">Any project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="API key ID">
-              <Input
-                value={filters.api_key_id}
-                onChange={(e) => setFilters({ ...filters, api_key_id: e.target.value })}
-                placeholder="Project API key row ID"
-              />
-            </Field>
-            <Field label="Error code">
-              <Input
-                value={filters.error_code}
-                onChange={(e) => setFilters({ ...filters, error_code: e.target.value })}
-                placeholder="provider_timeout"
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Actual served provider">
-              <Input
-                value={filters.provider}
-                onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
-                placeholder="openai"
-              />
-            </Field>
-            <Field label="Model search">
-              <Input
-                value={filters.model_search}
-                onChange={(e) => setFilters({ ...filters, model_search: e.target.value })}
-                placeholder="Matches client requested or actual model"
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Client requested model">
-              <Input
-                value={filters.requested_model}
-                onChange={(e) => setFilters({ ...filters, requested_model: e.target.value })}
-                placeholder="conexus-default"
-              />
-            </Field>
-            <Field label="Actual served model">
-              <Input
-                value={filters.model}
-                onChange={(e) => setFilters({ ...filters, model: e.target.value })}
-                placeholder="gpt-4o-mini"
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Fallback used">
-              <Select
-                value={filters.fallback_used}
-                onChange={(e) => setFilters({ ...filters, fallback_used: e.target.value })}
-              >
-                <option value="">Any</option>
-                <option value="true">Fallback only</option>
-                <option value="false">No fallback</option>
-              </Select>
-            </Field>
-            <Field label="Sort">
-              <div className="split-row">
-                <Select
-                  value={filters.sort_by}
-                  onChange={(e) => setFilters({ ...filters, sort_by: e.target.value })}
-                >
-                  <option value="created_at">Created</option>
-                  <option value="completed_at">Completed</option>
-                  <option value="latency_ms">Latency</option>
-                  <option value="total_tokens">Total tokens</option>
-                  <option value="estimated_cost">Estimated cost</option>
-                </Select>
-                <Select
-                  value={filters.sort_dir}
-                  onChange={(e) => setFilters({ ...filters, sort_dir: e.target.value })}
-                >
-                  <option value="desc">Desc</option>
-                  <option value="asc">Asc</option>
-                </Select>
-              </div>
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Created from">
-              <Input
-                type="datetime-local"
-                value={filters.created_from}
-                onChange={(e) => setFilters({ ...filters, created_from: e.target.value })}
-              />
-            </Field>
-            <Field label="Created to">
-              <Input
-                type="datetime-local"
-                value={filters.created_to}
-                onChange={(e) => setFilters({ ...filters, created_to: e.target.value })}
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Completed from">
-              <Input
-                type="datetime-local"
-                value={filters.completed_from}
-                onChange={(e) => setFilters({ ...filters, completed_from: e.target.value })}
-              />
-            </Field>
-            <Field label="Completed to">
-              <Input
-                type="datetime-local"
-                value={filters.completed_to}
-                onChange={(e) => setFilters({ ...filters, completed_to: e.target.value })}
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Min latency ms">
-              <Input
-                type="number"
-                min="0"
-                value={filters.min_latency_ms}
-                onChange={(e) => setFilters({ ...filters, min_latency_ms: e.target.value })}
-              />
-            </Field>
-            <Field label="Max latency ms">
-              <Input
-                type="number"
-                min="0"
-                value={filters.max_latency_ms}
-                onChange={(e) => setFilters({ ...filters, max_latency_ms: e.target.value })}
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Min total tokens">
-              <Input
-                type="number"
-                min="0"
-                value={filters.min_total_tokens}
-                onChange={(e) => setFilters({ ...filters, min_total_tokens: e.target.value })}
-              />
-            </Field>
-            <Field label="Max total tokens">
-              <Input
-                type="number"
-                min="0"
-                value={filters.max_total_tokens}
-                onChange={(e) => setFilters({ ...filters, max_total_tokens: e.target.value })}
-              />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="Min estimated cost">
-              <Input
-                type="number"
-                min="0"
-                step="0.0001"
-                value={filters.min_estimated_cost}
-                onChange={(e) => setFilters({ ...filters, min_estimated_cost: e.target.value })}
-              />
-            </Field>
-            <Field label="Max estimated cost">
-              <Input
-                type="number"
-                min="0"
-                step="0.0001"
-                value={filters.max_estimated_cost}
-                onChange={(e) => setFilters({ ...filters, max_estimated_cost: e.target.value })}
-              />
-            </Field>
-          </FormRow>
+          <FilterPanel
+            summary={<p className="muted">{activeFiltersSummary(filters)}</p>}
+            basic={
+              <>
+                <FormRow>
+                  <Field label="Request ID">
+                    <Input
+                      value={filters.request_id}
+                      onChange={(e) => setFilters({ ...filters, request_id: e.target.value })}
+                      placeholder="req_..."
+                    />
+                  </Field>
+                  <Field label="Limit">
+                    <Select
+                      value={filters.limit}
+                      onChange={(e) => setFilters({ ...filters, limit: e.target.value })}
+                    >
+                      <option value="25">25</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="200">200</option>
+                    </Select>
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Status">
+                    <Select
+                      value={filters.status}
+                      onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                    >
+                      <option value="">Any status</option>
+                      <option value="completed">Completed</option>
+                      <option value="failed">Failed</option>
+                      <option value="started">Started</option>
+                    </Select>
+                  </Field>
+                  <Field label="Project">
+                    <Select
+                      value={filters.project_id}
+                      onChange={(e) => setFilters({ ...filters, project_id: e.target.value })}
+                    >
+                      <option value="">Any project</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Model search">
+                    <Input
+                      value={filters.model_search}
+                      onChange={(e) => setFilters({ ...filters, model_search: e.target.value })}
+                      placeholder="Matches client requested or actual model"
+                    />
+                  </Field>
+                  <Field label="Client requested model">
+                    <Input
+                      value={filters.requested_model}
+                      onChange={(e) => setFilters({ ...filters, requested_model: e.target.value })}
+                      placeholder="conexus-default"
+                    />
+                  </Field>
+                </FormRow>
+              </>
+            }
+            advanced={
+              <>
+                <FormRow>
+                  <Field label="API key ID">
+                    <Input
+                      value={filters.api_key_id}
+                      onChange={(e) => setFilters({ ...filters, api_key_id: e.target.value })}
+                      placeholder="Project API key row ID"
+                    />
+                  </Field>
+                  <Field label="Error code">
+                    <Input
+                      value={filters.error_code}
+                      onChange={(e) => setFilters({ ...filters, error_code: e.target.value })}
+                      placeholder="provider_timeout"
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Actual served provider">
+                    <Input
+                      value={filters.provider}
+                      onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
+                      placeholder="openai"
+                    />
+                  </Field>
+                  <Field label="Actual served model">
+                    <Input
+                      value={filters.model}
+                      onChange={(e) => setFilters({ ...filters, model: e.target.value })}
+                      placeholder="gpt-4o-mini"
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Fallback used">
+                    <Select
+                      value={filters.fallback_used}
+                      onChange={(e) => setFilters({ ...filters, fallback_used: e.target.value })}
+                    >
+                      <option value="">Any</option>
+                      <option value="true">Fallback only</option>
+                      <option value="false">No fallback</option>
+                    </Select>
+                  </Field>
+                  <Field label="Sort">
+                    <div className="split-row">
+                      <Select
+                        value={filters.sort_by}
+                        onChange={(e) => setFilters({ ...filters, sort_by: e.target.value })}
+                      >
+                        <option value="created_at">Created</option>
+                        <option value="completed_at">Completed</option>
+                        <option value="latency_ms">Latency</option>
+                        <option value="total_tokens">Total tokens</option>
+                        <option value="estimated_cost">Estimated cost</option>
+                      </Select>
+                      <Select
+                        value={filters.sort_dir}
+                        onChange={(e) => setFilters({ ...filters, sort_dir: e.target.value })}
+                      >
+                        <option value="desc">Desc</option>
+                        <option value="asc">Asc</option>
+                      </Select>
+                    </div>
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Created from">
+                    <Input
+                      type="datetime-local"
+                      value={filters.created_from}
+                      onChange={(e) => setFilters({ ...filters, created_from: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Created to">
+                    <Input
+                      type="datetime-local"
+                      value={filters.created_to}
+                      onChange={(e) => setFilters({ ...filters, created_to: e.target.value })}
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Completed from">
+                    <Input
+                      type="datetime-local"
+                      value={filters.completed_from}
+                      onChange={(e) => setFilters({ ...filters, completed_from: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Completed to">
+                    <Input
+                      type="datetime-local"
+                      value={filters.completed_to}
+                      onChange={(e) => setFilters({ ...filters, completed_to: e.target.value })}
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Min latency ms">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={filters.min_latency_ms}
+                      onChange={(e) => setFilters({ ...filters, min_latency_ms: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Max latency ms">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={filters.max_latency_ms}
+                      onChange={(e) => setFilters({ ...filters, max_latency_ms: e.target.value })}
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Min total tokens">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={filters.min_total_tokens}
+                      onChange={(e) => setFilters({ ...filters, min_total_tokens: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Max total tokens">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={filters.max_total_tokens}
+                      onChange={(e) => setFilters({ ...filters, max_total_tokens: e.target.value })}
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Min estimated cost">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={filters.min_estimated_cost}
+                      onChange={(e) => setFilters({ ...filters, min_estimated_cost: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Max estimated cost">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={filters.max_estimated_cost}
+                      onChange={(e) => setFilters({ ...filters, max_estimated_cost: e.target.value })}
+                    />
+                  </Field>
+                </FormRow>
+              </>
+            }
+            advancedLabel="Advanced filters"
+          />
           <div className="inline-actions">
             <Button type="submit">Apply filters</Button>
             <Button type="button" variant="secondary" onClick={clearFilters}>
@@ -571,15 +595,10 @@ export default function RequestsPage() {
                   <th>Status</th>
                   <th>Request ID</th>
                   <th>Project</th>
-                  <th>API key prefix</th>
                   <th>Requested model</th>
-                  <th>Provider</th>
-                  <th>Served model</th>
+                  <th>Route</th>
                   <th>Latency</th>
-                  <th>Tokens</th>
                   <th>Cost</th>
-                  <th>Fallback</th>
-                  <th>Error code</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -592,24 +611,21 @@ export default function RequestsPage() {
                     <td>{formatDateTime(item.created_at)}</td>
                     <td><StatusBadge status={item.status} /></td>
                     <td>
-                      <div className="stack-tight">
-                        <code className="wrap-anywhere">{item.request_id}</code>
-                        <CopyButton value={item.request_id} />
-                      </div>
+                      <CompactId value={item.request_id} />
                     </td>
                     <td>{item.project_name ?? item.project_id ?? "—"}</td>
-                    <td><code>{item.api_key_prefix ?? "—"}</code></td>
                     <td><code>{item.requested_model}</code></td>
-                    <td>{empty(item.provider)}</td>
-                    <td><code>{empty(item.model)}</code></td>
-                    <td>{formatLatency(item.latency_ms)}</td>
-                    <td>{formatTokens(item.total_tokens)}</td>
-                    <td>{formatCost(item.estimated_cost)}</td>
-                    <td>{item.fallback_used ? <Badge tone="warning">fallback</Badge> : "—"}</td>
-                    <td>{item.error_code ?? "—"}</td>
                     <td>
+                      <div className="stack-tight">
+                        <strong>{empty(item.provider)}</strong>
+                        <code>{empty(item.model)}</code>
+                      </div>
+                    </td>
+                    <td>{formatLatency(item.latency_ms)}</td>
+                    <td>{formatCost(item.estimated_cost)}</td>
+                    <td className="table-action">
                       <Button type="button" variant="secondary" onClick={() => selectRequest(item)}>
-                        {selectedRequestId === item.request_id ? "Viewing" : "View details"}
+                        {selectedRequestId === item.request_id ? "Viewing" : "View"}
                       </Button>
                     </td>
                   </tr>
@@ -682,7 +698,7 @@ export default function RequestsPage() {
                 { label: "completed_at", value: detail.completed_at ? formatDateTime(detail.completed_at) : "—" },
               ]}
             />
-            <JsonBlock value={redactSensitiveObject(detail)} title="Raw row JSON" />
+            <JsonBlock value={redactSensitiveObject(detail)} title="Debug JSON" defaultOpen={false} />
           </div>
         ) : null}
       </DetailDrawer>

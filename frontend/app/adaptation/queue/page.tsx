@@ -13,9 +13,10 @@ import {
   PageHeader,
   SectionHeader,
   Select,
+  UnconfiguredServiceState,
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
-import { adaptationApi, type AdaptationResult } from "@/lib/adaptationApi";
+import { adaptationApi, isAdaptationServiceUnconfigured, type AdaptationResult } from "@/lib/adaptationApi";
 
 type DiagnosticsFilters = {
   since: string;
@@ -65,6 +66,7 @@ export default function AdaptationQueuePage() {
   const [busy, setBusy] = useState(false);
   const [lastError, setLastError] = useState<AdaptationResult<unknown> | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  const unconfigured = lastError ? isAdaptationServiceUnconfigured(lastError) : false;
 
   const canApply = confirmText.trim() === "APPLY";
 
@@ -136,56 +138,65 @@ export default function AdaptationQueuePage() {
         description="Diagnostics and repair tools for drift/queue issues. Repairs are routed through the Conexus admin proxy."
       />
 
-      {lastError && <AdaptationErrorBanner result={lastError} />}
-
-      <Card>
-        <SectionHeader title="Queue diagnostics" description="Query params are forwarded to the adaptation service." />
-        <form className="stack" onSubmit={loadDiagnostics}>
-          <FormRow>
-            <Field label="since (optional)">
-              <Input
-                value={filters.since}
-                onChange={(e) => setFilters({ ...filters, since: e.target.value })}
-                placeholder="2026-01-01T00:00:00Z"
-              />
-            </Field>
-            <Field label="limit">
-              <Input value={filters.limit} onChange={(e) => setFilters({ ...filters, limit: e.target.value })} />
-            </Field>
-          </FormRow>
-          <FormRow>
-            <Field label="lockTimeoutSeconds">
-              <Input
-                value={filters.lockTimeoutSeconds}
-                onChange={(e) => setFilters({ ...filters, lockTimeoutSeconds: e.target.value })}
-              />
-            </Field>
-            <Field label="includeOutboxChecks">
-              <Select
-                value={filters.includeOutboxChecks}
-                onChange={(e) => setFilters({ ...filters, includeOutboxChecks: e.target.value })}
-              >
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </Select>
-            </Field>
-          </FormRow>
-          <div className="inline-actions">
-            <Button type="submit" disabled={busy}>
-              Load diagnostics
-            </Button>
-          </div>
-        </form>
-
-        {diag ? <JsonBlock value={diag} title="Diagnostics JSON" defaultOpen={false} /> : null}
-        {!diag ? <EmptyState title="No diagnostics loaded">Load diagnostics to view the raw response.</EmptyState> : null}
-      </Card>
-
-      <Card>
-        <SectionHeader
-          title="Queue repair"
-          description="Start with dry-run. Apply requires explicit confirmation text and should be used carefully."
+      {unconfigured ? (
+        <UnconfiguredServiceState
+          serviceName="Adaptation service"
+          envVarName="ADAPTATION_API_BASE_URL"
+          expectedLocalValue="http://localhost:5088"
+          onRetry={() => void loadDiagnostics()}
         />
+      ) : (
+        <>
+          {lastError && <AdaptationErrorBanner result={lastError} />}
+
+          <Card>
+            <SectionHeader title="Queue diagnostics" description="Query params are forwarded to the adaptation service." />
+            <form className="stack" onSubmit={loadDiagnostics}>
+              <FormRow>
+                <Field label="since (optional)">
+                  <Input
+                    value={filters.since}
+                    onChange={(e) => setFilters({ ...filters, since: e.target.value })}
+                    placeholder="2026-01-01T00:00:00Z"
+                  />
+                </Field>
+                <Field label="limit">
+                  <Input value={filters.limit} onChange={(e) => setFilters({ ...filters, limit: e.target.value })} />
+                </Field>
+              </FormRow>
+              <FormRow>
+                <Field label="lockTimeoutSeconds">
+                  <Input
+                    value={filters.lockTimeoutSeconds}
+                    onChange={(e) => setFilters({ ...filters, lockTimeoutSeconds: e.target.value })}
+                  />
+                </Field>
+                <Field label="includeOutboxChecks">
+                  <Select
+                    value={filters.includeOutboxChecks}
+                    onChange={(e) => setFilters({ ...filters, includeOutboxChecks: e.target.value })}
+                  >
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </Select>
+                </Field>
+              </FormRow>
+              <div className="inline-actions">
+                <Button type="submit" disabled={busy}>
+                  Load diagnostics
+                </Button>
+              </div>
+            </form>
+
+            {diag ? <JsonBlock value={diag} title="Diagnostics JSON" defaultOpen={false} /> : null}
+            {!diag ? <EmptyState title="No diagnostics loaded">Load diagnostics to view the raw response.</EmptyState> : null}
+          </Card>
+
+          <Card>
+            <SectionHeader
+              title="Queue repair"
+              description="Start with dry-run. Apply requires explicit confirmation text and should be used carefully."
+            />
 
         <div className="stack">
           <FormRow>
@@ -247,7 +258,9 @@ export default function AdaptationQueuePage() {
 
           {applyRes ? <JsonBlock value={applyRes} title="Repair apply JSON" defaultOpen={false} /> : null}
         </div>
-      </Card>
+          </Card>
+        </>
+      )}
     </>
   );
 }

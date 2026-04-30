@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  FilterPanel,
   FormRow,
   Input,
   JsonBlock,
@@ -45,6 +46,15 @@ const defaultFilters: Filters = {
   created_to: "",
   limit: String(DEFAULT_LIMIT),
 };
+
+function activeFiltersSummary(filters: Filters) {
+  const parts: string[] = [];
+  if (filters.action) parts.push(`action=${filters.action}`);
+  if (filters.resource_type) parts.push(`resource_type=${filters.resource_type}`);
+  if (filters.resource_id) parts.push(`resource_id=${filters.resource_id}`);
+  if (filters.limit) parts.push(`limit=${filters.limit}`);
+  return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
+}
 
 function filtersFromLocation(): Filters {
   if (typeof window === "undefined") return defaultFilters;
@@ -157,71 +167,83 @@ export default function ActivityPage() {
       <Card>
         <SectionHeader title="Filters" description="Filter audit logs by actor, action, and resource." />
         <form className="stack" onSubmit={applyFilters}>
-          <FormRow>
-            <Field label="Actor username">
-              <Input
-                value={filters.actor_username}
-                onChange={(e) => setFilters((s) => ({ ...s, actor_username: e.target.value }))}
-                placeholder="admin"
-              />
-            </Field>
-            <Field label="Actor admin user id">
-              <Input
-                value={filters.actor_admin_user_id}
-                onChange={(e) => setFilters((s) => ({ ...s, actor_admin_user_id: e.target.value }))}
-                placeholder="(uuid)"
-              />
-            </Field>
-          </FormRow>
-
-          <FormRow>
-            <Field label="Action">
-              <Input
-                value={filters.action}
-                onChange={(e) => setFilters((s) => ({ ...s, action: e.target.value }))}
-                placeholder="project_api_key.issue"
-              />
-            </Field>
-            <Field label="Resource type">
-              <Input
-                value={filters.resource_type}
-                onChange={(e) => setFilters((s) => ({ ...s, resource_type: e.target.value }))}
-                placeholder="project_api_key"
-              />
-            </Field>
-            <Field label="Resource id">
-              <Input
-                value={filters.resource_id}
-                onChange={(e) => setFilters((s) => ({ ...s, resource_id: e.target.value }))}
-                placeholder="(id)"
-              />
-            </Field>
-          </FormRow>
-
-          <FormRow>
-            <Field label="Created from (ISO)">
-              <Input
-                value={filters.created_from}
-                onChange={(e) => setFilters((s) => ({ ...s, created_from: e.target.value }))}
-                placeholder="2026-01-01T00:00:00Z"
-              />
-            </Field>
-            <Field label="Created to (ISO)">
-              <Input
-                value={filters.created_to}
-                onChange={(e) => setFilters((s) => ({ ...s, created_to: e.target.value }))}
-                placeholder="2026-01-31T23:59:59Z"
-              />
-            </Field>
-            <Field label="Limit">
-              <Input
-                value={filters.limit}
-                onChange={(e) => setFilters((s) => ({ ...s, limit: e.target.value }))}
-                inputMode="numeric"
-                placeholder="50"
-              />
-            </Field>
-          </FormRow>
+          <FilterPanel
+            summary={<p className="muted">{activeFiltersSummary(filters)}</p>}
+            basic={
+              <>
+                <FormRow>
+                  <Field label="Action">
+                    <Input
+                      value={filters.action}
+                      onChange={(e) => setFilters((s) => ({ ...s, action: e.target.value }))}
+                      placeholder="project_api_key.issue"
+                    />
+                  </Field>
+                  <Field label="Resource type">
+                    <Input
+                      value={filters.resource_type}
+                      onChange={(e) => setFilters((s) => ({ ...s, resource_type: e.target.value }))}
+                      placeholder="project_api_key"
+                    />
+                  </Field>
+                  <Field label="Resource id">
+                    <Input
+                      value={filters.resource_id}
+                      onChange={(e) => setFilters((s) => ({ ...s, resource_id: e.target.value }))}
+                      placeholder="(id)"
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Limit">
+                    <Input
+                      value={filters.limit}
+                      onChange={(e) => setFilters((s) => ({ ...s, limit: e.target.value }))}
+                      inputMode="numeric"
+                      placeholder="50"
+                    />
+                  </Field>
+                </FormRow>
+              </>
+            }
+            advanced={
+              <>
+                <FormRow>
+                  <Field label="Actor username">
+                    <Input
+                      value={filters.actor_username}
+                      onChange={(e) => setFilters((s) => ({ ...s, actor_username: e.target.value }))}
+                      placeholder="admin"
+                    />
+                  </Field>
+                  <Field label="Actor admin user id">
+                    <Input
+                      value={filters.actor_admin_user_id}
+                      onChange={(e) => setFilters((s) => ({ ...s, actor_admin_user_id: e.target.value }))}
+                      placeholder="(uuid)"
+                    />
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Created from (ISO)">
+                    <Input
+                      value={filters.created_from}
+                      onChange={(e) => setFilters((s) => ({ ...s, created_from: e.target.value }))}
+                      placeholder="2026-01-01T00:00:00Z"
+                    />
+                  </Field>
+                  <Field label="Created to (ISO)">
+                    <Input
+                      value={filters.created_to}
+                      onChange={(e) => setFilters((s) => ({ ...s, created_to: e.target.value }))}
+                      placeholder="2026-01-31T23:59:59Z"
+                    />
+                  </Field>
+                </FormRow>
+              </>
+            }
+            advancedLabel="Advanced filters"
+          />
 
           <div className="inline-actions">
             <Button type="submit">Apply</Button>
@@ -319,7 +341,7 @@ export default function ActivityPage() {
                 { label: "created_at", value: formatDateTime(selected.created_at) },
               ]}
             />
-            <JsonBlock value={redactSensitiveObject(selected.metadata)} title="Metadata JSON" defaultOpen />
+            <JsonBlock value={redactSensitiveObject(selected.metadata)} title="Debug JSON" defaultOpen={false} />
           </div>
         ) : null}
       </DetailDrawer>

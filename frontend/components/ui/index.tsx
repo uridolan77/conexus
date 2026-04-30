@@ -442,6 +442,31 @@ export function FilterBar({ children }: { children: ReactNode }) {
   return <div className="filter-bar">{children}</div>;
 }
 
+export function FilterPanel({
+  summary,
+  basic,
+  advanced,
+  advancedLabel = "Advanced filters",
+}: {
+  summary?: ReactNode;
+  basic: ReactNode;
+  advanced?: ReactNode;
+  advancedLabel?: string;
+}) {
+  return (
+    <div className="stack">
+      {summary}
+      {basic}
+      {advanced ? (
+        <details className="details-block">
+          <summary>{advancedLabel}</summary>
+          <div className="stack">{advanced}</div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function InlineCode({ children }: { children: ReactNode }) {
   return <code className="inline-code">{children}</code>;
 }
@@ -451,6 +476,31 @@ export function CopyableCode({ value }: { value: string }) {
     <span className="copyable-code">
       <InlineCode>{value}</InlineCode>
       <CopyButton value={value} label="Copy" />
+    </span>
+  );
+}
+
+export function CompactId({
+  value,
+  prefixLength = 8,
+  suffixLength = 4,
+  label = "Copy",
+}: {
+  value: string | null | undefined;
+  prefixLength?: number;
+  suffixLength?: number;
+  label?: string;
+}) {
+  const raw = value?.trim();
+  if (!raw) return <span className="muted">—</span>;
+  const shown =
+    raw.length <= prefixLength + suffixLength + 1
+      ? raw
+      : `${raw.slice(0, prefixLength)}…${raw.slice(-suffixLength)}`;
+  return (
+    <span className="compact-id" title={raw}>
+      <InlineCode>{shown}</InlineCode>
+      <CopyButton value={raw} label={label} />
     </span>
   );
 }
@@ -660,6 +710,48 @@ export function DetailDrawer({
         <div className="drawer-body">{children}</div>
       </div>
     </div>
+  );
+}
+
+export function UnconfiguredServiceState({
+  serviceName,
+  envVarName,
+  expectedLocalValue,
+  onRetry,
+}: {
+  serviceName: string;
+  envVarName: string;
+  expectedLocalValue?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <Card>
+      <SectionHeader
+        title={`${serviceName} is not configured`}
+        description={`Set ${envVarName} in the Conexus backend environment to enable this page.`}
+        actions={
+          <div className="inline-actions">
+            <LinkButton href="/settings" variant="secondary">Open Settings</LinkButton>
+            <LinkButton href="/health" variant="secondary">Open Health</LinkButton>
+            {onRetry ? (
+              <Button type="button" variant="secondary" onClick={onRetry}>
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+      {expectedLocalValue ? (
+        <KeyValueGrid
+          items={[
+            { label: "env_var", value: <code className="wrap-anywhere">{envVarName}</code> },
+            { label: "expected_local_value", value: <code className="wrap-anywhere">{expectedLocalValue}</code> },
+          ]}
+        />
+      ) : (
+        <KeyValueGrid items={[{ label: "env_var", value: <code className="wrap-anywhere">{envVarName}</code> }]} />
+      )}
+    </Card>
   );
 }
 

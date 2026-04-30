@@ -124,6 +124,16 @@ export function parseAdaptationProblem(result: AdaptationResult<unknown>): Probl
   return parseProblemDetails(result.error);
 }
 
+export function isAdaptationServiceUnconfigured(result: AdaptationResult<unknown>): boolean {
+  if (result.ok) return false;
+  const status = result.status;
+  const problem = parseAdaptationProblem(result);
+  const haystack = `${problem?.title ?? ""}\n${problem?.detail ?? ""}`.toLowerCase();
+  if (haystack.includes("not configured")) return true;
+  // Conservative fallback: most common status used for "missing base URL"/proxy disabled.
+  return status === 503;
+}
+
 export const adaptationApi = {
   listPlans: (params?: URLSearchParams) =>
     requestAdaptation(`/admin/adaptation/plans${params ? `?${params.toString()}` : ""}`, normalizePlanList),

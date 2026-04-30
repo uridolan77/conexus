@@ -5,6 +5,7 @@ import {
   Alert,
   Button,
   Card,
+  CompactId,
   DetailDrawer,
   EmptyState,
   ErrorState,
@@ -139,33 +140,23 @@ export default function AdapterProfilesPage() {
             <Table aria-label="Gateway adapter profiles">
               <thead>
                 <tr>
-                  <th>gateway_profile_id</th>
-                  <th>adapter_profile_id</th>
-                  <th>domain_key</th>
-                  <th>status</th>
-                  <th>composite_score</th>
-                  <th>profile_version</th>
-                  <th>evidence_hash</th>
-                  <th>semantic_context_hash</th>
-                  <th>slod_model_version</th>
-                  <th>created_at</th>
+                  <th>Gateway profile</th>
+                  <th>Domain</th>
+                  <th>Status</th>
+                  <th>Score</th>
+                  <th>Created</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.gateway_profile_id}>
-                    <td><code className="wrap-anywhere">{r.gateway_profile_id}</code></td>
-                    <td><code className="wrap-anywhere">{r.adapter_profile_id}</code></td>
+                    <td><CompactId value={r.gateway_profile_id} /></td>
                     <td><code className="wrap-anywhere">{r.domain_key}</code></td>
                     <td><StatusBadge status={r.status} /></td>
                     <td>{formatNullable(r.composite_score)}</td>
-                    <td>{formatNullable(r.profile_version)}</td>
-                    <td><code className="wrap-anywhere">{formatNullable(r.evidence_hash)}</code></td>
-                    <td><code className="wrap-anywhere">{formatNullable(r.semantic_context_hash)}</code></td>
-                    <td>{formatNullable(r.slod_model_version)}</td>
                     <td>{formatDateTime(r.created_at)}</td>
-                    <td>
+                    <td className="table-action">
                       <Button
                         type="button"
                         variant="secondary"
