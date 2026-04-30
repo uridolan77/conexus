@@ -13,6 +13,7 @@ import {
   LoadingState,
   PageHeader,
   SectionHeader,
+  StatusBadge,
   Table,
 } from "@/components/ui";
 import { formatDateTime, formatNullable } from "@/lib/format";
@@ -157,7 +158,7 @@ export default function AdapterProfilesPage() {
                     <td><code className="wrap-anywhere">{r.gateway_profile_id}</code></td>
                     <td><code className="wrap-anywhere">{r.adapter_profile_id}</code></td>
                     <td><code className="wrap-anywhere">{r.domain_key}</code></td>
-                    <td>{r.status}</td>
+                    <td><StatusBadge status={r.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
                     <td>{formatNullable(r.composite_score)}</td>
                     <td>{formatNullable(r.profile_version)}</td>
                     <td><code className="wrap-anywhere">{formatNullable(r.evidence_hash)}</code></td>
@@ -178,7 +179,7 @@ export default function AdapterProfilesPage() {
               <Button type="button" variant="secondary" disabled={!canPrev} onClick={() => void loadList(Math.max(0, offset - DEFAULT_LIMIT))}>
                 Previous
               </Button>
-              <span className="muted">Offset {offset}</span>
+              <span className="muted">{rangeLabel}</span>
               <Button type="button" variant="secondary" disabled={!canNext} onClick={() => void loadList(offset + DEFAULT_LIMIT)}>
                 Next
               </Button>
@@ -203,7 +204,7 @@ export default function AdapterProfilesPage() {
                 { label: "gateway_profile_id", value: <code className="wrap-anywhere">{detail.gateway_profile_id}</code> },
                 { label: "adapter_profile_id", value: <code className="wrap-anywhere">{detail.adapter_profile_id}</code> },
                 { label: "domain_key", value: <code className="wrap-anywhere">{detail.domain_key}</code> },
-                { label: "status", value: detail.status },
+                { label: "status", value: <StatusBadge status={detail.status as Parameters<typeof StatusBadge>[0]["status"]} /> },
                 { label: "composite_score", value: formatNullable(detail.composite_score) },
                 { label: "profile_version", value: formatNullable(detail.profile_version) },
                 { label: "evidence_hash", value: <code className="wrap-anywhere">{formatNullable(detail.evidence_hash)}</code> },
@@ -235,7 +236,7 @@ export default function AdapterProfilesPage() {
                     {activations.map((a) => (
                       <tr key={a.id}>
                         <td>{formatDateTime(a.created_at)}</td>
-                        <td>{a.status}</td>
+                        <td><StatusBadge status={a.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
                         <td>{formatNullable(a.canary_percent)}</td>
                         <td><code className="wrap-anywhere">{formatNullable(a.previous_gateway_profile_id)}</code></td>
                       </tr>

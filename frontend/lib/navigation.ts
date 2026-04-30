@@ -10,6 +10,7 @@ export type NavItem = {
 export type NavSection = {
   title: string;
   items: NavItem[];
+  separator?: boolean;
 };
 
 export const NAV_SECTIONS: NavSection[] = [
@@ -35,7 +36,6 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Routing",
     items: [
       { href: "/routing", label: "Routing", description: "Policy and aliases" },
-      { href: "/smoke-tests", label: "Smoke Tests", description: "End-to-end checks" },
       { href: "/adapter-profiles", label: "Adapter Profiles", description: "Gateway registry state" },
     ],
   },
@@ -48,6 +48,7 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "Adaptation",
+    separator: true,
     items: [
       { href: "/adaptation/plans", label: "Adaptation Plans", description: "Review and approve plans" },
       { href: "/adaptation/runs", label: "Adaptation Runs", description: "Inspect run progress and artifacts" },

@@ -19,7 +19,8 @@ import {
   StatusBadge,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch, formatDate } from "@/lib/api";
+import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import type { ProviderRow, ProviderTestResult } from "@/lib/types";
 
 export default function ProvidersPage() {
@@ -242,7 +243,7 @@ export default function ProvidersPage() {
                         {testError && <span className="muted">{testError}</span>}
                       </div>
                     </td>
-                    <td>{formatDate(row.updated_at)}</td>
+                    <td>{formatDateTime(row.updated_at)}</td>
                     <td>
                       <div className="inline-actions">
                         <Button

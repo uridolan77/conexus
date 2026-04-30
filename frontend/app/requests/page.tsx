@@ -12,7 +12,6 @@ import {
   Field,
   FormRow,
   Input,
-  JsonBlock,
   KeyValueGrid,
   LinkButton,
   LoadingState,
@@ -20,6 +19,7 @@ import {
   SectionHeader,
   Select,
   StatCard,
+  StatusBadge,
   Table,
 } from "@/components/ui";
 import { formatCost, formatDateTime, formatLatency, formatTokens } from "@/lib/format";
@@ -585,7 +585,7 @@ export default function RequestsPage() {
                     className={item.status === "failed" ? "row-warning" : undefined}
                   >
                     <td>{formatDateTime(item.created_at)}</td>
-                    <td><Badge tone={badgeTone(item.status)}>{item.status}</Badge></td>
+                    <td><StatusBadge status={item.status as Parameters<typeof StatusBadge>[0]["status"]} /></td>
                     <td>
                       <div className="stack-tight">
                         <code className="wrap-anywhere">{item.request_id}</code>

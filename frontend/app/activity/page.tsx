@@ -286,7 +286,7 @@ export default function ActivityPage() {
               >
                 Previous
               </Button>
-              <span className="muted">Offset {offset}</span>
+              <span className="muted">{rangeLabel}</span>
               <Button
                 type="button"
                 variant="secondary"

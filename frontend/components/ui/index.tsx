@@ -160,17 +160,31 @@ export function StatusBadge({
     | "failed"
     | "never"
     | "running"
-    | "not-run";
+    | "not-run"
+    | "completed"
+    | "started"
+    | "registered"
+    | "canary"
+    | "promoted"
+    | "rolled_back"
+    | "draft"
+    | "approved"
+    | "unknown";
 }) {
   const tone: Tone =
-    status === "active" || status === "ok" || status === "passed"
+    status === "active" || status === "ok" || status === "passed" || status === "completed" || status === "promoted" || status === "approved"
       ? "success"
-      : status === "failed" || status === "revoked"
+      : status === "failed" || status === "revoked" || status === "rolled_back"
         ? "danger"
-        : status === "running"
+        : status === "running" || status === "started" || status === "registered"
           ? "info"
-          : "neutral";
-  const label = status === "not-run" ? "not run" : status;
+          : status === "canary"
+            ? "warning"
+            : "neutral";
+  const label =
+    status === "not-run" ? "not run" :
+    status === "rolled_back" ? "rolled back" :
+    status;
   return <Badge tone={tone}>{label}</Badge>;
 }
 

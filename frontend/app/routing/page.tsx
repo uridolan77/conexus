@@ -49,11 +49,9 @@ export default function RoutingPage() {
         }
         setCandidates(candidatesRes.data);
 
-        const hasEnvCandidate = candidatesRes.data.some((c) => c.source === "env");
-        const hasNoCandidates = candidatesRes.data.length === 0;
-        if (hasEnvCandidate || hasNoCandidates) {
+        if (candidatesRes.data.length === 0) {
           setWarning(
-            "BO provider configs may not fully drive runtime provider selection yet. Verify backend wiring before production.",
+            "No provider candidates found. Add active provider credentials before sending gateway traffic.",
           );
         }
       } catch {

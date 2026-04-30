@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Alert, KeyValueGrid, PageHeader, SectionHeader } from "@/components/ui";
+import { Card, KeyValueGrid, PageHeader, SectionHeader } from "@/components/ui";
 import { BACKEND_BASE, getEnvironmentLabel } from "@/lib/api";
 
 const FRONTEND_VERSION = process.env.NEXT_PUBLIC_FRONTEND_VERSION ?? "unknown";
@@ -27,11 +27,6 @@ export default function SettingsPage() {
             },
           ]}
         />
-      </Card>
-
-      <Card>
-        <SectionHeader title="Backend safe config" description="Optional backend endpoint (not implemented yet)." />
-        <Alert tone="info">Backend safe config endpoint is not available yet.</Alert>
       </Card>
 
       <Card>

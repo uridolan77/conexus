@@ -21,7 +21,7 @@ export function Sidebar({ environment }: { environment: string }) {
       </div>
       <nav aria-label="Back office navigation">
         {NAV_SECTIONS.map((section) => (
-          <div key={section.title} className="nav-section">
+          <div key={section.title} className={section.separator ? "nav-section nav-section-separated" : "nav-section"}>
             <p className="nav-group-label">{section.title}</p>
             <ul className="nav-list">
               {section.items.map((item) => {
