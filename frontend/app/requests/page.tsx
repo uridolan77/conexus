@@ -12,6 +12,7 @@ import {
   Field,
   FormRow,
   Input,
+  JsonBlock,
   KeyValueGrid,
   LinkButton,
   LoadingState,
@@ -156,6 +157,7 @@ export default function RequestsPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const limit = Number(filters.limit || DEFAULT_LIMIT);
 
   async function loadProjects() {
     const result = await listProjects();
@@ -288,6 +290,15 @@ export default function RequestsPage() {
   }
 
   const items = response?.items ?? [];
+  const canPrev = offset > 0;
+  const canNext = response ? offset + limit < response.total : false;
+  const rangeLabel = useMemo(() => {
+    if (!response) return "—";
+    if (response.total === 0) return "0";
+    const start = Math.min(response.total, offset + 1);
+    const end = Math.min(response.total, offset + items.length);
+    return `${start}–${end} of ${response.total}`;
+  }, [response, offset, items.length]);
   const summary = useMemo(() => {
     const failed = items.filter((item) => item.status === "failed").length;
     const fallback = items.filter((item) => item.fallback_used).length;
@@ -546,7 +557,7 @@ export default function RequestsPage() {
       <Card>
         <SectionHeader
           title="Request Table"
-          description={`Showing ${items.length} of ${response?.total ?? 0} matching requests.`}
+          description={`Showing ${rangeLabel}`}
         />
         {loading ? (
           <LoadingState label="Loading requests..." />
@@ -615,21 +626,19 @@ export default function RequestsPage() {
               <Button
                 type="button"
                 variant="secondary"
-                disabled={offset === 0}
+                disabled={!canPrev || loading}
                 onClick={() =>
-                  void loadRequests(filters, Math.max(0, offset - Number(filters.limit || DEFAULT_LIMIT)))
+                  void loadRequests(filters, Math.max(0, offset - limit))
                 }
               >
                 Previous
               </Button>
-              <span className="muted">
-                Offset {offset}
-              </span>
+              <span className="muted">{rangeLabel}</span>
               <Button
                 type="button"
                 variant="secondary"
-                disabled={!response || offset + Number(filters.limit || DEFAULT_LIMIT) >= response.total}
-                onClick={() => void loadRequests(filters, offset + Number(filters.limit || DEFAULT_LIMIT))}
+                disabled={!canNext || loading}
+                onClick={() => void loadRequests(filters, offset + limit)}
               >
                 Next
               </Button>

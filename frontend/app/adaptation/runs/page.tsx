@@ -16,7 +16,7 @@ import {
   Table,
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
-import { formatDate } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { adaptationApi, type AdaptationResult, type AdaptationRunListItem } from "@/lib/adaptationApi";
 
 type Filters = {
@@ -175,7 +175,7 @@ export default function AdaptationRunsPage() {
                 const stepCount = run.stepCount;
                 return (
                   <tr key={id || JSON.stringify(run)} className={lower === "failed" ? "row-warning" : undefined}>
-                    <td>{formatDate(run.createdAt)}</td>
+                    <td>{formatDateTime(run.createdAt)}</td>
                     <td>
                       <code className="wrap-anywhere">{domainKey}</code>
                     </td>
@@ -189,9 +189,9 @@ export default function AdaptationRunsPage() {
                       <Badge tone={tone}>{statusValue}</Badge>
                     </td>
                     <td>{typeof stepCount === "number" ? stepCount.toLocaleString() : "—"}</td>
-                    <td>{formatDate(run.startedAt)}</td>
-                    <td>{formatDate(run.completedAt)}</td>
-                    <td>{formatDate(run.failedAt)}</td>
+                    <td>{formatDateTime(run.startedAt)}</td>
+                    <td>{formatDateTime(run.completedAt)}</td>
+                    <td>{formatDateTime(run.failedAt)}</td>
                     <td>
                       {id ? (
                         <div className="inline-actions">

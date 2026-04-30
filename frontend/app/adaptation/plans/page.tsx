@@ -18,7 +18,7 @@ import {
   Table,
 } from "@/components/ui";
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
-import { formatDate } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { adaptationApi, type AdaptationPlanListItem, type AdaptationResult } from "@/lib/adaptationApi";
 
 type Filters = {
@@ -249,7 +249,7 @@ export default function AdaptationPlansPage() {
                 const requiresApproval = requiresHumanApprovalOf(plan);
                 return (
                   <tr key={id || JSON.stringify(plan)}>
-                    <td>{formatDate(createdAtOf(plan))}</td>
+                    <td>{formatDateTime(createdAtOf(plan))}</td>
                     <td>
                       <code className="wrap-anywhere">{domainKey}</code>
                     </td>
