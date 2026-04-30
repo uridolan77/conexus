@@ -11,10 +11,17 @@ import {
   PageHeader,
   SectionHeader,
   Select,
-  StatCard,
+  MetricCard,
   Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch, formatApiError, formatDate, readJsonSafe } from "@/lib/api";
+import { formatCost, formatDateTime, formatLatency, formatPercentRatio, formatTokens } from "@/lib/format";
+import {
+  getUsageByProject,
+  getUsageByProvider,
+  getUsageSummary,
+  getUsageTimeseries,
+  type UsageWindow,
+} from "@/lib/admin/usage";
 import type {
   UsageBreakdownResponse,
   UsageProjectRow,
@@ -23,29 +30,6 @@ import type {
   UsageTimeseriesPoint,
   UsageTimeseriesResponse,
 } from "@/lib/types";
-
-type UsageWindow = "24h" | "7d" | "30d";
-
-function formatCost(value: number | null | undefined) {
-  if (value === null || value === undefined) return "—";
-  if (value === 0) return "$0";
-  if (value < 0.0001) return "<$0.0001";
-  return `$${value.toFixed(4)}`;
-}
-
-function formatRate(value: number | null | undefined) {
-  if (value === null || value === undefined) return "—";
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatNumber(value: number | null | undefined) {
-  return value === null || value === undefined ? "—" : value.toLocaleString();
-}
-
-function formatMs(value: number | null | undefined) {
-  if (value === null || value === undefined) return "—";
-  return `${Math.round(value).toLocaleString()} ms`;
-}
 
 export default function UsagePage() {
   const [windowValue, setWindowValue] = useState<UsageWindow>("30d");
@@ -61,54 +45,34 @@ export default function UsagePage() {
       setLoading(true);
       setError(null);
       try {
-        const params = new URLSearchParams({ window: windowValue });
         const [summaryRes, projectRes, providerRes, timeseriesRes] = await Promise.all([
-          adminSessionFetch(`${BACKEND_BASE}/admin/usage/summary?${params.toString()}`, {
-            cache: "no-store",
-          }),
-          adminSessionFetch(`${BACKEND_BASE}/admin/usage/by-project?${params.toString()}`, {
-            cache: "no-store",
-          }),
-          adminSessionFetch(`${BACKEND_BASE}/admin/usage/by-provider?${params.toString()}`, {
-            cache: "no-store",
-          }),
-          adminSessionFetch(`${BACKEND_BASE}/admin/usage/timeseries?${params.toString()}`, {
-            cache: "no-store",
-          }),
-        ]);
-
-        const [summaryBody, projectBody, providerBody, timeseriesBody] = await Promise.all([
-          readJsonSafe(summaryRes),
-          readJsonSafe(projectRes),
-          readJsonSafe(providerRes),
-          readJsonSafe(timeseriesRes),
+          getUsageSummary(windowValue),
+          getUsageByProject(windowValue),
+          getUsageByProvider(windowValue),
+          getUsageTimeseries(windowValue),
         ]);
 
         if (!summaryRes.ok) {
-          setError(formatApiError(summaryBody));
+          setError(summaryRes.error.message);
           return;
         }
         if (!projectRes.ok) {
-          setError(formatApiError(projectBody));
+          setError(projectRes.error.message);
           return;
         }
         if (!providerRes.ok) {
-          setError(formatApiError(providerBody));
+          setError(providerRes.error.message);
           return;
         }
         if (!timeseriesRes.ok) {
-          setError(formatApiError(timeseriesBody));
+          setError(timeseriesRes.error.message);
           return;
         }
 
-        setSummary(summaryBody as UsageSummary);
-        setByProject(
-          (projectBody as UsageBreakdownResponse<UsageProjectRow>).items,
-        );
-        setByProvider(
-          (providerBody as UsageBreakdownResponse<UsageProviderRow>).items,
-        );
-        setTimeseries((timeseriesBody as UsageTimeseriesResponse).items);
+        setSummary(summaryRes.data as UsageSummary);
+        setByProject((projectRes.data as UsageBreakdownResponse<UsageProjectRow>).items);
+        setByProvider((providerRes.data as UsageBreakdownResponse<UsageProviderRow>).items);
+        setTimeseries((timeseriesRes.data as UsageTimeseriesResponse).items);
       } catch {
         setError("Unable to load usage analytics. Check that the backend is reachable.");
       } finally {
@@ -155,42 +119,29 @@ export default function UsagePage() {
       ) : summary ? (
         <>
           <div className="grid grid-4">
-            <StatCard
-              label="Requests"
-              value={summary.total_requests.toLocaleString()}
-              hint={`${summary.completed_requests} completed`}
-            />
-            <StatCard
-              label="Estimated Cost"
-              value={formatCost(summary.estimated_cost)}
-              hint={summary.currency}
-            />
-            <StatCard
-              label="Success Rate"
-              value={formatRate(summary.success_rate)}
-              hint={`${summary.failed_requests} failed`}
-            />
-            <StatCard
-              label="Fallback Rate"
-              value={formatRate(summary.fallback_rate)}
-              hint={`${summary.fallback_count} fallbacks`}
-            />
+            <MetricCard label="Total requests" value={summary.total_requests.toLocaleString()} />
+            <MetricCard label="Completed requests" value={summary.completed_requests.toLocaleString()} />
+            <MetricCard label="Failed requests" value={summary.failed_requests.toLocaleString()} />
+            <MetricCard label="Success rate" value={formatPercentRatio(summary.success_rate)} />
+
+            <MetricCard label="Fallback rate" value={formatPercentRatio(summary.fallback_rate)} />
+            <MetricCard label="Prompt tokens" value={formatTokens(summary.total_prompt_tokens)} />
+            <MetricCard label="Completion tokens" value={formatTokens(summary.total_completion_tokens)} />
+            <MetricCard label="Total tokens" value={formatTokens(summary.total_tokens)} />
+
+            <MetricCard label="Estimated cost" value={formatCost(summary.estimated_cost)} hint={summary.currency} />
+            <MetricCard label="Average latency" value={formatLatency(summary.avg_latency_ms)} />
           </div>
 
           <Card>
             <SectionHeader
               title="Summary"
-              description={`From ${formatDate(summary.created_from)} to ${formatDate(summary.created_to)}.`}
+              description={`From ${formatDateTime(summary.created_from)} to ${formatDateTime(summary.created_to)}.`}
             />
-            <div className="grid grid-4">
-              <StatCard label="Prompt Tokens" value={formatNumber(summary.total_prompt_tokens)} />
-              <StatCard
-                label="Completion Tokens"
-                value={formatNumber(summary.total_completion_tokens)}
-              />
-              <StatCard label="Total Tokens" value={formatNumber(summary.total_tokens)} />
-              <StatCard label="Average Latency" value={formatMs(summary.avg_latency_ms)} />
-            </div>
+            <p className="muted">
+              Empty databases, streaming rows, or incomplete request rows may result in missing latency and token/cost
+              fields. This page renders null metrics as “—”.
+            </p>
           </Card>
 
           <Card>
@@ -219,12 +170,12 @@ export default function UsagePage() {
                   {byProject.map((row) => (
                     <tr key={row.project_id ?? "unknown-project"}>
                       <td>{row.project_name ?? row.project_id ?? "Unassigned"}</td>
-                      <td>{formatNumber(row.total_requests)}</td>
-                      <td>{formatRate(row.success_rate)}</td>
-                      <td>{formatRate(row.fallback_rate)}</td>
-                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{row.total_requests.toLocaleString()}</td>
+                      <td>{formatPercentRatio(row.success_rate)}</td>
+                      <td>{formatPercentRatio(row.fallback_rate)}</td>
+                      <td>{formatTokens(row.total_tokens)}</td>
                       <td>{formatCost(row.estimated_cost)}</td>
-                      <td>{formatMs(row.avg_latency_ms)}</td>
+                      <td>{formatLatency(row.avg_latency_ms)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -257,13 +208,13 @@ export default function UsagePage() {
                 <tbody>
                   {timeseries.map((row) => (
                     <tr key={row.bucket_start}>
-                      <td>{formatDate(row.bucket_start)}</td>
-                      <td>{formatNumber(row.total_requests)}</td>
-                      <td>{formatRate(row.success_rate)}</td>
-                      <td>{formatRate(row.fallback_rate)}</td>
-                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{formatDateTime(row.bucket_start)}</td>
+                      <td>{row.total_requests.toLocaleString()}</td>
+                      <td>{formatPercentRatio(row.success_rate)}</td>
+                      <td>{formatPercentRatio(row.fallback_rate)}</td>
+                      <td>{formatTokens(row.total_tokens)}</td>
                       <td>{formatCost(row.estimated_cost)}</td>
-                      <td>{formatMs(row.avg_latency_ms)}</td>
+                      <td>{formatLatency(row.avg_latency_ms)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -297,12 +248,12 @@ export default function UsagePage() {
                   {byProvider.map((row) => (
                     <tr key={row.provider ?? "unserved"}>
                       <td>{row.provider ?? "Unserved"}</td>
-                      <td>{formatNumber(row.total_requests)}</td>
-                      <td>{formatRate(row.success_rate)}</td>
-                      <td>{formatRate(row.fallback_rate)}</td>
-                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{row.total_requests.toLocaleString()}</td>
+                      <td>{formatPercentRatio(row.success_rate)}</td>
+                      <td>{formatPercentRatio(row.fallback_rate)}</td>
+                      <td>{formatTokens(row.total_tokens)}</td>
                       <td>{formatCost(row.estimated_cost)}</td>
-                      <td>{formatMs(row.avg_latency_ms)}</td>
+                      <td>{formatLatency(row.avg_latency_ms)}</td>
                     </tr>
                   ))}
                 </tbody>
