@@ -502,3 +502,178 @@ async def get_domain_active_profile(
         request=request,
     )
 
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    reason_raw = raw.get("reason")
+    reason = (str(reason_raw).strip() if reason_raw is not None else "").strip()
+    cancelled_by, _roles = await _deployment_identity(session, admin=admin)
+    body: dict[str, Any] = {"cancelledByUserId": cancelled_by}
+    if reason:
+        body["reason"] = reason
+    encoded = quote(run_id, safe="")
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adaptation-runs/{encoded}/cancel",
+        request=request,
+        json_body=body,
+    )
+
+
+@router.post("/runs/{run_id}/retry")
+async def retry_run(
+    run_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    created_by, _roles = await _deployment_identity(session, admin=admin)
+    encoded = quote(run_id, safe="")
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adaptation-runs/{encoded}/retry",
+        request=request,
+        json_body={"createdByUserId": created_by},
+        upstream_headers=_idempotency_headers_from_request(request),
+    )
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(
+    run_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    requested_by, _roles = await _deployment_identity(session, admin=admin)
+    encoded = quote(run_id, safe="")
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adaptation-runs/{encoded}/resume",
+        request=request,
+        json_body={"requestedByUserId": requested_by},
+        upstream_headers=_idempotency_headers_from_request(request),
+    )
+
+
+@router.get("/profiles/{profile_id}/drift-status")
+async def get_profile_drift_status(
+    profile_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
+    request: Request,
+) -> Response:
+    encoded = quote(profile_id, safe="")
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path=f"/adapter-profiles/{encoded}/drift-status",
+        request=request,
+    )
+
+
+@router.post("/profiles/{profile_id}/check-drift")
+async def check_profile_drift(
+    profile_id: str,
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    body: dict[str, Any] = {}
+    if "kind" in raw:
+        body["kind"] = raw.get("kind")
+    encoded = quote(profile_id, safe="")
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path=f"/adapter-profiles/{encoded}/check-drift",
+        request=request,
+        json_body=body,
+    )
+
+
+@router.get("/runs/queue/diagnostics")
+async def get_queue_diagnostics(
+    _admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_VIEW))],
+    request: Request,
+) -> Response:
+    return await proxy_adaptation_request(
+        method="GET",
+        upstream_path="/adaptation-runs/queue/diagnostics",
+        request=request,
+    )
+
+
+def _trim_optional_reason(raw: dict[str, Any]) -> None:
+    if "reason" not in raw:
+        return
+    value = raw.get("reason")
+    trimmed = (str(value).strip() if value is not None else "").strip()
+    if trimmed:
+        raw["reason"] = trimmed
+    else:
+        raw.pop("reason", None)
+
+
+@router.post("/runs/queue/repair/dry-run")
+async def queue_repair_dry_run(
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    raw.pop("requestedByUserId", None)
+    _trim_optional_reason(raw)
+    requested_by, _roles = await _deployment_identity(session, admin=admin)
+    body = {"requestedByUserId": requested_by, **raw}
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path="/adaptation-runs/queue/repair/dry-run",
+        request=request,
+        json_body=body,
+    )
+
+
+@router.post("/runs/queue/repair")
+async def queue_repair_apply(
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    _perm: Annotated[None, Depends(require_adaptation_permission(ADAPTATION_OPERATE))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> Response:
+    raw = await _read_deployment_request_json(request)
+    if isinstance(raw, JSONResponse):
+        return raw
+    raw.pop("requestedByUserId", None)
+    _trim_optional_reason(raw)
+    requested_by, _roles = await _deployment_identity(session, admin=admin)
+    body = {"requestedByUserId": requested_by, **raw}
+    return await proxy_adaptation_request(
+        method="POST",
+        upstream_path="/adaptation-runs/queue/repair",
+        request=request,
+        json_body=body,
+    )
+

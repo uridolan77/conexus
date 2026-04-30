@@ -16,6 +16,7 @@ import {
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { CopyableId } from "@/components/adaptation/CopyableId";
 import { DeploymentActionPanel } from "@/components/adaptation/DeploymentActionPanel";
+import { DriftOpsPanel } from "@/components/adaptation/DriftOpsPanel";
 import { ScoreBadge } from "@/components/adaptation/ScoreBadge";
 import { formatDate } from "@/lib/api";
 import {
@@ -127,6 +128,8 @@ export default function AdapterProfileDetailPage({ params }: { params: { id: str
         </Card>
       ) : (
         <>
+          <DriftOpsPanel profileId={profileId} onError={(r) => setLastError(r)} />
+
           <Card>
             <SectionHeader title="Profile Summary" />
             <KeyValueGrid

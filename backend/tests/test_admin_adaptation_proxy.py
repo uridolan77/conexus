@@ -940,3 +940,444 @@ async def test_POST_publish_forwards_idempotency_key_to_upstream(
     assert hdrs is not None
     assert hdrs.get("Idempotency-Key") == "idem-abc-1"
 
+
+async def _assert_forbidden_without_upstream_call(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+    *,
+    method: str,
+    path: str,
+    json_body: Any | None = None,
+) -> None:
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy when forbidden")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    if method == "GET":
+        response = await client.get(path)
+    elif method == "POST":
+        if json_body is None:
+            response = await client.post(path)
+        else:
+            response = await client.post(path, json=json_body)
+    else:
+        raise AssertionError(f"unsupported method in test helper: {method}")
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_run_ops_require_operate_permission(monkeypatch: pytest.MonkeyPatch, client: AsyncClient) -> None:
+    await _create_admin_user(client, username="ro", password="pw", roles_json='["ReadOnly"]')
+    await _login_db_admin(client, username="ro", password="pw")
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/runs/run_1/cancel",
+        json_body={"reason": "x"},
+    )
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/runs/run_1/retry",
+        json_body={},
+    )
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/runs/run_1/resume",
+        json_body={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_queue_ops_require_correct_permissions(monkeypatch: pytest.MonkeyPatch, client: AsyncClient) -> None:
+    # view-required endpoint should be forbidden for an empty-perms user
+    await _create_admin_user(client, username="empty", password="pw", roles_json="[]")
+    await _login_db_admin(client, username="empty", password="pw")
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="GET",
+        path="/admin/adaptation/runs/queue/diagnostics",
+    )
+
+    # operate-required endpoints should be forbidden for ReadOnly
+    await _create_admin_user(client, username="ro", password="pw", roles_json='["ReadOnly"]')
+    await _login_db_admin(client, username="ro", password="pw")
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/runs/queue/repair/dry-run",
+        json_body={},
+    )
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/runs/queue/repair",
+        json_body={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_drift_ops_require_correct_permissions(monkeypatch: pytest.MonkeyPatch, client: AsyncClient) -> None:
+    await _create_admin_user(client, username="empty", password="pw", roles_json="[]")
+    await _login_db_admin(client, username="empty", password="pw")
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="GET",
+        path="/admin/adaptation/profiles/p1/drift-status",
+    )
+
+    await _create_admin_user(client, username="ro", password="pw", roles_json='["ReadOnly"]')
+    await _login_db_admin(client, username="ro", password="pw")
+    await _assert_forbidden_without_upstream_call(
+        monkeypatch,
+        client,
+        method="POST",
+        path="/admin/adaptation/profiles/p1/check-drift",
+        json_body={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_injects_admin_identity_and_trims_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/run_1/cancel",
+        json={"cancelledByUserId": "spoof", "reason": "  operator cancelled  "},
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adaptation-runs/run_1/cancel")
+    assert captured["json"]["cancelledByUserId"] == "admin"
+    assert captured["json"]["reason"] == "operator cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_rejects_malformed_json_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy on malformed JSON")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/run_1/cancel",
+        content=b"{",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json()["title"].lower().startswith("invalid json")
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_preserves_upstream_problem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"title": "Bad Request", "detail": "cannot cancel"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/runs/run_1/cancel", json={})
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "cannot cancel"
+
+
+@pytest.mark.asyncio
+async def test_retry_run_injects_identity_and_forwards_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/run_1/retry",
+        json={"createdByUserId": "spoof"},
+        headers={"Idempotency-Key": "idem-r1"},
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adaptation-runs/run_1/retry")
+    assert captured["json"]["createdByUserId"] == "admin"
+    assert captured["headers"]["Idempotency-Key"] == "idem-r1"
+
+
+@pytest.mark.asyncio
+async def test_resume_run_injects_identity_and_forwards_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/run_1/resume",
+        json={"requestedByUserId": "spoof"},
+        headers={"Idempotency-Key": "idem-res1"},
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adaptation-runs/run_1/resume")
+    assert captured["json"]["requestedByUserId"] == "admin"
+    assert captured["headers"]["Idempotency-Key"] == "idem-res1"
+
+
+@pytest.mark.asyncio
+async def test_drift_status_forwards_to_upstream_and_preserves_404(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={"title": "Not Found", "detail": "no drift record"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get("/admin/adaptation/profiles/p1/drift-status")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "no drift record"
+
+
+@pytest.mark.asyncio
+async def test_check_drift_rejects_malformed_json_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy on malformed JSON")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/profiles/p1/check-drift",
+        content=b"{",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_check_drift_forwards_kind_and_preserves_problem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(
+            409,
+            json={"title": "Conflict", "detail": "already running"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/profiles/p1/check-drift", json={"kind": "LiveQualityDrift"})
+    assert response.status_code == 409
+    assert captured["url"].endswith("/adapter-profiles/p1/check-drift")
+    assert captured["json"]["kind"] == "LiveQualityDrift"
+    assert response.json()["detail"] == "already running"
+
+
+@pytest.mark.asyncio
+async def test_queue_diagnostics_forwards_query_params(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.get(
+        "/admin/adaptation/runs/queue/diagnostics?since=2026-01-01T00:00:00Z&limit=10&lockTimeoutSeconds=300&includeOutboxChecks=true"
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adaptation-runs/queue/diagnostics")
+    params = list(captured["params"])
+    assert ("since", "2026-01-01T00:00:00Z") in params
+    assert ("limit", "10") in params
+    assert ("lockTimeoutSeconds", "300") in params
+    assert ("includeOutboxChecks", "true") in params
+
+
+@pytest.mark.asyncio
+async def test_queue_repair_dry_run_injects_identity_ignores_browser_and_trims_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+    captured: dict[str, Any] = {}
+
+    def handler(**kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/queue/repair/dry-run",
+        json={
+            "requestedByUserId": "attacker",
+            "reason": "  post-deploy check  ",
+            "issueKinds": ["QUEUED_RUN_MISSING_WORK_ITEM"],
+            "lockTimeoutSeconds": 300,
+        },
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/adaptation-runs/queue/repair/dry-run")
+    assert captured["json"]["requestedByUserId"] == "admin"
+    assert captured["json"]["reason"] == "post-deploy check"
+    assert captured["json"]["issueKinds"] == ["QUEUED_RUN_MISSING_WORK_ITEM"]
+    assert captured["json"]["lockTimeoutSeconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_queue_repair_apply_rejects_malformed_json_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        raise AssertionError("should not proxy on malformed JSON")
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post(
+        "/admin/adaptation/runs/queue/repair",
+        content=b"{",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_queue_repair_apply_preserves_upstream_problem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    await _login_admin(client)
+    settings.adaptation_api_base_url = "http://adapt:5000"
+
+    def handler(**_kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={"title": "Conflict", "detail": "repair already in progress"},
+            headers={"content-type": "application/problem+json"},
+        )
+
+    monkeypatch.setattr(
+        "app.api.admin_adaptation.httpx.AsyncClient",
+        lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
+    )
+
+    response = await client.post("/admin/adaptation/runs/queue/repair", json={})
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "repair already in progress"
+

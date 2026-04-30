@@ -55,6 +55,11 @@ const links = [
     description: "Inspect run progress and artifacts",
   },
   {
+    href: "/adaptation/queue",
+    label: "Adaptation Queue",
+    description: "Diagnostics and repair tools",
+  },
+  {
     href: "/adaptation/profiles",
     label: "Adaptation Profiles",
     description: "Review produced adapter profiles",

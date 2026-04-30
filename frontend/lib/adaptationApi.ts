@@ -235,6 +235,80 @@ export const adaptationApi = {
       `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/deployment-events`,
       normalizeDeploymentEventList,
     ),
+
+  cancelRun: (runId: string, input?: { reason?: string | null }) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/${encodeURIComponent(runId)}/cancel`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason: input?.reason ?? null }),
+      },
+    ),
+
+  retryRun: (runId: string, input?: { idempotencyKey?: string }) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/${encodeURIComponent(runId)}/retry`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: idempotencyHeaders(input?.idempotencyKey),
+      },
+    ),
+
+  resumeRun: (runId: string, input?: { idempotencyKey?: string }) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/${encodeURIComponent(runId)}/resume`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: idempotencyHeaders(input?.idempotencyKey),
+      },
+    ),
+
+  getProfileDriftStatus: (profileId: string) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/drift-status`,
+      (body) => body as Record<string, unknown>,
+    ),
+
+  checkProfileDrift: (profileId: string, input?: { kind?: string | null }) =>
+    requestAdaptation(
+      `/admin/adaptation/profiles/${encodeURIComponent(profileId)}/check-drift`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify(input?.kind ? { kind: input.kind } : {}),
+      },
+    ),
+
+  getQueueDiagnostics: (params?: URLSearchParams) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/queue/diagnostics${params ? `?${params.toString()}` : ""}`,
+      (body) => body as Record<string, unknown>,
+    ),
+
+  queueRepairDryRun: (input?: Record<string, unknown>) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/queue/repair/dry-run`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify(input ?? {}),
+      },
+    ),
+
+  queueRepairApply: (input?: Record<string, unknown>) =>
+    requestAdaptation(
+      `/admin/adaptation/runs/queue/repair`,
+      (body) => body as Record<string, unknown>,
+      {
+        method: "POST",
+        body: JSON.stringify(input ?? {}),
+      },
+    ),
 };
 
 export type {

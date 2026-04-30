@@ -367,6 +367,17 @@ describe("Adaptation BO pages", () => {
 
     expect(await screen.findByText("Publish profile")).toBeInTheDocument();
   });
+
+  it("Adaptation queue page loads diagnostics and renders JSON", async () => {
+    mockFetchSequence([{ status: 200, body: { ok: true, queueDepth: 3 } }]);
+
+    const { default: QueuePage } = await import("../app/adaptation/queue/page");
+    render(<QueuePage />);
+
+    fireEvent.click(await screen.findByText("Load diagnostics"));
+
+    expect(await screen.findByText(/queueDepth/i)).toBeInTheDocument();
+  });
 });
 
 describe("adaptationApi deployment client", () => {

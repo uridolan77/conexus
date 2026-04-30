@@ -17,6 +17,7 @@ import {
 import { AdaptationErrorBanner } from "@/components/adaptation/AdaptationErrorBanner";
 import { CopyableId } from "@/components/adaptation/CopyableId";
 import { EvaluationEvidencePanel } from "@/components/adaptation/EvaluationEvidencePanel";
+import { RunOpsPanel } from "@/components/adaptation/RunOpsPanel";
 import { formatDate } from "@/lib/api";
 import {
   adaptationApi,
@@ -119,6 +120,14 @@ export default function AdaptationRunDetailPage({ params }: { params: { id: stri
       ) : (
         <>
           <EvaluationEvidencePanel evidence={evidence} status={evidenceLoad} />
+
+          <RunOpsPanel
+            runId={runId}
+            runStatus={typeof run.status === "string" ? run.status : null}
+            onRefresh={load}
+            onError={(r) => setLastError(r)}
+            onSuccess={() => setLastError(null)}
+          />
 
           <Card>
             <SectionHeader title="Run Summary" />
