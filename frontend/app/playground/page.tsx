@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -19,6 +19,7 @@ import {
   Input,
 } from "@/components/ui";
 import { formatApiError } from "@/lib/api";
+import { takePlaygroundApiKeyOnce } from "@/lib/playgroundKeyHandoff";
 import { formatTokens } from "@/lib/format";
 import {
   buildChatCompletionPayload,
@@ -128,6 +129,15 @@ export default function PlaygroundPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<PlaygroundResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [handoffLoaded, setHandoffLoaded] = useState(false);
+
+  useEffect(() => {
+    const key = takePlaygroundApiKeyOnce();
+    if (key) {
+      setApiKey(key);
+      setHandoffLoaded(true);
+    }
+  }, []);
 
   const payload = useMemo(
     () =>
@@ -269,6 +279,11 @@ export default function PlaygroundPage() {
         />
 
         {formError && <ErrorState message={formError} />}
+        {handoffLoaded && (
+          <Alert tone="info">
+            Project API key loaded from one-time handoff. It is still not persisted.
+          </Alert>
+        )}
 
         <div className="stack">
           <Field

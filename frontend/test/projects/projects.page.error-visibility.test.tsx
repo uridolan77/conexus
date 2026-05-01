@@ -1,6 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ProjectsPage from "@/app/projects/page";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
+vi.mock("@/lib/playgroundKeyHandoff", () => ({
+  setPlaygroundApiKeyOnce: vi.fn(),
+}));
 import type {
   ApiKeyRow,
   ProjectLimits,

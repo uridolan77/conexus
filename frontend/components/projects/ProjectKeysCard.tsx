@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Alert,
   Button,
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui";
 import { formatDate } from "@/lib/api";
 import { issueProjectKey, revokeProjectKey } from "@/lib/admin/projects";
+import { setPlaygroundApiKeyOnce } from "@/lib/playgroundKeyHandoff";
 import type { ApiKeyCreated, ApiKeyRow, ProjectRow } from "@/lib/types";
 
 export function ProjectKeysCard({
@@ -39,6 +41,7 @@ export function ProjectKeysCard({
   onKeyIssued: (key: ApiKeyCreated) => void;
   onKeyRevoked: () => void;
 }) {
+  const router = useRouter();
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [issuingKey, setIssuingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
@@ -121,6 +124,16 @@ export function ProjectKeysCard({
                 <pre>{latestIssuedKey.plaintext}</pre>
                 <div className="inline-actions">
                   <CopyButton value={latestIssuedKey.plaintext} label="Copy key" />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setPlaygroundApiKeyOnce(latestIssuedKey.plaintext);
+                      router.push("/playground");
+                    }}
+                  >
+                    Use in Playground
+                  </Button>
                 </div>
               </div>
             </Alert>

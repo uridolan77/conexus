@@ -1,7 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectKeysCard } from "@/components/projects/ProjectKeysCard";
 import type { ApiKeyCreated, ProjectRow } from "@/lib/types";
+
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+vi.mock("@/lib/playgroundKeyHandoff", () => ({
+  setPlaygroundApiKeyOnce: vi.fn(),
+}));
 
 const selectedProject: ProjectRow = {
   id: "proj-1",
@@ -64,8 +73,55 @@ describe("ProjectKeysCard — key shown once behavior", () => {
         onKeyRevoked={vi.fn()}
       />,
     );
-    // The alert title contains "shown once"
     const matches = screen.getAllByText(/shown once/i);
     expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it("shows Use in Playground button when key is issued", () => {
+    render(
+      <ProjectKeysCard
+        projectId="proj-1"
+        selectedProject={selectedProject}
+        keys={[]}
+        loadingKeys={false}
+        latestIssuedKey={latestKey}
+        onKeyIssued={vi.fn()}
+        onKeyRevoked={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Use in Playground" })).toBeInTheDocument();
+  });
+
+  it("Use in Playground calls handoff and navigates", async () => {
+    const { setPlaygroundApiKeyOnce } = await import("@/lib/playgroundKeyHandoff");
+    render(
+      <ProjectKeysCard
+        projectId="proj-1"
+        selectedProject={selectedProject}
+        keys={[]}
+        loadingKeys={false}
+        latestIssuedKey={latestKey}
+        onKeyIssued={vi.fn()}
+        onKeyRevoked={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Use in Playground" }));
+    expect(setPlaygroundApiKeyOnce).toHaveBeenCalledWith(latestKey.plaintext);
+    expect(mockPush).toHaveBeenCalledWith("/playground");
+  });
+
+  it("does NOT show Use in Playground when no key is issued", () => {
+    render(
+      <ProjectKeysCard
+        projectId="proj-1"
+        selectedProject={selectedProject}
+        keys={[]}
+        loadingKeys={false}
+        latestIssuedKey={null}
+        onKeyIssued={vi.fn()}
+        onKeyRevoked={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Use in Playground" })).not.toBeInTheDocument();
   });
 });

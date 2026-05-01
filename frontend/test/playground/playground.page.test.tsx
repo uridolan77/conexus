@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import PlaygroundPage from "@/app/playground/page";
 
+vi.mock("@/lib/playgroundKeyHandoff", () => ({
+  takePlaygroundApiKeyOnce: vi.fn().mockReturnValue(null),
+}));
+
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -146,6 +150,46 @@ describe("Playground page", () => {
 
     // The debug JSON should not contain the key, even nested
     expect(screen.queryByText(apiKey)).not.toBeInTheDocument();
+  });
+});
+
+describe("Playground page — key handoff", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prefills API key and shows handoff notice when handoff key is present", async () => {
+    const handoff = await import("@/lib/playgroundKeyHandoff");
+    vi.mocked(handoff.takePlaygroundApiKeyOnce).mockReturnValueOnce("cx_live_handoff_secret");
+
+    render(<PlaygroundPage />);
+
+    const keyInput = await screen.findByPlaceholderText("cx_live_...") as HTMLInputElement;
+    await waitFor(() => expect(keyInput.value).toBe("cx_live_handoff_secret"));
+    expect(screen.getByText(/loaded from one-time handoff/i)).toBeInTheDocument();
+  });
+
+  it("does not prefill or show notice when no handoff key", async () => {
+    render(<PlaygroundPage />);
+
+    const keyInput = screen.getByPlaceholderText("cx_live_...") as HTMLInputElement;
+    expect(keyInput.value).toBe("");
+    expect(screen.queryByText(/loaded from one-time handoff/i)).not.toBeInTheDocument();
+  });
+
+  it("does not use localStorage/sessionStorage when handoff key is loaded", async () => {
+    const handoff = await import("@/lib/playgroundKeyHandoff");
+    vi.mocked(handoff.takePlaygroundApiKeyOnce).mockReturnValueOnce("cx_live_handoff_secret");
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+
+    render(<PlaygroundPage />);
+    await waitFor(() => expect((screen.getByPlaceholderText("cx_live_...") as HTMLInputElement).value).toBe("cx_live_handoff_secret"));
+
+    expect(setItem).not.toHaveBeenCalled();
   });
 });
 
