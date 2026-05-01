@@ -117,7 +117,7 @@ export default function AdapterProfilesPage() {
         <UnconfiguredServiceState
           serviceName="Adaptation service"
           envVarName="ADAPTATION_API_BASE_URL"
-          expectedLocalValue="http://localhost:5088"
+          expectedLocalValue="http://localhost:5000"
           onRetry={() => void load(filters)}
         />
       ) : (
