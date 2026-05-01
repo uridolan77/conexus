@@ -29,6 +29,21 @@ function Write-Header([string]$Text) {
     Write-Host "==> $Text" -ForegroundColor Cyan
 }
 
+function Wait-HttpOk([string]$Url, [int]$TimeoutSeconds = 120) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $res = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5
+            if ($res.StatusCode -ge 200 -and $res.StatusCode -lt 300) {
+                return
+            }
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "Timed out waiting for $Url"
+}
+
 # --- 1. docker compose up -----------------------------------------------------
 Write-Header "Starting conexus (docker compose)"
 
@@ -55,16 +70,14 @@ Write-Host "  conexus frontend -> http://localhost:3000" -ForegroundColor Green
 # --- 2. Database migrations (via docker exec) ---------------------------------
 Write-Header "Running database migrations"
 
+Write-Host "  Waiting for backend to be ready..." -ForegroundColor DarkGray
+Wait-HttpOk "http://localhost:8000/readyz"
+Write-Host "  Backend is healthy." -ForegroundColor Green
+
 Push-Location $ConexusDir
 try {
     docker compose exec -T backend python -m alembic upgrade head
-    if (-not $?) {
-        Write-Host "WARNING: migration step reported failure." -ForegroundColor Yellow
-        Write-Host "         The backend container may still be starting up -- re-run once healthy." -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host "WARNING: docker exec failed: $_" -ForegroundColor Yellow
-    Write-Host "         Re-run once the backend container is healthy." -ForegroundColor Yellow
+    if (-not $?) { throw "alembic upgrade head failed" }
 } finally {
     Pop-Location
 }
@@ -80,10 +93,13 @@ if (-not $NoAdapt) {
         $AdaptationApi = Join-Path $AdaptationDir "src\Conexus.Adaptation.Api"
 
         $envLines = @(
-            "`$env:Conexus__BaseUrl            = 'http://localhost:8000'",
-            "`$env:GatewayRegistration__Mode    = 'http'",
-            "`$env:GatewayRegistration__BaseUrl = 'http://localhost:8000'",
-            "`$env:GatewayRegistration__ApiKey  = '$InternalAdapterApiKey'"
+            "`$env:ASPNETCORE_ENVIRONMENT          = 'Development'",
+            "`$env:ASPNETCORE_URLS                 = 'http://localhost:5000'",
+            "`$env:Conexus__BaseUrl                = 'http://localhost:8000'",
+            "`$env:GatewayRegistration__Mode        = 'http'",
+            "`$env:GatewayRegistration__BaseUrl     = 'http://localhost:8000'",
+            "`$env:GatewayRegistration__ApiKey      = '$InternalAdapterApiKey'",
+            "`$env:GatewayRegistration__Actor       = 'conexus-adaptation-local'"
         )
         if ($ConexusProjectApiKey) {
             $envLines += "`$env:Conexus__ApiKey = '$ConexusProjectApiKey'"
