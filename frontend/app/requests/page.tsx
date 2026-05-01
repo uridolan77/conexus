@@ -164,10 +164,6 @@ function asSortDir(value: string): "asc" | "desc" {
   return value === "asc" ? "asc" : "desc";
 }
 
-function localDatetimeToISO(value: string): string | undefined {
-  if (!value) return undefined;
-  return new Date(value).toISOString();
-}
 
 function filtersFromLocation(): Filters {
   if (typeof window === "undefined") return defaultFilters;
@@ -249,10 +245,10 @@ export default function RequestsPage() {
             ? undefined
             : nextFilters.fallback_used === "true",
         error_code: nextFilters.error_code || undefined,
-        created_from: localDatetimeToISO(nextFilters.created_from),
-        created_to: localDatetimeToISO(nextFilters.created_to),
-        completed_from: localDatetimeToISO(nextFilters.completed_from),
-        completed_to: localDatetimeToISO(nextFilters.completed_to),
+        created_from: nextFilters.created_from || undefined,
+        created_to: nextFilters.created_to || undefined,
+        completed_from: nextFilters.completed_from || undefined,
+        completed_to: nextFilters.completed_to || undefined,
         min_latency_ms: nextFilters.min_latency_ms ? Number(nextFilters.min_latency_ms) : undefined,
         max_latency_ms: nextFilters.max_latency_ms ? Number(nextFilters.max_latency_ms) : undefined,
         min_total_tokens: nextFilters.min_total_tokens ? Number(nextFilters.min_total_tokens) : undefined,
@@ -529,32 +525,36 @@ export default function RequestsPage() {
                   </Field>
                 </FormRow>
                 <FormRow>
-                  <Field label="Created from">
+                  <Field label="Created from" hint="ISO format, e.g. 2026-04-30T00:00:00Z">
                     <Input
-                      type="datetime-local"
+                      type="text"
+                      placeholder="2026-04-30T00:00:00Z"
                       value={filters.created_from}
                       onChange={(e) => setFilters({ ...filters, created_from: e.target.value })}
                     />
                   </Field>
-                  <Field label="Created to">
+                  <Field label="Created to" hint="ISO format, e.g. 2026-04-30T23:59:59Z">
                     <Input
-                      type="datetime-local"
+                      type="text"
+                      placeholder="2026-04-30T23:59:59Z"
                       value={filters.created_to}
                       onChange={(e) => setFilters({ ...filters, created_to: e.target.value })}
                     />
                   </Field>
                 </FormRow>
                 <FormRow>
-                  <Field label="Completed from">
+                  <Field label="Completed from" hint="ISO format, e.g. 2026-04-30T00:00:00Z">
                     <Input
-                      type="datetime-local"
+                      type="text"
+                      placeholder="2026-04-30T00:00:00Z"
                       value={filters.completed_from}
                       onChange={(e) => setFilters({ ...filters, completed_from: e.target.value })}
                     />
                   </Field>
-                  <Field label="Completed to">
+                  <Field label="Completed to" hint="ISO format, e.g. 2026-04-30T23:59:59Z">
                     <Input
-                      type="datetime-local"
+                      type="text"
+                      placeholder="2026-04-30T23:59:59Z"
                       value={filters.completed_to}
                       onChange={(e) => setFilters({ ...filters, completed_to: e.target.value })}
                     />
