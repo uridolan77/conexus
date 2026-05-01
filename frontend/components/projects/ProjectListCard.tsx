@@ -50,7 +50,7 @@ export function ProjectListCard({
             {projects.map((project) => (
               <tr
                 key={project.id}
-                className={project.id === selectedId ? "row-muted" : undefined}
+                className={project.id === selectedId ? "row-selected" : undefined}
               >
                 <td>{project.name}</td>
                 <td>{project.active_key_count}</td>

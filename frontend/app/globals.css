@@ -380,6 +380,10 @@ summary:focus-visible {
   color: var(--color-text-muted);
 }
 
+.row-selected {
+  background: var(--color-primary-soft);
+}
+
 .row-warning {
   background: var(--color-warning-soft);
 }

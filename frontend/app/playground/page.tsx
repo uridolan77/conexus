@@ -453,7 +453,7 @@ export default function PlaygroundPage() {
           )}
 
           {safeRawValue != null ? (
-            <JsonBlock value={safeRawValue} title="Raw JSON" defaultOpen={false} />
+            <JsonBlock value={safeRawValue} title="Debug JSON" defaultOpen={false} />
           ) : null}
         </Card>
       )}

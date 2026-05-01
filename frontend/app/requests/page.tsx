@@ -162,6 +162,11 @@ function asSortDir(value: string): "asc" | "desc" {
   return value === "asc" ? "asc" : "desc";
 }
 
+function localDatetimeToISO(value: string): string | undefined {
+  if (!value) return undefined;
+  return new Date(value).toISOString();
+}
+
 function filtersFromLocation(): Filters {
   if (typeof window === "undefined") return defaultFilters;
   const params = new URLSearchParams(window.location.search);
@@ -242,10 +247,10 @@ export default function RequestsPage() {
             ? undefined
             : nextFilters.fallback_used === "true",
         error_code: nextFilters.error_code || undefined,
-        created_from: nextFilters.created_from || undefined,
-        created_to: nextFilters.created_to || undefined,
-        completed_from: nextFilters.completed_from || undefined,
-        completed_to: nextFilters.completed_to || undefined,
+        created_from: localDatetimeToISO(nextFilters.created_from),
+        created_to: localDatetimeToISO(nextFilters.created_to),
+        completed_from: localDatetimeToISO(nextFilters.completed_from),
+        completed_to: localDatetimeToISO(nextFilters.completed_to),
         min_latency_ms: nextFilters.min_latency_ms ? Number(nextFilters.min_latency_ms) : undefined,
         max_latency_ms: nextFilters.max_latency_ms ? Number(nextFilters.max_latency_ms) : undefined,
         min_total_tokens: nextFilters.min_total_tokens ? Number(nextFilters.min_total_tokens) : undefined,
@@ -368,7 +373,7 @@ export default function RequestsPage() {
         eyebrow="Gateway activity"
         title="Requests"
         description="Inspect real gateway request metadata for operational debugging. Prompt and response body content is not stored or shown here."
-        actions={<LinkButton href="/smoke-tests" variant="primary">Run Smoke Test</LinkButton>}
+        actions={<LinkButton href="/smoke-tests" variant="primary">Test Gateway</LinkButton>}
       />
 
       {error && <ErrorState message={error} />}
@@ -632,7 +637,7 @@ export default function RequestsPage() {
         ) : items.length === 0 ? (
           <EmptyState
             title="No requests found"
-            action={<LinkButton href="/smoke-tests">Run a gateway smoke test</LinkButton>}
+            action={<LinkButton href="/smoke-tests">Test the gateway</LinkButton>}
           >
             No real gateway request metadata matches the current filters.
           </EmptyState>

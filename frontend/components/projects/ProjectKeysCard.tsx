@@ -5,6 +5,7 @@ import {
   Alert,
   Button,
   Card,
+  CompactId,
   ConfirmAction,
   CopyButton,
   EmptyState,
@@ -128,7 +129,7 @@ export function ProjectKeysCard({
           {selectedProject && (
             <KeyValueGrid
               items={[
-                { label: "Project ID", value: <code>{selectedProject.id}</code> },
+                { label: "Project ID", value: <CompactId value={selectedProject.id} /> },
                 { label: "Active keys", value: selectedProject.active_key_count },
                 { label: "Total requests", value: selectedProject.total_request_count },
               ]}

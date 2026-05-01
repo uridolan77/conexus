@@ -134,7 +134,7 @@ export default function DashboardPage() {
         eyebrow="Back office"
         title="Dashboard"
         description="Set up Conexus, verify the gateway path, and keep the current operational state easy to read."
-        actions={<LinkButton href="/smoke-tests" variant="primary">Run Smoke Test</LinkButton>}
+        actions={<LinkButton href="/smoke-tests" variant="primary">Test Gateway</LinkButton>}
       />
 
       {summaryError && <Alert tone="warning">{summaryError}</Alert>}
