@@ -115,7 +115,7 @@ export default function DashboardPage() {
         href: "/projects",
       },
       {
-        label: "Run smoke test",
+        label: "Test gateway",
         done: projectRequestCount > 0,
         href: "/smoke-tests",
       },

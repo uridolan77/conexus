@@ -9,7 +9,6 @@ import {
   ErrorState,
   Field,
   FieldError,
-  FormRow,
   HelpText,
   InlineCode,
   JsonBlock,
@@ -255,9 +254,11 @@ export default function PlaygroundPage() {
           </>
         }
         actions={
-          <Button type="button" variant="secondary" onClick={() => setResult(null)} disabled={submitting}>
-            Clear result
-          </Button>
+          result != null ? (
+            <Button type="button" variant="secondary" onClick={() => setResult(null)} disabled={submitting}>
+              Clear result
+            </Button>
+          ) : undefined
         }
       />
 
@@ -298,32 +299,11 @@ export default function PlaygroundPage() {
             </Button>
           </div>
 
-          <FormRow>
+          <div className="form-row-3">
             <Field label="Model">
               <Input value={model} onChange={(e) => setModel(e.target.value)} />
               {modelIsEmpty && <FieldError>Model is required.</FieldError>}
             </Field>
-          </FormRow>
-
-          <Field label="System message (optional)">
-            <Textarea
-              value={systemMessage}
-              onChange={(e) => setSystemMessage(e.target.value)}
-              rows={3}
-              placeholder="You are a helpful assistant."
-            />
-          </Field>
-
-          <Field label="User message">
-            <Textarea
-              value={userMessage}
-              onChange={(e) => setUserMessage(e.target.value)}
-              rows={4}
-            />
-            {userIsEmpty && <FieldError>User message is required.</FieldError>}
-          </Field>
-
-          <FormRow>
             <Field label="Temperature (optional)" hint="Must be a valid number.">
               <Input
                 value={temperature}
@@ -346,7 +326,25 @@ export default function PlaygroundPage() {
                 <FieldError>Max tokens must be a positive integer.</FieldError>
               )}
             </Field>
-          </FormRow>
+          </div>
+
+          <Field label="System message (optional)">
+            <Textarea
+              value={systemMessage}
+              onChange={(e) => setSystemMessage(e.target.value)}
+              rows={3}
+              placeholder="You are a helpful assistant."
+            />
+          </Field>
+
+          <Field label="User message">
+            <Textarea
+              value={userMessage}
+              onChange={(e) => setUserMessage(e.target.value)}
+              rows={4}
+            />
+            {userIsEmpty && <FieldError>User message is required.</FieldError>}
+          </Field>
 
           <Alert tone="info">
             Streaming playground mode is not implemented yet. Non-streaming requests

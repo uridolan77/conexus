@@ -141,10 +141,12 @@ function activeFiltersSummary(filters: Filters) {
   addRange("lat", filters.min_latency_ms, filters.max_latency_ms, "ms");
   addRange("tok", filters.min_total_tokens, filters.max_total_tokens);
   addRange("$", filters.min_estimated_cost, filters.max_estimated_cost);
-  if (clean(filters.sort_by) || clean(filters.sort_dir)) {
+  if (filters.sort_by !== "created_at" || filters.sort_dir !== "desc") {
     parts.push(`sort=${short(filters.sort_by || "created_at")}.${short(filters.sort_dir || "desc", 6)}`);
   }
-  add("limit", filters.limit);
+  if (filters.limit && filters.limit !== DEFAULT_LIMIT) {
+    add("limit", filters.limit);
+  }
 
   return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
 }
