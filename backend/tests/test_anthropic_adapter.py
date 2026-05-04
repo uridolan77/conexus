@@ -410,3 +410,67 @@ async def test_anthropic_stream_persistent_429_on_enter_retries_then_raises_norm
             pass
 
     assert len(messages.stream_calls) == ANTHROPIC_RETRY_ATTEMPTS
+
+
+# ── M2: retryable flag ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_anthropic_rate_limit_error_is_retryable() -> None:
+    """ProviderRateLimitError.retryable must be True (M2 requirement)."""
+    messages = _FakeMessages(raises=_rate_limit_error())
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderRateLimitError) as exc_info:
+        await provider.chat([{"role": "user", "content": "x"}], model="claude-haiku-4-5-20251001")
+
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_server_error_is_retryable() -> None:
+    """ProviderUnavailableError.retryable must be True (M2 requirement)."""
+    messages = _FakeMessages(raises=_server_error())
+    provider = AnthropicProvider(client=_FakeAnthropic(messages))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        await provider.chat([{"role": "user", "content": "x"}], model="claude-haiku-4-5-20251001")
+
+    assert exc_info.value.retryable is True
+
+
+# ── M2: aclose ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_anthropic_aclose_calls_underlying_client_close() -> None:
+    """aclose() must close the underlying SDK client (M2 requirement)."""
+    closed: list[bool] = []
+
+    class _TrackingAnthropic:
+        messages = _FakeMessages()
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    provider = AnthropicProvider(client=_TrackingAnthropic())  # type: ignore[arg-type]
+    await provider.aclose()
+
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_context_manager_closes_on_exit() -> None:
+    """Using ``async with`` must call aclose() on exit (M2 requirement)."""
+    closed: list[bool] = []
+
+    class _TrackingAnthropic:
+        messages = _FakeMessages()
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    async with AnthropicProvider(client=_TrackingAnthropic()):  # type: ignore[arg-type]
+        pass
+
+    assert closed == [True]

@@ -11,6 +11,8 @@ from __future__ import annotations
 class ProviderError(Exception):
     """Base class for provider-related errors."""
 
+    retryable: bool = False
+
     def __init__(self, message: str, *, provider: str | None = None) -> None:
         super().__init__(message)
         self.provider = provider
@@ -19,9 +21,13 @@ class ProviderError(Exception):
 class ProviderRateLimitError(ProviderError):
     """Provider returned 429 (or equivalent)."""
 
+    retryable = True
+
 
 class ProviderUnavailableError(ProviderError):
     """Provider returned a transient 5xx / connection error."""
+
+    retryable = True
 
 
 class AllProvidersFailedError(ProviderError):
