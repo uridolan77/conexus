@@ -35,7 +35,7 @@ export default function ProvidersPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, ProviderTestResult>>({});
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [disablingId, setDisablingId] = useState<string | null>(null);
 
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -95,22 +95,22 @@ export default function ProvidersPage() {
     }
   }
 
-  async function revoke(id: string) {
-    setRevokingId(id);
+  async function disableProvider(id: string) {
+    setDisablingId(id);
     setError(null);
     setSuccess(null);
     try {
-      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers/${id}/revoke`, {
+      const res = await adminSessionFetch(`${BACKEND_BASE}/admin/providers/${id}/disable`, {
         method: "POST",
       });
       if (!res.ok) {
-        setError("Failed to revoke provider config.");
+        setError("Failed to disable provider config.");
         return;
       }
-      setSuccess("Provider credential revoked.");
+      setSuccess("Provider credential disabled.");
       await fetchRows();
     } finally {
-      setRevokingId(null);
+      setDisablingId(null);
     }
   }
 
@@ -191,7 +191,7 @@ export default function ProvidersPage() {
       <Card>
         <SectionHeader
           title="Configured Providers"
-          description="Test active credentials before relying on them for gateway traffic. Revoked providers remain visible for audit context."
+          description="Test active credentials before relying on them for gateway traffic. Disabled providers are terminal and remain visible for audit context."
         />
         {loading ? (
           <LoadingState label="Loading providers..." />
@@ -216,15 +216,15 @@ export default function ProvidersPage() {
               {sortedRows.map((row) => {
                 const test = testResults[row.id];
                 const status = test?.status ?? row.last_test_status ?? "never";
-                const testError = test?.error ?? row.last_test_error;
-                const latency = test?.latency_ms;
+                const testError = test ? test.error : row.last_test_error;
+                const latency = test ? test.latency_ms : undefined;
                 return (
                   <tr key={row.id} className={!row.is_active ? "row-muted" : undefined}>
                     <td><strong>{row.provider}</strong></td>
                     <td>{row.label ?? "-"}</td>
                     <td><SecretValue value={row.key_mask} /></td>
                     <td>
-                      <StatusBadge status={row.is_active ? "active" : "revoked"} />
+                      <StatusBadge status={row.is_active ? "active" : "disabled"} />
                     </td>
                     <td>
                       <div className="stack">
@@ -255,11 +255,11 @@ export default function ProvidersPage() {
                           {testingId === row.id ? "Testing..." : "Test"}
                         </Button>
                         <ConfirmAction
-                          message={`Revoke ${row.provider} provider ${row.label ?? row.key_mask}? Gateway traffic will no longer use this credential.`}
-                          onConfirm={() => void revoke(row.id)}
-                          disabled={!row.is_active || revokingId === row.id}
+                          message={`Disable ${row.provider} provider ${row.label ?? row.key_mask}? Gateway traffic will no longer use this credential.`}
+                          onConfirm={() => void disableProvider(row.id)}
+                          disabled={!row.is_active || disablingId === row.id}
                         >
-                          {revokingId === row.id ? "Revoking..." : "Revoke"}
+                          {disablingId === row.id ? "Disabling..." : "Disable"}
                         </ConfirmAction>
                       </div>
                     </td>
