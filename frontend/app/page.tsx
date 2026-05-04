@@ -3,6 +3,7 @@
 import { HealthCard } from "../components/HealthCard";
 import {
   Alert,
+  Badge,
   Card,
   EmptyState,
   LinkButton,
@@ -10,9 +11,14 @@ import {
   PageHeader,
   SectionHeader,
   StatCard,
+  StatusBadge,
+  Table,
 } from "@/components/ui";
-import { BACKEND_BASE, adminSessionFetch } from "@/lib/api";
-import type { ProjectRow, ProviderRow, UsageSummary } from "@/lib/types";
+import { getDashboardSummary } from "@/lib/admin/dashboard";
+import { listProjects } from "@/lib/admin/projects";
+import { listProviders } from "@/lib/admin/providers";
+import { formatDateTime, formatLatency } from "@/lib/format";
+import type { DashboardSummary, ProjectRow, ProviderRow } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
 
 function formatCost(value: number | null | undefined) {
@@ -30,7 +36,7 @@ function formatRate(value: number | null | undefined) {
 export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [providers, setProviders] = useState<ProviderRow[] | null>(null);
-  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -39,34 +45,32 @@ export default function DashboardPage() {
       setSummaryLoading(true);
       setSummaryError(null);
       try {
-        const [projectRes, providerRes, usageRes] = await Promise.all([
-          adminSessionFetch(`${BACKEND_BASE}/admin/projects`),
-          adminSessionFetch(`${BACKEND_BASE}/admin/providers`),
-          adminSessionFetch(`${BACKEND_BASE}/admin/usage/summary?window=30d`, {
-            cache: "no-store",
-          }),
+        const [projectRes, providerRes, dashboardRes] = await Promise.all([
+          listProjects(),
+          listProviders(),
+          getDashboardSummary(),
         ]);
 
         const failures: string[] = [];
         if (projectRes.ok) {
-          setProjects((await projectRes.json()) as ProjectRow[]);
+          setProjects(projectRes.data);
         } else {
           setProjects(null);
           failures.push("projects");
         }
 
         if (providerRes.ok) {
-          setProviders((await providerRes.json()) as ProviderRow[]);
+          setProviders(providerRes.data);
         } else {
           setProviders(null);
           failures.push("providers");
         }
 
-        if (usageRes.ok) {
-          setUsage((await usageRes.json()) as UsageSummary);
+        if (dashboardRes.ok) {
+          setSummary(dashboardRes.data);
         } else {
-          setUsage(null);
-          failures.push("usage");
+          setSummary(null);
+          failures.push("dashboard");
         }
 
         if (failures.length > 0) {
@@ -75,7 +79,7 @@ export default function DashboardPage() {
       } catch {
         setProjects(null);
         setProviders(null);
-        setUsage(null);
+        setSummary(null);
         setSummaryError("Unable to load dashboard summary. Check that the backend is reachable.");
       } finally {
         setSummaryLoading(false);
@@ -156,19 +160,28 @@ export default function DashboardPage() {
             hint="Upstream credentials"
           />
           <StatCard
-            label="Requests (30d)"
-            value={usage ? usage.total_requests.toLocaleString() : "Unavailable"}
+            label="Requests today"
+            value={summary ? summary.requests_today.toLocaleString() : "Unavailable"}
             hint="From request logs"
           />
           <StatCard
-            label="Estimated Cost (30d)"
-            value={formatCost(usage?.estimated_cost)}
-            hint="USD from logged usage"
+            label="Estimated Cost Today"
+            value={formatCost(summary?.estimated_cost_today)}
+            hint="USD from logged requests"
           />
           <StatCard
-            label="Success Rate (30d)"
-            value={formatRate(usage?.success_rate)}
-            hint={usage ? `${usage.completed_requests} completed` : "From request logs"}
+            label="Success Rate Today"
+            value={formatRate(summary?.success_rate)}
+            hint={summary ? `${summary.failed_requests} failed` : "From request logs"}
+          />
+          <StatCard
+            label="Average Latency Today"
+            value={
+              summary?.average_latency_ms === null || summary?.average_latency_ms === undefined
+                ? "Unavailable"
+                : formatLatency(summary.average_latency_ms)
+            }
+            hint="Completed and failed calls"
           />
         </div>
       )}
@@ -213,6 +226,61 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
+
+      <Card>
+        <SectionHeader
+          title="Latest Errors"
+          description="Most recent failed gateway requests across projects."
+        />
+        {summaryLoading ? (
+          <LoadingState label="Loading latest errors..." />
+        ) : !summary || summary.latest_errors.length === 0 ? (
+          <EmptyState title="No recent gateway errors">
+            Failed requests will appear here as soon as the gateway logs them.
+          </EmptyState>
+        ) : (
+          <Table aria-label="Latest gateway errors">
+            <thead>
+              <tr>
+                <th>Created</th>
+                <th>Request ID</th>
+                <th>Project</th>
+                <th>Requested model</th>
+                <th>Route</th>
+                <th>Error</th>
+                <th>Open</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.latest_errors.map((item) => (
+                <tr key={item.request_id} className="row-warning">
+                  <td>{formatDateTime(item.created_at)}</td>
+                  <td><code>{item.request_id}</code></td>
+                  <td>{item.project_name ?? item.project_id ?? "-"}</td>
+                  <td><code>{item.requested_model}</code></td>
+                  <td>
+                    <div className="stack-tight">
+                      <strong>{item.provider ?? "-"}</strong>
+                      <code>{item.model ?? "-"}</code>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="stack-tight">
+                      <StatusBadge status="failed" />
+                      {item.error_code && <Badge tone="warning">{item.error_code}</Badge>}
+                    </div>
+                  </td>
+                  <td>
+                    <LinkButton href={`/requests?request_id=${encodeURIComponent(item.request_id)}`}>
+                      View
+                    </LinkButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
 
       {!summaryLoading && !summaryError && projectRows.length === 0 && providerRows.length === 0 && (
         <EmptyState title="Start with an upstream provider">

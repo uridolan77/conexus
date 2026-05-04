@@ -655,7 +655,9 @@ export default function RequestsPage() {
                   <th>Requested model</th>
                   <th>Route</th>
                   <th>Latency</th>
+                  <th>Tokens</th>
                   <th>Cost</th>
+                  <th>Fallback</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -679,7 +681,9 @@ export default function RequestsPage() {
                       </div>
                     </td>
                     <td>{formatLatency(item.latency_ms)}</td>
+                    <td>{formatTokens(item.total_tokens)}</td>
                     <td>{formatCost(item.estimated_cost)}</td>
+                    <td>{item.fallback_used ? <Badge tone="warning">Yes</Badge> : "No"}</td>
                     <td className="table-action">
                       <Button type="button" variant="secondary" onClick={() => selectRequest(item)}>
                         {selectedRequestId === item.request_id ? "Viewing" : "View"}
