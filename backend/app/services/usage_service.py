@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import GatewayRequest, UsageEvent
@@ -22,6 +23,14 @@ async def record_usage_event(
     metadata: dict[str, Any] | None = None,
 ) -> UsageEvent | None:
     """Persist a normalized usage ledger row when complete usage exists."""
+    existing = await session.scalar(
+        select(UsageEvent).where(
+            UsageEvent.gateway_request_id == gateway_request.id
+        )
+    )
+    if existing is not None:
+        return existing
+
     if (
         gateway_request.project_id is None
         or prompt_tokens is None

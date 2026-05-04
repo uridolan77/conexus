@@ -264,6 +264,9 @@ class GatewayRequest(Base):
 
 class UsageEvent(Base):
     __tablename__ = "usage_events"
+    __table_args__ = (
+        UniqueConstraint("gateway_request_id", name="uq_usage_events_gateway_request_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     gateway_request_id: Mapped[str] = mapped_column(

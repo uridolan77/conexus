@@ -23,6 +23,10 @@ async def test_m5_metadata_contains_usage_alias_and_key_columns() -> None:
                     "usage_events": {
                         column["name"] for column in inspector.get_columns("usage_events")
                     },
+                    "usage_event_unique_constraints": {
+                        constraint["name"]
+                        for constraint in inspector.get_unique_constraints("usage_events")
+                    },
                     "gateway_model_aliases": {
                         column["name"]
                         for column in inspector.get_columns("gateway_model_aliases")
@@ -48,6 +52,10 @@ async def test_m5_metadata_contains_usage_alias_and_key_columns() -> None:
         "cost_usd",
         "metadata_json",
     } <= schema["usage_events"]
+    assert (
+        "uq_usage_events_gateway_request_id"
+        in schema["usage_event_unique_constraints"]
+    )
     assert {
         "alias",
         "primary_provider",

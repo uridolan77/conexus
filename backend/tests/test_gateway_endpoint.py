@@ -29,7 +29,10 @@ from app.llm.errors import (
 from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
-from app.services.gateway_service import GatewayClientError
+from app.services.gateway_service import (
+    GatewayClientError,
+    run_chat_completion_stream,
+)
 from app.services.project_key_service import create_api_key
 from app.core.config import settings
 
@@ -1607,6 +1610,59 @@ async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
         ).scalar_one()
         assert log.status == "failed"
         assert log.error_code == "ProviderUnavailableError"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_stream_cancellation_marks_failed_and_reconciles(
+    seeded, db_sessionmaker
+) -> None:
+    _plaintext, project, api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=10,
+    )
+    response = await run_chat_completion_stream(
+        sessionmaker=db_sessionmaker,
+        provider=_SlowProvider(sleep_seconds=10.0),
+        project=project,
+        api_key=api_key,
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        max_tokens=8,
+        temperature=0.2,
+    )
+    stream = response.stream.__aiter__()
+
+    first_chunk = await stream.__anext__()
+    assert first_chunk.role_delta == "assistant"
+
+    pending = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.05)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == response.request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "stream_cancelled"
+        assert log.completed_at is not None
+        assert log.limit_reservation_id is not None
+
+        reservation = await session.get(
+            models.ProjectGatewayLimitReservation,
+            log.limit_reservation_id,
+        )
+        assert reservation is not None
+        assert reservation.reconciled_at is not None
 
 
 @pytest.mark.asyncio

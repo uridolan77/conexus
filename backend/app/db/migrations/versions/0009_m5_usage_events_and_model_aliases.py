@@ -68,6 +68,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["gateway_request_id"], ["gateway_requests.id"]),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "gateway_request_id",
+            name="uq_usage_events_gateway_request_id",
+        ),
     )
     op.create_index(
         op.f("ix_usage_events_created_at"),

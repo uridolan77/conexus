@@ -4,6 +4,7 @@ import json
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db import models
@@ -59,6 +60,49 @@ async def test_record_usage_event_persists_complete_usage(sessionmaker) -> None:
         assert row.total_tokens == 15
         assert row.cost_usd == 0.001
         assert json.loads(row.metadata_json) == {"fallback_used": False}
+
+
+@pytest.mark.asyncio
+async def test_record_usage_event_is_idempotent_per_gateway_request(sessionmaker) -> None:
+    async with sessionmaker() as session:
+        project = models.Project(name="p")
+        session.add(project)
+        await session.flush()
+        gateway_request = models.GatewayRequest(
+            request_id="req_1",
+            project_id=project.id,
+            requested_model="conexus-fast",
+            status="completed",
+        )
+        session.add(gateway_request)
+        await session.flush()
+
+        first = await record_usage_event(
+            session,
+            gateway_request=gateway_request,
+            provider="openai",
+            model="gpt-4o-mini",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.001,
+        )
+        second = await record_usage_event(
+            session,
+            gateway_request=gateway_request,
+            provider="openai",
+            model="gpt-4o-mini",
+            prompt_tokens=99,
+            completion_tokens=99,
+            cost_usd=9.99,
+        )
+
+        assert first is not None
+        assert second is not None
+        assert second.id == first.id
+        rows = list((await session.execute(select(models.UsageEvent))).scalars())
+        assert len(rows) == 1
+        assert rows[0].prompt_tokens == 10
+        assert rows[0].completion_tokens == 5
 
 
 @pytest.mark.asyncio

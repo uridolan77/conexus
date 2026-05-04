@@ -55,7 +55,7 @@ backend/
       base.py
       dependencies.py
       gateway_router.py
-      model_alias_config.py
+      model_alias_config.py  # runtime routing source for now
       openai_adapter.py
       anthropic_adapter.py
       pricing.py
@@ -108,6 +108,11 @@ gateway_adapter_profile_activations
 Schema changes are represented by Alembic revisions. `create_all` remains a
 local/dev convenience only; production should run migrations before startup and
 set `ALLOW_CREATE_ALL=false`.
+
+`gateway_model_aliases` is a persistence placeholder for BO/admin management in
+the current M5/M6 slice. Runtime provider/model routing still uses the static
+YAML/model-alias configuration by default; DB-backed alias routing is deferred so
+existing boot and routing behavior does not change silently.
 
 ## Design preference
 

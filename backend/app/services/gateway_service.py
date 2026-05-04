@@ -794,6 +794,18 @@ async def run_chat_completion_stream(
             raise GatewayUpstreamError(
                 str(exc), code=code, request_id=request_id
             ) from exc
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                _record_failure(
+                    sessionmaker,
+                    request_id=request_id,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    error_code="stream_cancelled",
+                    error_message="stream cancelled",
+                    limit_reservation_id=limit_reservation_id,
+                )
+            )
+            raise
         except Exception as exc:
             code = type(exc).__name__
             await _record_failure(
