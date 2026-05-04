@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from app.models import (
+from agentor_runtime.models import (
     AgentRun,
     GraphNode,
     HumanApprovalCheckpoint,
@@ -35,10 +35,11 @@ class ApprovalRejectedError(Exception):
 class NodeExecutor:
     """Runs a list of GraphNodes in order, sharing GraphState between them.
 
-    Nodes that return a HumanApprovalCheckpoint pause execution. The caller
-    must resolve the checkpoint (approve/reject) and call ``resume()`` to
-    continue. Alternatively, use ``run()`` with ``auto_approve=True`` for
-    non-interactive contexts (e.g. tests).
+    When a node installs a :class:`~agentor_runtime.models.HumanApprovalCheckpoint`,
+    execution pauses and the run is left in ``AWAITING_APPROVAL``. The caller is
+    responsible for resolving the checkpoint (``approve()`` / ``reject()``) and
+    re-executing from the point of interruption. A ``resume()`` helper is not yet
+    implemented; re-run with ``auto_approve=True`` for fully automated pipelines.
     """
 
     def __init__(self, nodes: list[GraphNode]) -> None:
@@ -76,7 +77,10 @@ class NodeExecutor:
             if run.status == RunStatus.RUNNING:
                 run.status = RunStatus.COMPLETED
 
-        run.finished_at = datetime.now(timezone.utc)
+        # Do not stamp finished_at while awaiting a human decision; the run is not
+        # terminal yet and the timestamp would be misleading.
+        if run.status != RunStatus.AWAITING_APPROVAL:
+            run.finished_at = datetime.now(timezone.utc)
         return run
 
     async def _execute_nodes(

@@ -1,8 +1,8 @@
 """Tests for NodeExecutor and core models."""
 import pytest
 
-from app.executor import ApprovalRejectedError, ApprovalRequiredError, NodeExecutor
-from app.models import (
+from agentor_runtime.executor import ApprovalRejectedError, ApprovalRequiredError, NodeExecutor
+from agentor_runtime.models import (
     AgentRun,
     GraphNode,
     GraphState,
@@ -179,3 +179,45 @@ async def test_node_outcome_duration_populated():
     assert outcome.finished_at is not None
     assert outcome.duration_ms is not None
     assert outcome.duration_ms >= 0
+
+
+async def test_awaiting_approval_run_has_no_finished_at():
+    """Runs paused at a checkpoint must not have finished_at set."""
+    nodes = [make_checkpoint_node("gate"), make_node("b")]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+
+    await executor.run(run)
+
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.finished_at is None, (
+        "finished_at must remain None while the run is AWAITING_APPROVAL"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TODO: resume behavior
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip(reason="resume() not yet implemented — see NodeExecutor docstring")
+async def test_resume_after_approval_continues_remaining_nodes():
+    """After approving a checkpoint, remaining nodes should execute.
+
+    Implement when NodeExecutor gains a resume(run) method that re-enters
+    execution after the paused node using the existing run state.
+    """
+    nodes = [make_node("a"), make_checkpoint_node("gate"), make_node("b")]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+
+    # Human approves
+    run.checkpoint.approve(note="looks good")
+
+    # TODO: call executor.resume(run) when implemented
+    # await executor.resume(run)
+    # assert run.status == RunStatus.COMPLETED
+    # assert run.state.get("visited_b") is True

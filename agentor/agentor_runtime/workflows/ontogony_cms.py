@@ -23,12 +23,12 @@ import json
 import textwrap
 from typing import TYPE_CHECKING
 
-from app.clients.tool import ToolClient, StubToolClient
-from app.executor import NodeExecutor
-from app.models import AgentRun, GraphNode, GraphState, HumanApprovalCheckpoint
+from agentor_runtime.clients.tool import ToolClient, StubToolClient
+from agentor_runtime.executor import NodeExecutor
+from agentor_runtime.models import AgentRun, GraphNode, GraphState, HumanApprovalCheckpoint
 
 if TYPE_CHECKING:
-    from app.clients.conexus import ConexusClient
+    from agentor_runtime.clients.conexus import ConexusClient
 
 _WRITER_MODEL = "conexus-smart"
 _CRITIC_MODEL = "conexus-fast"
@@ -185,10 +185,16 @@ def _build_nodes(
         title = plan.get("title", "Untitled")
         thesis = plan.get("thesis", "")
 
+        # TODO(#safe-frontmatter): replace f-string injection with PyYAML dump.
+        # Until then, strip double-quotes from title/description to prevent
+        # broken frontmatter if LLM output contains embedded quotes.
+        title_safe = title.replace('"', "'")
+        thesis_safe = thesis[:160].replace('"', "'")
+
         frontmatter = textwrap.dedent(f"""\
             ---
-            title: "{title}"
-            description: "{thesis[:160]}"
+            title: "{title_safe}"
+            description: "{thesis_safe}"
             draft: true
             ---
         """)

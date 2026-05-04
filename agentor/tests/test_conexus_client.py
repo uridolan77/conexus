@@ -5,7 +5,7 @@ import httpx
 import pytest
 import respx
 
-from app.clients.conexus import ConexusClient, ConexusClientError
+from agentor_runtime.clients.conexus import ConexusClient, ConexusClientError
 
 _BASE = "http://conexus-test"
 _KEY = "cx_test_key"

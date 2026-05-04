@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from app.models import AgentRun, NodeOutcome, NodeStatus, RunStatus
+from agentor_runtime.models import AgentRun, NodeOutcome, NodeStatus, RunStatus
 
 logger = logging.getLogger(__name__)
 

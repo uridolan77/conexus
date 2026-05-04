@@ -1,5 +1,9 @@
 # Agentor
 
+> **Status: experimental spike — blocked on Conexus M4.**
+> Do not integrate into production workflows until `POST /v1/chat/completions` is
+> fully deployed and project API key auth is working (Conexus milestone M4/M5).
+
 Minimal workflow orchestrator that calls Conexus for LLM inference.
 
 ## Scope
@@ -31,8 +35,8 @@ structured multi-node workflows whose LLM calls are routed through Conexus.
 
 ```python
 import asyncio
-from app.clients.conexus import ConexusClient
-from app.workflows.ontogony_cms import OntogonyCmsWorkflow
+from agentor_runtime.clients.conexus import ConexusClient
+from agentor_runtime.workflows.ontogony_cms import OntogonyCmsWorkflow
 
 async def main():
     async with ConexusClient(base_url="http://localhost:8000", api_key="cx_...") as client:

@@ -1,7 +1,7 @@
 """Shared test fixtures."""
 import pytest
 
-from app.clients.conexus import ConexusClient, ConexusResponse, ConexusUsage
+from agentor_runtime.clients.conexus import ConexusClient, ConexusResponse, ConexusUsage
 
 
 def make_conexus_response(

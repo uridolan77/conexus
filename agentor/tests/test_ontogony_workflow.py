@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from app.clients.tool import StubToolClient, ToolResult
-from app.models import RunStatus
-from app.workflows.ontogony_cms import OntogonyCmsWorkflow
+from agentor_runtime.clients.tool import StubToolClient, ToolResult
+from agentor_runtime.models import RunStatus
+from agentor_runtime.workflows.ontogony_cms import OntogonyCmsWorkflow
 from tests.conftest import MockConexusClient, make_conexus_response
 
 
