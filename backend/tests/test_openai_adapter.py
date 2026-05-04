@@ -286,3 +286,69 @@ async def test_openai_transient_5xx_then_success_returns_chat_result() -> None:
 
     assert result.content == "ok"
     assert len(completions.calls) == 2
+
+
+# ── M2: retryable flag ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_openai_rate_limit_error_is_retryable() -> None:
+    """ProviderRateLimitError.retryable must be True (M2 requirement)."""
+    err = openai.RateLimitError("slow down", response=_FakeHTTPResponse(429), body=None)
+    completions = _FakeChatCompletions(raises=err)
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderRateLimitError) as exc_info:
+        await provider.chat([{"role": "user", "content": "x"}], model="gpt-4o-mini")
+
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_openai_server_error_is_retryable() -> None:
+    """ProviderUnavailableError.retryable must be True (M2 requirement)."""
+    err = openai.InternalServerError("boom", response=_FakeHTTPResponse(500), body=None)
+    completions = _FakeChatCompletions(raises=err)
+    provider = OpenAIProvider(client=_FakeOpenAI(completions))  # type: ignore[arg-type]
+
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        await provider.chat([{"role": "user", "content": "x"}], model="gpt-4o-mini")
+
+    assert exc_info.value.retryable is True
+
+
+# ── M2: aclose ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_openai_aclose_calls_underlying_client_close() -> None:
+    """aclose() must close the underlying SDK client (M2 requirement)."""
+    closed: list[bool] = []
+
+    class _TrackingClient:
+        chat = _FakeChat(_FakeChatCompletions())
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    provider = OpenAIProvider(client=_TrackingClient())  # type: ignore[arg-type]
+    await provider.aclose()
+
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_openai_context_manager_closes_on_exit() -> None:
+    """Using ``async with`` must call aclose() on exit (M2 requirement)."""
+    closed: list[bool] = []
+
+    class _TrackingClient:
+        chat = _FakeChat(_FakeChatCompletions())
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    async with OpenAIProvider(client=_TrackingClient()):  # type: ignore[arg-type]
+        pass
+
+    assert closed == [True]

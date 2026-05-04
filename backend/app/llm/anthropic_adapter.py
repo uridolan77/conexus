@@ -37,6 +37,7 @@ from app.llm.errors import (
     ProviderRateLimitError,
     ProviderUnavailableError,
 )
+from app.llm.formatters.anthropic import split_system
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -86,20 +87,6 @@ async def _retried_anthropic_stream_begin(
     return stream_cm, stream
 
 
-def _split_system(messages: list[ChatMessage]) -> tuple[str, list[ChatMessage]]:
-    """Pull leading system messages out for Anthropic's ``system=`` argument."""
-    system_parts: list[str] = []
-    rest: list[ChatMessage] = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            content = msg.get("content") or ""
-            if content:
-                system_parts.append(content)
-        else:
-            rest.append(msg)
-    return "\n\n".join(system_parts), rest
-
-
 class AnthropicProvider(LLMProvider):
     """Async Anthropic provider with retry on 429/5xx."""
 
@@ -123,7 +110,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> ChatResult:
-        system_text, conversation = _split_system(messages)
+        system_text, conversation = split_system(messages)
 
         kwargs: dict = {
             "model": model,
@@ -168,7 +155,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> AsyncIterator[ChatStreamChunk]:
-        system_text, conversation = _split_system(messages)
+        system_text, conversation = split_system(messages)
 
         kwargs: dict[str, Any] = {
             "model": model,

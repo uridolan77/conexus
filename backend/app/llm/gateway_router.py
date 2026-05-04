@@ -36,8 +36,7 @@ from app.llm.anthropic_adapter import (
 from app.llm.base import LLMProvider
 from app.llm.errors import (
     AllProvidersFailedError,
-    ProviderRateLimitError,
-    ProviderUnavailableError,
+    ProviderError,
     UnknownModelError,
 )
 from app.llm.openai_adapter import OPENAI_FAILOVER_ERRORS, OpenAIProvider
@@ -182,7 +181,11 @@ class GatewayProvider(LLMProvider):
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
-            except (ProviderRateLimitError, ProviderUnavailableError) as exc:
+            except ProviderError as exc:
+                if not exc.retryable:
+                    # Non-retryable (e.g. bad request, auth failure) — do not
+                    # attempt fallback; the same request will fail there too.
+                    raise
                 logger.warning(
                     "gateway_primary_failed_falling_back provider=anthropic err=%s",
                     exc,
@@ -206,7 +209,7 @@ class GatewayProvider(LLMProvider):
                 if self._primary is not None:
                     result.fallback_used = True
                 return result
-            except (ProviderRateLimitError, ProviderUnavailableError) as exc:
+            except ProviderError as exc:
                 logger.warning(
                     "gateway_fallback_failed provider=openai err=%s", exc
                 )

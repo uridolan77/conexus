@@ -12,17 +12,21 @@ from __future__ import annotations
 import logging
 import time
 import json
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.auth import AuthenticatedProject, require_project_api_key
 from app.db.session import get_db_sessionmaker
 from app.llm import LLMProvider
 from app.llm.dependencies import get_provider
+from app.schemas.openai_compat import (
+    ChatCompletionsRequest as ChatCompletionsBody,
+    ChatCompletionsResponse,
+    ChatMessageBody,
+)
 from app.services.gateway_service import (
     GatewayClientError,
     GatewayLimitError,
@@ -38,33 +42,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["gateway"])
 
 REQUEST_ID_HEADER = "X-Conexus-Request-Id"
-
-
-class ChatMessageBody(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-class ChatCompletionsBody(BaseModel):
-    model: str = Field(..., min_length=1)
-    messages: list[ChatMessageBody] = Field(..., min_length=1)
-    max_tokens: int = Field(default=4096, ge=1, le=128_000)
-    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-
-    # OpenAI-compat request fields (accepted, mostly ignored for now).
-    stream: bool = False
-    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
-    stop: str | list[str] | None = None
-    user: str | None = None
-    response_format: dict[str, Any] | None = None
-    seed: int | None = None
-    n: int | None = Field(default=None, ge=1, le=128)
-    tools: list[dict[str, Any]] | None = None
-    tool_choice: dict[str, Any] | str | None = None
-    logprobs: bool | None = None
-    top_logprobs: int | None = Field(default=None, ge=0, le=20)
-    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
-    frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
 
 
 def _to_chat_messages(messages: list[ChatMessageBody]) -> list[ChatMessage]:
@@ -106,29 +83,6 @@ def _validate_compat(body: ChatCompletionsBody) -> None:
                 code="response_format_not_supported",
                 message="Only response_format.type='text' is supported.",
             )
-
-
-class _Choice(BaseModel):
-    index: int
-    message: ChatMessageBody
-    finish_reason: str
-
-
-class _Usage(BaseModel):
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-
-
-class ChatCompletionsResponse(BaseModel):
-    id: str
-    object: Literal["chat.completion"] = "chat.completion"
-    created: int
-    model: str
-    provider: str
-    fallback_used: bool
-    choices: list[_Choice]
-    usage: _Usage
 
 
 def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]:
@@ -272,15 +226,15 @@ async def chat_completions(
         provider=chat_result.provider,
         fallback_used=chat_result.fallback_used,
         choices=[
-            _Choice(
-                index=0,
-                message=ChatMessageBody(role="assistant", content=chat_result.content),
-                finish_reason="stop",
-            )
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": chat_result.content},
+                "finish_reason": "stop",
+            }
         ],
-        usage=_Usage(
-            prompt_tokens=chat_result.usage.input_tokens,
-            completion_tokens=chat_result.usage.output_tokens,
-            total_tokens=chat_result.usage.total_tokens,
-        ),
+        usage={
+            "prompt_tokens": chat_result.usage.input_tokens,
+            "completion_tokens": chat_result.usage.output_tokens,
+            "total_tokens": chat_result.usage.total_tokens,
+        },
     )
