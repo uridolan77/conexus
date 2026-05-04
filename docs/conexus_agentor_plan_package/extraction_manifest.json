@@ -1,0 +1,124 @@
+{
+  "project": "Conexus + Agentor + MCP Integration",
+  "decision": "Build Conexus first; extract KGB LLM behavior; postpone full Agentor/MCP/A2A.",
+  "source_repos": {
+    "conexus": {
+      "repo": "uridolan77/conexus",
+      "role": "main product foundation",
+      "priority": 1
+    },
+    "KGB": {
+      "repo": "uridolan77/KGB",
+      "role": "primary code extraction source",
+      "priority": 1
+    },
+    "LLMGateway": {
+      "repo": "uridolan77/LLMGateway",
+      "role": "design reference for auth, analytics, token usage, BO",
+      "priority": 2
+    },
+    "agentor": {
+      "repo": "uridolan77/agentor",
+      "role": "concept archive for future orchestrator",
+      "priority": 3
+    },
+    "Aigent": {
+      "repo": "uridolan77/Aigent",
+      "role": "C# concept archive for agent lifecycle, BDI, actions, message bus",
+      "priority": 3
+    },
+    "MCProToCall": {
+      "repo": "uridolan77/MCProToCall",
+      "role": "future .NET MCP/tool-layer foundation",
+      "priority": 4
+    },
+    "MCPServer": {
+      "repo": "uridolan77/MCPServer",
+      "role": "schema/data-transfer ideas only",
+      "priority": 4
+    },
+    "AutoResearch": {
+      "repo": "uridolan77/AutoResearch",
+      "role": "future evaluator/HITL/worktree pattern source",
+      "priority": 5
+    },
+    "ontogony-site": {
+      "repo": "uridolan77/ontogony-site",
+      "role": "first Agentor workflow target",
+      "priority": 2
+    }
+  },
+  "kgb_extraction": [
+    {
+      "source": "backend/app/llm/base.py",
+      "target": "backend/app/llm/adapters/base.py",
+      "keep": ["async interface", "aclose", "context manager"],
+      "remove": ["stage_name", "BudgetContext"]
+    },
+    {
+      "source": "backend/app/llm/openai_router.py",
+      "target": "backend/app/llm/adapters/openai.py",
+      "keep": ["OpenAI async SDK call", "usage extraction", "retry classification", "streaming pattern"],
+      "remove": ["Redis cache", "semantic cache", "KGB metrics", "stage routing"]
+    },
+    {
+      "source": "backend/app/llm/router.py",
+      "target": "backend/app/llm/adapters/anthropic.py",
+      "keep": ["Anthropic async call", "usage extraction", "streaming pattern", "ModelConfig"],
+      "remove": ["cache", "shadow rollout", "BudgetGuard", "stage token estimates"]
+    },
+    {
+      "source": "backend/app/llm/conexus_router.py",
+      "target": "backend/app/llm/gateway/fallback.py",
+      "keep": ["provider fallback", "normalized usage", "agent_call idea", "provider error behavior"],
+      "remove": ["graph_node_count", "KGB complexity tiers", "stage interface"]
+    },
+    {
+      "source": "backend/app/llm/pricing.py + backend/app/static_config/pricing.yaml",
+      "target": "backend/app/llm/pricing.py + backend/app/static_config/pricing.yaml",
+      "keep": ["centralized pricing", "YAML config", "JSON overrides", "unknown model fallback"],
+      "remove": ["KGB path assumptions"]
+    },
+    {
+      "source": "backend/app/llm/conexus_types.py",
+      "target": "backend/app/llm/types.py",
+      "keep": ["Message", "TokenUsage", "ToolCall", "AgentResponse"],
+      "remove": []
+    },
+    {
+      "source": "backend/app/llm/conexus_format.py",
+      "target": "backend/app/llm/formatters/anthropic.py",
+      "keep": ["OpenAI to Anthropic message conversion", "tool schema conversion"],
+      "remove": []
+    },
+    {
+      "source": "backend/app/api/errors.py",
+      "target": "backend/app/core/errors.py",
+      "keep": ["stable domain error envelope", "GatewayError", "ValidationError", "AuthenticationError"],
+      "remove": ["KG-specific error classes"]
+    }
+  ],
+  "milestones": [
+    "M0 backend skeleton",
+    "M1 typed LLM core",
+    "M2 provider adapters",
+    "M3 fallback gateway",
+    "M4 OpenAI-compatible endpoint",
+    "M5 persistence and API keys",
+    "M6 BO request visibility",
+    "M7 provider management",
+    "M8 minimal Agentor",
+    "M9 Ontogony CMS workflow",
+    "M10 MCP tool layer"
+  ],
+  "explicitly_postpone": [
+    "A2A",
+    "semantic cache",
+    "full agent memory",
+    "RL agents",
+    "BDI runtime",
+    "Conexus.Adaptation runtime",
+    "multi-agent market/consensus",
+    "full MCP registry"
+  ]
+}
