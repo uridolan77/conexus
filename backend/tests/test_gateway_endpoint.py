@@ -269,6 +269,51 @@ async def test_chat_completions_revoked_token_returns_401(
     assert response.status_code == 401
 
 
+# ── Validation (422) ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload,description",
+    [
+        (
+            {"model": "gpt-4o-mini", "messages": []},
+            "empty messages list",
+        ),
+        (
+            {"model": "gpt-4o-mini"},
+            "missing messages field",
+        ),
+        (
+            {"messages": [{"role": "user", "content": "hi"}]},
+            "missing model field",
+        ),
+        (
+            {"model": "", "messages": [{"role": "user", "content": "hi"}]},
+            "empty model string",
+        ),
+        (
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "unknown_role", "content": "hi"}],
+            },
+            "invalid role value",
+        ),
+    ],
+)
+async def test_chat_completions_invalid_request_returns_422(
+    client, seeded, payload, description
+) -> None:
+    """Pydantic validation errors on the request body return 422."""
+    plaintext, _project, _api_key = seeded
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {plaintext}"},
+        json=payload,
+    )
+    assert response.status_code == 422, f"expected 422 for: {description}"
+
+
 # ── Happy path ────────────────────────────────────────────────────────
 
 
