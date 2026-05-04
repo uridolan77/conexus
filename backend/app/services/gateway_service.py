@@ -58,6 +58,7 @@ from app.services.project_limit_reservation_service import (
     reconcile_gateway_request,
     reserve_gateway_request,
 )
+from app.services.usage_service import record_usage_event
 
 logger = logging.getLogger(__name__)
 
@@ -493,6 +494,15 @@ async def run_chat_completion(
             estimated_cost=cost,
             fallback_used=result.fallback_used,
         )
+        await record_usage_event(
+            session,
+            gateway_request=row,
+            provider=result.provider,
+            model=result.model,
+            prompt_tokens=result.usage.input_tokens,
+            completion_tokens=result.usage.output_tokens,
+            cost_usd=cost,
+        )
         if limit_reservation_id:
             await reconcile_gateway_request(
                 session,
@@ -718,6 +728,15 @@ async def run_chat_completion_stream(
                     completion_tokens=final_usage.output_tokens if final_usage else None,
                     estimated_cost=cost,
                     fallback_used=seen_fallback_used,
+                )
+                await record_usage_event(
+                    session,
+                    gateway_request=row,
+                    provider=seen_provider or "unknown",
+                    model=seen_model or model,
+                    prompt_tokens=final_usage.input_tokens if final_usage else None,
+                    completion_tokens=final_usage.output_tokens if final_usage else None,
+                    cost_usd=cost,
                 )
                 if limit_reservation_id:
                     await reconcile_gateway_request(

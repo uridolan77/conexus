@@ -106,6 +106,8 @@ async def verify_api_key(
         return None
     if not hmac.compare_digest(api_key.secret_hash, _hash_secret(secret)):
         return None
+    api_key.last_used_at = datetime.now(timezone.utc)
+    await session.flush()
     return project, api_key
 
 

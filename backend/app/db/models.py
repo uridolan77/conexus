@@ -205,6 +205,9 @@ class ProjectApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -256,6 +259,51 @@ class GatewayRequest(Base):
     )
     limit_reservation_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("project_gateway_limit_reservations.id"), nullable=True
+    )
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    gateway_request_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("gateway_requests.id"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("projects.id"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    requested_model: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+
+
+class GatewayModelAlias(Base):
+    __tablename__ = "gateway_model_aliases"
+    __table_args__ = (
+        UniqueConstraint("alias", name="uq_gateway_model_aliases_alias"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    alias: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    primary_provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    fallback_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )
 
 

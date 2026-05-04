@@ -47,6 +47,7 @@ async def test_create_and_verify(sessionmaker) -> None:
         proj, key = result
         assert proj.id == issued.api_key.project_id
         assert key.id == issued.api_key.id
+        assert key.last_used_at is not None
 
 
 @pytest.mark.asyncio
@@ -100,6 +101,8 @@ async def test_wrong_secret_with_real_prefix_fails(sessionmaker) -> None:
     tampered = "_".join(parts[:3] + ["0" * 32])
     async with sessionmaker() as session:
         assert await verify_api_key(session, tampered) is None
+        key = await session.get(models.ProjectApiKey, issued.api_key.id)
+        assert key.last_used_at is None
 
 
 @pytest.mark.asyncio

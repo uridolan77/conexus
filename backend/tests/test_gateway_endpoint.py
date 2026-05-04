@@ -389,6 +389,21 @@ async def test_chat_completions_happy_path(
         assert log.latency_ms is not None and log.latency_ms >= 0
         assert log.fallback_used is False
         assert log.completed_at is not None
+        usage = (
+            await session.execute(
+                select(models.UsageEvent).where(
+                    models.UsageEvent.gateway_request_id == log.id
+                )
+            )
+        ).scalar_one()
+        assert usage.project_id == project.id
+        assert usage.provider == "openai"
+        assert usage.model == "gpt-4o-mini"
+        assert usage.requested_model == "gpt-4o-mini"
+        assert usage.prompt_tokens == 11
+        assert usage.completion_tokens == 4
+        assert usage.total_tokens == 15
+        assert usage.cost_usd == log.estimated_cost
 
 
 @pytest.mark.asyncio
@@ -636,6 +651,20 @@ async def test_chat_completions_stream_true_returns_sse_and_logs_success(
         assert log.completion_tokens == 2
         assert log.total_tokens == 5
         assert log.completed_at is not None
+        usage = (
+            await session.execute(
+                select(models.UsageEvent).where(
+                    models.UsageEvent.gateway_request_id == log.id
+                )
+            )
+        ).scalar_one()
+        assert usage.project_id == project.id
+        assert usage.provider == "openai"
+        assert usage.model == "gpt-4o-mini"
+        assert usage.requested_model == "gpt-4o-mini"
+        assert usage.prompt_tokens == 3
+        assert usage.completion_tokens == 2
+        assert usage.total_tokens == 5
 
 
 @pytest.mark.asyncio
@@ -1377,6 +1406,16 @@ async def test_chat_completions_provider_failure_logs_failure(
         assert log.error_message == "everyone is down"
         assert log.completed_at is not None
         assert log.latency_ms is not None
+        usage_events = list(
+            (
+                await session.execute(
+                    select(models.UsageEvent).where(
+                        models.UsageEvent.gateway_request_id == log.id
+                    )
+                )
+            ).scalars()
+        )
+        assert usage_events == []
 
 
 @pytest.mark.asyncio
@@ -1626,6 +1665,16 @@ async def test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_t
         assert log.total_tokens is None
         assert log.estimated_cost is None
         assert log.completed_at is not None
+        usage_events = list(
+            (
+                await session.execute(
+                    select(models.UsageEvent).where(
+                        models.UsageEvent.gateway_request_id == log.id
+                    )
+                )
+            ).scalars()
+        )
+        assert usage_events == []
 
 
 @pytest.mark.asyncio
