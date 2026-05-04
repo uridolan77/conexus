@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import GatewayRequest, UsageEvent
@@ -51,6 +52,17 @@ async def record_usage_event(
         cost_usd=cost_usd,
         metadata_json=json.dumps(metadata, sort_keys=True) if metadata else None,
     )
-    session.add(row)
-    await session.flush()
-    return row
+    try:
+        async with session.begin_nested():
+            session.add(row)
+            await session.flush()
+        return row
+    except IntegrityError:
+        existing = await session.scalar(
+            select(UsageEvent).where(
+                UsageEvent.gateway_request_id == gateway_request.id
+            )
+        )
+        if existing is not None:
+            return existing
+        raise

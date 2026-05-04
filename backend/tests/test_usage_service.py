@@ -106,6 +106,66 @@ async def test_record_usage_event_is_idempotent_per_gateway_request(sessionmaker
 
 
 @pytest.mark.asyncio
+async def test_record_usage_event_rereads_existing_row_after_unique_race(
+    sessionmaker, monkeypatch
+) -> None:
+    async with sessionmaker() as session:
+        project = models.Project(name="p")
+        session.add(project)
+        await session.flush()
+        gateway_request = models.GatewayRequest(
+            request_id="req_1",
+            project_id=project.id,
+            requested_model="conexus-fast",
+            status="completed",
+        )
+        session.add(gateway_request)
+        await session.flush()
+        existing = await record_usage_event(
+            session,
+            gateway_request=gateway_request,
+            provider="openai",
+            model="gpt-4o-mini",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.001,
+        )
+        assert existing is not None
+        await session.commit()
+
+    async with sessionmaker() as session:
+        gateway_request = (
+            await session.execute(select(models.GatewayRequest))
+        ).scalar_one()
+        original_scalar = session.scalar
+        calls = 0
+
+        async def scalar_with_stale_first_read(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return None
+            return await original_scalar(*args, **kwargs)
+
+        monkeypatch.setattr(session, "scalar", scalar_with_stale_first_read)
+        row = await record_usage_event(
+            session,
+            gateway_request=gateway_request,
+            provider="openai",
+            model="gpt-4o-mini",
+            prompt_tokens=99,
+            completion_tokens=99,
+            cost_usd=9.99,
+        )
+
+        assert row is not None
+        assert row.id == existing.id
+        rows = list((await session.execute(select(models.UsageEvent))).scalars())
+        assert len(rows) == 1
+        assert rows[0].prompt_tokens == 10
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "prompt_tokens,completion_tokens,cost_usd",
     [

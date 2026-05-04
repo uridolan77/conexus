@@ -1613,7 +1613,7 @@ async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
 
 
 @pytest.mark.asyncio
-async def test_chat_completions_stream_cancellation_marks_failed_and_reconciles(
+async def test_chat_completions_stream_cancelled_marks_failed_and_reconciles(
     seeded, db_sessionmaker
 ) -> None:
     _plaintext, project, api_key = seeded
