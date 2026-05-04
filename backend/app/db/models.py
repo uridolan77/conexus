@@ -1,4 +1,4 @@
-"""Conexus M2 schema — projects, API keys, request logs.
+"""Conexus persistence schema: auth, request logs, usage, BO, and adapter state.
 
 All timestamps are UTC.
 

@@ -1,6 +1,6 @@
 # CONEXUS — Deep Engineering Overview
 
-Last updated: 2026-04-30
+Last updated: 2026-05-04
 
 ## Executive summary
 
@@ -36,7 +36,7 @@ Top-level shape:
 - `frontend/`: Next.js 14 App Router BO UI (cookie-based admin session)
 - `docker-compose.yml`: Postgres + backend + frontend local stack
 - `.env.example`: expected env variables (includes required `ENCRYPTION_KEY`)
-- `.github/workflows/ci.yml`: backend lint+tests; frontend build (no frontend tests in CI today)
+- `.github/workflows/ci.yml`: backend lint+tests; frontend tests+build
 - `docs/`: milestone and architecture docs
 
 Backend layout (major responsibility clusters):
@@ -351,9 +351,9 @@ app/* pages → components/* UI → lib/* fetch clients and normalizers
 
 ### P1 (serious reliability/maintainability)
 
-- **CI gaps**: frontend tests/lint are not run in CI; only `next build` runs.
+- **CI gaps**: frontend tests/build run in CI; frontend lint is not wired because ESLint is not installed/configured.
 - **Observability**: no standard metrics/tracing; diagnosing latency/error spikes is log/DB-only.
-- **Provider configs not wired into runtime routing**: BO-managed provider keys are encrypted/stored/testable, but the runtime gateway provider selection currently relies on env keys for actual provider calls.
+- **Provider configs not wired into runtime routing**: BO-managed provider keys are encrypted/stored/testable, but the runtime gateway provider selection currently relies on process config/env keys for actual provider calls.
 - **Observability endpoint scaling**: internal observability scans request rows in Python and could get expensive for large windows/high traffic.
 
 ### P2 (cleanup/structure)
@@ -392,7 +392,7 @@ app/* pages → components/* UI → lib/* fetch clients and normalizers
 
 ## Testing gaps (high-signal)
 
-- Frontend tests are present (Vitest), but **not executed in CI**.
+- Frontend tests are present (Vitest) and executed in CI; ESLint/lint CI is still deferred.
 - Backend tests exist and run in CI; however, heavy SQLite usage can miss Postgres-specific behavior.
 - Critical risk areas where tests matter most:
   - gateway streaming completion logging correctness on interruption/timeouts
@@ -415,7 +415,7 @@ Severity definitions:
 
 Roadmap (smallest safe steps first):
 
-- **P1**: Add CI steps for frontend `npm test` and `npm run lint` (safe; improves regression detection).
+- **P2**: Add ESLint configuration and then a frontend lint CI step.
 - **P1**: Add lightweight request-scoped logging context for `request_id` and project id in gateway logs (safe; does not change API).
 - **P1**: Optimize internal observability endpoint with aggregate queries (only if proven output-identical).
 - **P2**: Factor tiny helpers in `gateway_service.py` to reduce stream vs non-stream duplication, preserving behavior.

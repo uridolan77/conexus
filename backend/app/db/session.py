@@ -1,7 +1,9 @@
 """Async SQLAlchemy engine + session factory.
 
-V1 keeps the schema small enough that we can ``Base.metadata.create_all`` on
-startup. Alembic comes back when M3 introduces multi-environment migrations.
+Local/dev startup can still call ``Base.metadata.create_all`` for convenience,
+but production schema changes are represented by Alembic revisions under
+``app/db/migrations``. Run migrations before starting prod with
+``ALLOW_CREATE_ALL=false``.
 
 Tests override ``DATABASE_URL`` with ``sqlite+aiosqlite:///:memory:`` (or a
 file path) so the gateway tests don't need a Postgres container.

@@ -291,6 +291,56 @@ async def _load_row(
     return (await session.execute(stmt)).scalar_one()
 
 
+async def _finish_success_with_accounting(
+    session: AsyncSession,
+    *,
+    request_id: str,
+    provider: str,
+    model: str,
+    latency_ms: int,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    estimated_cost: float | None,
+    fallback_used: bool,
+    limit_reservation_id: str | None,
+) -> GatewayRequest:
+    """Complete the gateway row and its dependent accounting rows together."""
+    row = await _load_row(session, request_id=request_id)
+    await finish_request_success(
+        session,
+        row,
+        provider=provider,
+        model=model,
+        latency_ms=latency_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        estimated_cost=estimated_cost,
+        fallback_used=fallback_used,
+    )
+    await record_usage_event(
+        session,
+        gateway_request=row,
+        provider=provider,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=estimated_cost,
+    )
+    if limit_reservation_id:
+        await reconcile_gateway_request(
+            session,
+            reservation_id=limit_reservation_id,
+            actual_tokens=(
+                prompt_tokens + completion_tokens
+                if prompt_tokens is not None and completion_tokens is not None
+                else 0
+            ),
+            actual_cost=float(estimated_cost or 0.0),
+            status="completed",
+        )
+    return row
+
+
 async def run_chat_completion(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -480,12 +530,11 @@ async def run_chat_completion(
     cost = get_cost(
         result.model, result.usage.input_tokens, result.usage.output_tokens
     )
-    total_tokens = result.usage.input_tokens + result.usage.output_tokens
 
     async def _finish(session: AsyncSession) -> None:
-        row = await _load_row(session, request_id=request_id)
-        await finish_request_success(
-            session, row,
+        await _finish_success_with_accounting(
+            session,
+            request_id=request_id,
             provider=result.provider,
             model=result.model,
             latency_ms=latency_ms,
@@ -493,24 +542,8 @@ async def run_chat_completion(
             completion_tokens=result.usage.output_tokens,
             estimated_cost=cost,
             fallback_used=result.fallback_used,
+            limit_reservation_id=limit_reservation_id,
         )
-        await record_usage_event(
-            session,
-            gateway_request=row,
-            provider=result.provider,
-            model=result.model,
-            prompt_tokens=result.usage.input_tokens,
-            completion_tokens=result.usage.output_tokens,
-            cost_usd=cost,
-        )
-        if limit_reservation_id:
-            await reconcile_gateway_request(
-                session,
-                reservation_id=limit_reservation_id,
-                actual_tokens=total_tokens,
-                actual_cost=cost,
-                status="completed",
-            )
 
     await _with_log_session(sessionmaker, _finish)
 
@@ -709,18 +742,10 @@ async def run_chat_completion_stream(
                 if final_usage is not None
                 else None
             )
-            total_tokens = (
-                final_usage.input_tokens + final_usage.output_tokens
-                if final_usage is not None
-                else 0
-            )
-            actual_cost = float(cost or 0.0)
-
             async def _finish(session: AsyncSession) -> None:
-                row = await _load_row(session, request_id=request_id)
-                await finish_request_success(
+                await _finish_success_with_accounting(
                     session,
-                    row,
+                    request_id=request_id,
                     provider=seen_provider or "unknown",
                     model=seen_model or model,
                     latency_ms=latency_ms,
@@ -728,24 +753,8 @@ async def run_chat_completion_stream(
                     completion_tokens=final_usage.output_tokens if final_usage else None,
                     estimated_cost=cost,
                     fallback_used=seen_fallback_used,
+                    limit_reservation_id=limit_reservation_id,
                 )
-                await record_usage_event(
-                    session,
-                    gateway_request=row,
-                    provider=seen_provider or "unknown",
-                    model=seen_model or model,
-                    prompt_tokens=final_usage.input_tokens if final_usage else None,
-                    completion_tokens=final_usage.output_tokens if final_usage else None,
-                    cost_usd=cost,
-                )
-                if limit_reservation_id:
-                    await reconcile_gateway_request(
-                        session,
-                        reservation_id=limit_reservation_id,
-                        actual_tokens=total_tokens,
-                        actual_cost=actual_cost,
-                        status="completed",
-                    )
 
             await _with_log_session(sessionmaker, _finish)
         except UnknownModelError as exc:
