@@ -409,3 +409,161 @@ async def test_concrete_anthropic_model_streaming_calls_anthropic_only() -> None
     assert fallback.stream_calls == []
     assert primary.stream_calls and primary.stream_calls[0]["model"] == "claude-sonnet-4-20250514"
     assert chunks and chunks[0].provider == "anthropic"
+
+
+# ── M3: non-retryable errors do not fallback ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_primary_error_is_not_caught_by_fallback() -> None:
+    """A ProviderError with retryable=False must propagate without trying fallback.
+
+    This verifies the M3 requirement: only retryable errors trigger failover.
+    Non-retryable errors (bad request, auth, config) should fail fast.
+    """
+
+    class _NonRetryableError(ProviderError):
+        retryable = False  # explicit — same as base class default
+
+    primary = _StubProvider(
+        provider="anthropic",
+        raises=_NonRetryableError("400 bad request", provider="anthropic"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    with pytest.raises(_NonRetryableError):
+        await gateway.chat(
+            [{"role": "user", "content": "hi"}],
+            model="conexus-default",
+        )
+
+    # Fallback must not have been called.
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_base_provider_error_is_not_retryable_by_default() -> None:
+    """ProviderError base class has retryable=False, so it blocks fallback."""
+    primary = _StubProvider(
+        provider="anthropic",
+        raises=ProviderError("generic failure", provider="anthropic"),
+    )
+    fallback = _StubProvider(
+        provider="openai", result=_result("openai", "gpt-4o")
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    with pytest.raises(ProviderError):
+        await gateway.chat(
+            [{"role": "user", "content": "hi"}],
+            model="conexus-default",
+        )
+
+    assert fallback.calls == []
+
+
+# ── M3: usage totals and cost are preserved through fallback ──────────
+
+
+@pytest.mark.asyncio
+async def test_usage_tokens_preserved_on_primary_success() -> None:
+    """Token counts from the primary response must be preserved on the result."""
+    primary = _StubProvider(
+        provider="anthropic",
+        result=ChatResult(
+            content="answer",
+            model="claude-sonnet-4-20250514",
+            provider="anthropic",
+            usage=TokenUsage(input_tokens=12, output_tokens=34),
+        ),
+    )
+    fallback = _StubProvider(provider="openai", result=_result("openai", "gpt-4o"))
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="conexus-default",
+    )
+
+    assert result.usage.input_tokens == 12
+    assert result.usage.output_tokens == 34
+    assert result.usage.total_tokens == 46
+    assert result.fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_usage_tokens_preserved_on_fallback_success() -> None:
+    """Token counts from the fallback response must be preserved, fallback_used=True."""
+    primary = _StubProvider(
+        provider="anthropic",
+        raises=ProviderRateLimitError("429", provider="anthropic"),
+    )
+    fallback = _StubProvider(
+        provider="openai",
+        result=ChatResult(
+            content="fallback answer",
+            model="gpt-4o",
+            provider="openai",
+            usage=TokenUsage(input_tokens=5, output_tokens=20),
+        ),
+    )
+    gateway = GatewayProvider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="conexus-default",
+    )
+
+    assert result.usage.input_tokens == 5
+    assert result.usage.output_tokens == 20
+    assert result.usage.total_tokens == 25
+    assert result.fallback_used is True
+
+
+# ── M3: provider_factory.make_gateway_provider ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_make_gateway_provider_with_stubs() -> None:
+    """make_gateway_provider() accepts injected stubs for test isolation."""
+    from app.llm.provider_factory import make_gateway_provider
+
+    primary = _StubProvider(
+        provider="anthropic",
+        result=_result("anthropic", "claude-sonnet-4-20250514"),
+    )
+    fallback = _StubProvider(provider="openai", result=_result("openai", "gpt-4o"))
+
+    gateway = make_gateway_provider(primary=primary, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="conexus-default",
+    )
+
+    assert result.provider == "anthropic"
+    assert result.fallback_used is False
+    assert len(primary.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_make_gateway_provider_disables_provider_with_none() -> None:
+    """Passing primary=None disables the primary; only fallback is used."""
+    from app.llm.provider_factory import make_gateway_provider
+
+    fallback = _StubProvider(provider="openai", result=_result("openai", "gpt-4o"))
+
+    gateway = make_gateway_provider(primary=None, fallback=fallback)
+
+    result = await gateway.chat(
+        [{"role": "user", "content": "hi"}],
+        model="conexus-default",
+    )
+
+    # primary=None means primary is disabled; fallback runs without
+    # setting fallback_used (no primary was available to "fall back from").
+    assert result.provider == "openai"
+    assert result.fallback_used is False
