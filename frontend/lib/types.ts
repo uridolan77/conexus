@@ -141,6 +141,27 @@ export type UsageSummary = {
   avg_latency_ms: number | null;
 };
 
+export type DashboardLatestError = {
+  request_id: string;
+  project_id: string | null;
+  project_name: string | null;
+  requested_model: string;
+  provider: string | null;
+  model: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type DashboardSummary = {
+  requests_today: number;
+  success_rate: number;
+  failed_requests: number;
+  average_latency_ms: number | null;
+  estimated_cost_today: number;
+  latest_errors: DashboardLatestError[];
+};
+
 export type UsageProjectRow = UsageSummaryMetrics & {
   project_id: string | null;
   project_name: string | null;

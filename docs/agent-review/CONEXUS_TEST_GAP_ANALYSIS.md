@@ -1,11 +1,11 @@
 # Conexus — Test Gap Analysis
 
-Last updated: 2026-04-30 (second pass)
+Last updated: 2026-05-04 (M5/M6 cleanup pass)
 
 ## Current coverage impression
 
 - **Backend**: has pytest + ruff, runs in CI. Core gateway + admin endpoints appear testable, and many components already isolate dependencies (e.g. provider factory override).
-- **Frontend**: has Vitest configured and `npm test` script, but CI currently does not run frontend tests.
+- **Frontend**: has Vitest configured; CI runs `npm test -- --run` and `npm run build`. ESLint is still not installed/configured, so lint is intentionally not in CI yet.
 - **Integration**: docker-compose provides a realistic local stack, but there is no automated smoke/integration suite in CI.
 
 ## High-risk areas needing stronger tests
@@ -65,7 +65,7 @@ Last updated: 2026-04-30 (second pass)
 
 ### Frontend tests
 
-- ~~Ensure CI runs `npm test`~~ *(done: already in CI as of first pass)*.
+- ~~Ensure CI runs `npm test`~~ *(done; CI runs frontend tests and build).*
 - ESLint still needs to be installed before a lint CI step can be added (owner action).
 - Keep UI tests focused on “API client does not send identities/roles” and correct rendering of ProblemDetails.
 

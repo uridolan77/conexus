@@ -9,7 +9,7 @@ from typing import Any, Callable, Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ProviderConfig
+from app.db.models import GatewayModelAlias, ProviderConfig
 from app.llm.anthropic_adapter import AnthropicProvider
 from app.llm.errors import ProviderError
 from app.llm.openai_adapter import OpenAIProvider
@@ -76,6 +76,25 @@ def sanitize_error(message: str, secret: str) -> str:
 async def list_provider_configs(session: AsyncSession) -> list[ProviderConfig]:
     stmt = select(ProviderConfig).order_by(ProviderConfig.created_at.desc())
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def list_enabled_provider_configs(session: AsyncSession) -> list[ProviderConfig]:
+    stmt = (
+        select(ProviderConfig)
+        .where(ProviderConfig.is_active.is_(True), ProviderConfig.revoked_at.is_(None))
+        .order_by(ProviderConfig.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_active_gateway_model_alias(
+    session: AsyncSession, alias: str
+) -> GatewayModelAlias | None:
+    stmt = select(GatewayModelAlias).where(
+        GatewayModelAlias.alias == alias,
+        GatewayModelAlias.status == "active",
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def create_provider_config(

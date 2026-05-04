@@ -16,6 +16,7 @@ from app.api import (
     admin_adapter_profiles_registry,
     admin_audit,
     admin_auth,
+    admin_dashboard,
     admin_project_limits,
     admin_projects,
     admin_providers,
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_adapter_profiles.router)
     app.include_router(admin_adapter_profiles_registry.router)
     app.include_router(admin_audit.router)
+    app.include_router(admin_dashboard.router)
     app.include_router(admin_providers.router)
     app.include_router(admin_projects.router)
     app.include_router(admin_project_limits.router)

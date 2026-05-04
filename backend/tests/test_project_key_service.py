@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -47,6 +47,44 @@ async def test_create_and_verify(sessionmaker) -> None:
         proj, key = result
         assert proj.id == issued.api_key.project_id
         assert key.id == issued.api_key.id
+        assert key.last_used_at is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_recent_key_does_not_touch_last_used_at(sessionmaker) -> None:
+    async with sessionmaker() as session:
+        project = models.Project(name="p")
+        session.add(project)
+        await session.flush()
+        issued = await create_api_key(session, project=project)
+        recent = datetime.now(timezone.utc) - timedelta(seconds=30)
+        issued.api_key.last_used_at = recent
+        await session.commit()
+
+    async with sessionmaker() as session:
+        result = await verify_api_key(session, issued.plaintext)
+        assert result is not None
+        _project, key = result
+        assert key.last_used_at == recent.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_verify_old_key_touches_last_used_at(sessionmaker) -> None:
+    async with sessionmaker() as session:
+        project = models.Project(name="p")
+        session.add(project)
+        await session.flush()
+        issued = await create_api_key(session, project=project)
+        old = datetime.now(timezone.utc) - timedelta(seconds=61)
+        issued.api_key.last_used_at = old
+        await session.commit()
+
+    async with sessionmaker() as session:
+        result = await verify_api_key(session, issued.plaintext)
+        assert result is not None
+        _project, key = result
+        assert key.last_used_at is not None
+        assert key.last_used_at > old
 
 
 @pytest.mark.asyncio
@@ -85,6 +123,8 @@ async def test_revoked_key_fails_verification(sessionmaker) -> None:
 
     async with sessionmaker() as session:
         assert await verify_api_key(session, issued.plaintext) is None
+        key = await session.get(models.ProjectApiKey, issued.api_key.id)
+        assert key.last_used_at is None
 
 
 @pytest.mark.asyncio
@@ -100,6 +140,8 @@ async def test_wrong_secret_with_real_prefix_fails(sessionmaker) -> None:
     tampered = "_".join(parts[:3] + ["0" * 32])
     async with sessionmaker() as session:
         assert await verify_api_key(session, tampered) is None
+        key = await session.get(models.ProjectApiKey, issued.api_key.id)
+        assert key.last_used_at is None
 
 
 @pytest.mark.asyncio
