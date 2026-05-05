@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 import json
 import textwrap
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from agentor_runtime.clients.tool import ToolClient, StubToolClient
@@ -44,6 +45,12 @@ def _slugify(value: str) -> str:
     value = re.sub(r"[\s_]+", "-", value)
     value = re.sub(r"-{2,}", "-", value)
     return value.strip("-") or "untitled"
+
+
+def _estimate_reading_time_minutes(markdown: str, *, wpm: int = 200) -> int:
+    # Very rough: count word-like tokens in the markdown.
+    words = len(re.findall(r"\b\w+\b", markdown))
+    return max(1, (words + wpm - 1) // wpm)
 
 
 def _extract_first_json_object(text: str) -> str | None:
@@ -337,13 +344,19 @@ def _build_nodes(
                 if isinstance(item, dict):
                     where_next.append(item)
 
+        now = datetime.now(timezone.utc).isoformat()
+        reading_time = _estimate_reading_time_minutes(draft)
+
         frontmatter_obj = {
             "title": title,
             "summary": summary,
             "status": "draft",
             "register": register,
+            "readingTime": reading_time,
             "cites": cites,
             "whereNext": where_next,
+            "createdAt": now,
+            "updatedAt": now,
         }
         target_path = f"src/content/essays/{slug}.mdx"
         state.set("target_path", target_path)

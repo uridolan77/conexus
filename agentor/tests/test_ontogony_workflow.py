@@ -90,6 +90,9 @@ async def test_workflow_completes_with_auto_approve():
     assert 'title: "Why Astro is fast"' in cms
     assert 'summary: "Astro ships zero JS by default."' in cms
     assert 'register: "R2"' in cms
+    assert "readingTime: " in cms
+    assert 'createdAt: "' in cms
+    assert 'updatedAt: "' in cms
     assert 'cites:' in cms
     assert 'whereNext:' in cms
     assert run.state.get("target_path") == "src/content/essays/why-astro-is-fast.mdx"
