@@ -42,7 +42,18 @@ async def main():
     async with ConexusClient(base_url="http://localhost:8000", api_key="cx_...") as client:
         workflow = OntogonyCmsWorkflow(conexus=client)
         run = await workflow.run(topic="Why Astro is fast")
-        print(run.state["cms_output"])
+        # No files are written automatically. The run pauses at an approval gate.
+        # If approved, you can resume and then write `cms_output` to `target_path`.
+        print(run.status)
+        print(run.state.get("target_path"))
+        print(run.state.get("cms_output"))
 
 asyncio.run(main())
 ```
+
+## Notes
+
+- **Conexus dependency**: Agentor expects Conexus to expose `POST /v1/chat/completions`.
+- **Safety**: Agentor does **not** write files before human approval. It only produces
+  `run.state["cms_output"]` and `run.state["target_path"]`.
+  Writing to disk / opening PRs is intentionally deferred to v0.2.
