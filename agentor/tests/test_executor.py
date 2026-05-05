@@ -131,8 +131,8 @@ async def test_checkpoint_auto_approve_continues():
 
     assert run.status == RunStatus.COMPLETED
     assert run.state.get("visited_b") is True
-    assert run.checkpoint is not None
-    assert run.checkpoint.approved is True
+    # checkpoint is auto-approved and cleared to allow later checkpoints
+    assert run.checkpoint is None
 
 
 async def test_checkpoint_rejected_marks_run_rejected():
@@ -285,3 +285,73 @@ async def test_resume_rejected_checkpoint_marks_run_rejected():
     assert run.status == RunStatus.REJECTED
     assert run.state.get("visited_b") is None
     assert run.finished_at is not None
+
+
+async def test_resume_on_non_awaiting_run_raises_value_error():
+    node = make_node("a")
+    executor = NodeExecutor([node])
+    run = AgentRun(workflow_name="test")
+    await executor.run(run)
+    assert run.status == RunStatus.COMPLETED
+
+    with pytest.raises(ValueError, match="awaiting approval"):
+        await executor.resume(run)
+
+
+async def test_resume_missing_checkpoint_raises_value_error():
+    nodes = [make_checkpoint_node("gate")]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    run.checkpoint = None
+
+    with pytest.raises(ValueError, match="missing checkpoint"):
+        await executor.resume(run)
+
+
+async def test_resume_undecided_checkpoint_raises_approval_required_error():
+    nodes = [make_checkpoint_node("gate")]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.checkpoint is not None
+    assert run.checkpoint.is_decided is False
+
+    with pytest.raises(ApprovalRequiredError):
+        await executor.resume(run)
+
+
+async def test_multiple_checkpoints_allowed_after_resume():
+    def make_checkpoint_node_with_prompt(node_id: str, prompt: str):
+        async def handler(state: GraphState) -> None:
+            state.set(
+                "_checkpoint",
+                HumanApprovalCheckpoint(
+                    prompt=prompt,
+                    proposed_action={"action": "write"},
+                ),
+            )
+
+        return GraphNode(id=node_id, name=node_id.capitalize(), handler=handler)
+
+    nodes = [
+        make_checkpoint_node_with_prompt("gate1", "Approve 1?"),
+        make_checkpoint_node_with_prompt("gate2", "Approve 2?"),
+        make_node("b"),
+    ]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.checkpoint is not None
+    assert run.checkpoint.prompt == "Approve 1?"
+
+    run.checkpoint.approve(note="ok")
+    await executor.resume(run)
+
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.checkpoint is not None
+    assert run.checkpoint.prompt == "Approve 2?"

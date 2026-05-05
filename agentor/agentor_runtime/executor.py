@@ -38,8 +38,7 @@ class NodeExecutor:
     When a node installs a :class:`~agentor_runtime.models.HumanApprovalCheckpoint`,
     execution pauses and the run is left in ``AWAITING_APPROVAL``. The caller is
     responsible for resolving the checkpoint (``approve()`` / ``reject()``) and
-    re-executing from the point of interruption. A ``resume()`` helper is not yet
-    implemented; re-run with ``auto_approve=True`` for fully automated pipelines.
+    resuming from the point of interruption using :meth:`resume`.
     """
 
     def __init__(self, nodes: list[GraphNode]) -> None:
@@ -93,22 +92,22 @@ class NodeExecutor:
         Resumes from ``run.next_node_index`` without re-running earlier nodes.
         """
         if run.status != RunStatus.AWAITING_APPROVAL:
-            return run
+            raise ValueError("Can only resume a run awaiting approval")
 
         if run.checkpoint is None:
-            run.status = RunStatus.FAILED
-            run.error = "Cannot resume: missing checkpoint"
-            run.finished_at = datetime.now(timezone.utc)
-            return run
+            raise ValueError("Cannot resume: missing checkpoint")
 
         if not run.checkpoint.is_decided:
-            return run
+            raise ApprovalRequiredError(run.checkpoint)
 
         if run.checkpoint.approved is False:
             run.status = RunStatus.REJECTED
             run.error = f"Workflow rejected by reviewer: {run.checkpoint.reviewer_note}"
             run.finished_at = datetime.now(timezone.utc)
             return run
+
+        # Clear the active checkpoint so later nodes can install a new one.
+        run.checkpoint = None
 
         # Approved: continue from the recorded next node index.
         run.status = RunStatus.RUNNING
@@ -184,6 +183,11 @@ class NodeExecutor:
 
                 if run.checkpoint is not None and run.checkpoint.approved is False:
                     raise ApprovalRejectedError(run.checkpoint.reviewer_note)
+
+                if run.checkpoint is not None and run.checkpoint.approved is True:
+                    # The checkpoint is decided and approved; clear it so later nodes
+                    # can install new checkpoints in the same run.
+                    run.checkpoint = None
 
                 outcome.status = NodeStatus.COMPLETED
                 run.next_node_index = absolute_index + 1

@@ -17,10 +17,12 @@ def _plan_response() -> str:
             "slug": "why-astro-is-fast",
             "summary": "Astro ships zero JS by default.",
             "thesis": "Astro ships zero JS by default.",
-            "register": "neutral",
+            "register": "R2",
             "outline": ["Islands architecture", "Static-first", "Zero JS default"],
             "cites": ["docs/astro.md"],
-            "whereNext": ["Static site generation"],
+            "whereNext": [
+                {"kind": "essay", "slug": "static-site-generation", "title": "SSG", "why": "Next read"}
+            ],
         }
     )
 
@@ -87,6 +89,7 @@ async def test_workflow_completes_with_auto_approve():
     assert 'status: "draft"' in cms
     assert 'title: "Why Astro is fast"' in cms
     assert 'summary: "Astro ships zero JS by default."' in cms
+    assert 'register: "R2"' in cms
     assert 'cites:' in cms
     assert 'whereNext:' in cms
     assert run.state.get("target_path") == "src/content/essays/why-astro-is-fast.mdx"
@@ -232,7 +235,7 @@ async def test_frontmatter_escapes_quotes_and_colons():
         "register": "neutral",
         "outline": [],
         "cites": ["a:b", 'x "y"'],
-        "whereNext": ["next:step"],
+        "whereNext": [{"kind": "essay", "slug": "next-step", "title": "Next:step", "why": 'Because "reasons"'}],
     }
     plan_resp = make_conexus_response(content=json.dumps(plan))
     draft_resp = make_conexus_response(content="Draft.")
@@ -257,4 +260,10 @@ async def test_frontmatter_escapes_quotes_and_colons():
     assert 'summary: "Summary with \\"quotes\\": and colon."' in cms
     assert '  - "a:b"' in cms
     assert '  - "x \\"y\\""' in cms
-    assert '  - "next:step"' in cms
+    # invalid register should be omitted
+    assert "register:" not in cms
+    # object whereNext should not be stringified
+    assert "kind:" in cms
+    assert 'slug: "next-step"' in cms
+    assert 'title: "Next:step"' in cms
+    assert 'why: "Because \\"reasons\\""' in cms

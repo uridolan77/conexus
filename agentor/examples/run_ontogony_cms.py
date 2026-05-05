@@ -4,7 +4,6 @@ import asyncio
 import os
 
 from agentor_runtime.clients.conexus import ConexusClient
-from agentor_runtime.executor import NodeExecutor
 from agentor_runtime.workflows.ontogony_cms import OntogonyCmsWorkflow
 
 
@@ -29,10 +28,7 @@ async def main() -> None:
             # Human decision happens out-of-band. This is an example:
             run.checkpoint.approve(note="ok to proceed")
 
-            # Resume after approval using the workflow's executor.
-            # (Workflow currently doesn't expose resume; use the executor directly.)
-            executor: NodeExecutor = workflow._executor  # type: ignore[attr-defined]
-            await executor.resume(run)
+            await workflow.resume(run)
 
         print("Final status:", run.status)
         print(run.state.get("cms_output"))

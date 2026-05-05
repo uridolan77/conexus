@@ -35,6 +35,7 @@ _WRITER_MODEL = "conexus-smart"
 _CRITIC_MODEL = "conexus-fast"
 
 _DEFAULT_COLLECTION = "essays"
+_VALID_REGISTERS = {"R1", "R2", "R3", "R4"}
 
 
 def _slugify(value: str) -> str:
@@ -108,6 +109,9 @@ def dump_frontmatter_yaml(data: dict) -> str:
     for key, value in data.items():
         if value is None:
             continue
+        if isinstance(value, list) and not value:
+            lines.append(f"{key}: []")
+            continue
         if isinstance(value, bool):
             lines.append(f"{key}: {'true' if value else 'false'}")
         elif isinstance(value, (int, float)):
@@ -119,6 +123,19 @@ def dump_frontmatter_yaml(data: dict) -> str:
             for item in value:
                 if isinstance(item, str):
                     lines.append(f"  - {_yaml_quote(item)}")
+                elif isinstance(item, dict):
+                    # Minimal nested mapping support for list items: each value is scalar-ish.
+                    lines.append("  -")
+                    for k, v in item.items():
+                        if v is None:
+                            continue
+                        if isinstance(v, bool):
+                            vv = "true" if v else "false"
+                        elif isinstance(v, (int, float)):
+                            vv = str(v)
+                        else:
+                            vv = _yaml_quote(str(v))
+                        lines.append(f"    {k}: {vv}")
                 else:
                     lines.append(f"  - {_yaml_quote(str(item))}")
         else:
@@ -148,9 +165,9 @@ def _build_nodes(
                         "You are an expert content strategist for the Ontogony website. "
                         "Return your answer as JSON with keys: "
                         "'collection' (string), 'title' (string), 'slug' (string), "
-                        "'summary' (string), 'thesis' (string), 'register' (string), "
+                        "'summary' (string), 'thesis' (string), 'register' (string, optional; use R1-R4), "
                         "'outline' (list of strings), 'cites' (list of strings), "
-                        "'whereNext' (list of strings). "
+                        "'whereNext' (list of objects with keys: kind, slug, title, why). "
                         "Set collection='essays'."
                     ),
                 },
@@ -176,7 +193,6 @@ def _build_nodes(
         plan["slug"] = slug
         plan.setdefault("summary", str(plan.get("thesis") or "")[:200])
         plan.setdefault("thesis", str(plan.get("thesis") or response.content))
-        plan.setdefault("register", "neutral")
         plan.setdefault("outline", plan.get("outline") or [])
         plan.setdefault("cites", plan.get("cites") or [])
         plan.setdefault("whereNext", plan.get("whereNext") or [])
@@ -305,8 +321,16 @@ def _build_nodes(
         summary = str(plan.get("summary") or plan.get("thesis") or "")[:280]
         slug = str(plan.get("slug") or _slugify(title))
         cites = plan.get("cites") or []
-        where_next = plan.get("whereNext") or []
-        register = plan.get("register") or None
+        where_next_raw = plan.get("whereNext") or []
+        register_raw = plan.get("register")
+
+        register = register_raw if register_raw in _VALID_REGISTERS else None
+
+        where_next: list[dict] = []
+        if isinstance(where_next_raw, list):
+            for item in where_next_raw:
+                if isinstance(item, dict):
+                    where_next.append(item)
 
         frontmatter_obj = {
             "title": title,
@@ -403,3 +427,6 @@ class OntogonyCmsWorkflow:
 
         await self._executor.run(run, auto_approve=auto_approve)
         return run
+
+    async def resume(self, run: AgentRun, *, auto_approve: bool = False) -> AgentRun:
+        return await self._executor.resume(run, auto_approve=auto_approve)
