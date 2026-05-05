@@ -65,6 +65,54 @@ def _where_next_item_valid(item: dict) -> bool:
     )
 
 
+def _normalize_where_next(items: object) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    if not isinstance(items, list):
+        return normalized
+
+    for item in items:
+        if not isinstance(item, dict) or not _where_next_item_valid(item):
+            continue
+
+        normalized_item = {
+            "kind": str(item["kind"]).strip(),
+            "slug": str(item["slug"]).strip(),
+        }
+        for optional_key in ("title", "why"):
+            value = item.get(optional_key)
+            if isinstance(value, str) and value.strip():
+                normalized_item[optional_key] = value.strip()
+        normalized.append(normalized_item)
+
+    return normalized
+
+
+def _normalize_string_list(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _normalize_page_plan(plan: dict, *, topic: str, raw_fallback: str) -> dict:
+    title = str(plan.get("title") or topic)
+    slug = str(plan.get("slug") or _slugify(title))
+    thesis = str(plan.get("thesis") or raw_fallback)
+    summary = str(plan.get("summary") or thesis)[:200]
+    register = plan.get("register")
+
+    return {
+        "collection": _DEFAULT_COLLECTION,
+        "title": title,
+        "slug": slug,
+        "summary": summary,
+        "thesis": thesis,
+        "register": register if register in _VALID_REGISTERS else None,
+        "outline": _normalize_string_list(plan.get("outline")),
+        "cites": _normalize_string_list(plan.get("cites")),
+        "whereNext": _normalize_where_next(plan.get("whereNext")),
+    }
+
+
 def _extract_first_json_object(text: str) -> str | None:
     """Best-effort extraction of the first top-level JSON object from text."""
     start = text.find("{")
@@ -205,16 +253,7 @@ def _build_nodes(
         if warn:
             state.set("_warnings.plan_page", warn)
 
-        title = str(plan.get("title") or topic)
-        slug = str(plan.get("slug") or _slugify(title))
-        plan.setdefault("collection", _DEFAULT_COLLECTION)
-        plan["title"] = title
-        plan["slug"] = slug
-        plan.setdefault("summary", str(plan.get("thesis") or "")[:200])
-        plan.setdefault("thesis", str(plan.get("thesis") or response.content))
-        plan.setdefault("outline", plan.get("outline") or [])
-        plan.setdefault("cites", plan.get("cites") or [])
-        plan.setdefault("whereNext", plan.get("whereNext") or [])
+        plan = _normalize_page_plan(plan, topic=topic, raw_fallback=response.content)
         state.set("page_plan", plan)
 
     # ------------------------------------------------------------------ #
@@ -341,20 +380,13 @@ def _build_nodes(
     async def format_cms(state: GraphState) -> None:
         plan: dict = state.get("page_plan") or {}
         draft: str = state.get("draft") or ""
-        title = str(plan.get("title", "Untitled"))
-        summary = str(plan.get("summary") or plan.get("thesis") or "")[:280]
-        slug = str(plan.get("slug") or _slugify(title))
-        cites = plan.get("cites") or []
-        where_next_raw = plan.get("whereNext") or []
-        register_raw = plan.get("register")
-
-        register = register_raw if register_raw in _VALID_REGISTERS else None
-
-        where_next: list[dict] = []
-        if isinstance(where_next_raw, list):
-            for item in where_next_raw:
-                if isinstance(item, dict) and _where_next_item_valid(item):
-                    where_next.append(item)
+        normalized_plan = _normalize_page_plan(plan, topic="Untitled", raw_fallback=draft)
+        title = normalized_plan["title"]
+        summary = str(normalized_plan["summary"])[:280]
+        slug = normalized_plan["slug"]
+        cites = normalized_plan["cites"]
+        register = normalized_plan["register"]
+        where_next = normalized_plan["whereNext"]
 
         now = datetime.now(timezone.utc).isoformat()
         reading_time = _estimate_reading_time_minutes(draft)

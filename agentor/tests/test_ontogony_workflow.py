@@ -313,3 +313,54 @@ async def test_where_next_drops_entries_without_kind_and_slug():
     assert cms is not None
     assert 'slug: "valid-slug"' in cms
     assert 'slug: "ignored"' not in cms
+
+
+async def test_plan_is_normalized_to_schema_safe_lists_and_collection():
+    conexus = MockConexusClient()
+    plan = {
+        "collection": "essay",
+        "title": "Normalized",
+        "slug": "normalized",
+        "summary": "Summary",
+        "thesis": "Thesis",
+        "register": "R9",
+        "outline": ["Keep me", "", 42, "  Also keep  "],
+        "cites": ["docs/a.md", "", {"bad": True}, " docs/b.md "],
+        "whereNext": [
+            {"kind": "essay", "slug": "good", "title": " Good ", "why": " Why "},
+            {"kind": "essay", "slug": ""},
+            "bad",
+        ],
+    }
+    plan_resp = make_conexus_response(content=json.dumps(plan))
+    draft_resp = make_conexus_response(content="Draft.")
+    critique_resp = make_conexus_response(content=_critique_response(7))
+    call_idx = [-1]
+
+    async def _ordered_chat(model, messages, **kwargs):
+        call_idx[0] += 1
+        responses = [plan_resp, draft_resp, critique_resp]
+        if call_idx[0] < len(responses):
+            return responses[call_idx[0]]
+        return make_conexus_response()
+
+    conexus.chat = _ordered_chat  # type: ignore[method-assign]
+    workflow = OntogonyCmsWorkflow(conexus=conexus)
+    run = await workflow.run("Normalized", auto_approve=True)
+
+    plan_state = run.state.get("page_plan")
+    assert plan_state is not None
+    assert plan_state["collection"] == "essays"
+    assert plan_state["register"] is None
+    assert plan_state["outline"] == ["Keep me", "Also keep"]
+    assert plan_state["cites"] == ["docs/a.md", "docs/b.md"]
+    assert plan_state["whereNext"] == [
+        {"kind": "essay", "slug": "good", "title": "Good", "why": "Why"}
+    ]
+
+    cms = run.state.get("cms_output")
+    assert cms is not None
+    assert '  - "docs/a.md"' in cms
+    assert '  - "docs/b.md"' in cms
+    assert 'slug: "good"' in cms
+    assert 'slug: ""' not in cms
