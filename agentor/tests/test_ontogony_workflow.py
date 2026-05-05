@@ -364,3 +364,40 @@ async def test_plan_is_normalized_to_schema_safe_lists_and_collection():
     assert '  - "docs/b.md"' in cms
     assert 'slug: "good"' in cms
     assert 'slug: ""' not in cms
+
+
+async def test_workflow_pause_then_approve_resume_completes_without_rerun():
+    """End-to-end: run pauses at approval, then resumes after approval."""
+    conexus = MockConexusClient()
+    call_idx = [-1]
+    plan_resp = make_conexus_response(content=_plan_response())
+    draft_resp = make_conexus_response(content="Draft v1.")
+    critique_resp = make_conexus_response(content=_critique_response(7))
+
+    async def _ordered_chat(model, messages, **kwargs):
+        call_idx[0] += 1
+        responses = [plan_resp, draft_resp, critique_resp]
+        if call_idx[0] < len(responses):
+            return responses[call_idx[0]]
+        return make_conexus_response()
+
+    conexus.chat = _ordered_chat  # type: ignore[method-assign]
+    workflow = OntogonyCmsWorkflow(conexus=conexus)
+
+    run = await workflow.run("Why Astro is fast", auto_approve=False)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.finished_at is None
+    assert run.checkpoint is not None
+    assert run.checkpoint.is_decided is False
+    cms_before = run.state.get("cms_output")
+    assert cms_before is not None
+
+    run.checkpoint.approve("ok")
+    run2 = await workflow.resume(run)
+
+    assert run2 is run
+    assert run.status == RunStatus.COMPLETED
+    assert run.finished_at is not None
+    assert run.state.get("cms_output") == cms_before
+    # Approval node should not re-run
+    assert [o.node_id for o in run.node_outcomes].count("approval") == 1
