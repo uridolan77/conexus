@@ -57,3 +57,20 @@ async def test_read_source_file_rejects_outside_root(tmp_path: Path):
     assert result.error is not None
     assert "outside" in result.error.lower()
 
+
+async def test_search_sources_case_insensitive_and_extension_allowlist(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.md").write_text("Hello World", encoding="utf-8")
+    (root / "b.json").write_text('{"k":"hello"}', encoding="utf-8")
+    (root / "c.bin").write_bytes(b"\x00\x01hello\x02")  # should be ignored by ext allowlist
+
+    client = FilesystemToolClient(allowed_roots=[str(root)])
+    result = await client.search_sources("hello", limit=10)
+
+    assert result.ok is True
+    # Should match md and json, case-insensitive, but not .bin
+    assert "a.md" in result.content
+    assert "b.json" in result.content
+    assert "c.bin" not in result.content
+

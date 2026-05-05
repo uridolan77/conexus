@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -53,19 +54,29 @@ class ToolClient(ABC):
 class StubToolClient(ToolClient):
     """In-memory stub tool client for tests.
 
-    Registered responses are returned by name; any unregistered tool
-    returns a ToolResult with ``content=""`` so workflows can still run.
+    Registered responses can be keyed by tool name and expected kwargs; any
+    unregistered tool returns a ToolResult with ``content=""`` so workflows can
+    still run.
     """
 
     def __init__(self) -> None:
-        self._responses: dict[str, ToolResult] = {}
+        self._responses: list[tuple[str, dict[str, object], ToolResult]] = []
 
-    def register(self, tool_name: str, result: ToolResult) -> None:
-        self._responses[tool_name] = result
+    def register(self, tool_name: str, result: ToolResult, **match_kwargs: object) -> None:
+        """Register a response for a tool.
+
+        If match_kwargs are provided, the response is returned only when the invoked
+        kwargs include those exact key/value pairs (subset match). If no match_kwargs
+        are provided, the response is used as a default for that tool name.
+        """
+        self._responses.append((tool_name, dict(match_kwargs), result))
 
     async def invoke(self, tool_name: str, **kwargs: object) -> ToolResult:
-        if tool_name in self._responses:
-            return self._responses[tool_name]
+        for name, match, result in self._responses:
+            if name != tool_name:
+                continue
+            if all(kwargs.get(k) == v for k, v in match.items()):
+                return result
         return ToolResult(tool_name=tool_name, content="")
 
 
@@ -170,17 +181,25 @@ class FilesystemToolClient(ToolClient):
                     error="FilesystemToolClient has no allowed_roots configured",
                 )
 
+            # Keep this conservative for v0.1: case-insensitive substring search,
+            # and only scan a small set of text-like extensions.
+            query_lc = query.casefold()
+            allowed_exts = {".md", ".mdx", ".txt", ".json"}
+
             matches: list[str] = []
             for root in self._allowed:
                 for dirpath, _dirnames, filenames in os.walk(root):
                     for filename in filenames:
                         if len(matches) >= limit:
                             break
+                        _, ext = os.path.splitext(filename)
+                        if ext.lower() not in allowed_exts:
+                            continue
                         path = os.path.join(dirpath, filename)
                         try:
                             with open(path, encoding="utf-8") as fh:
                                 for idx, line in enumerate(fh, start=1):
-                                    if query in line:
+                                    if query_lc in line.casefold():
                                         rel = os.path.relpath(path, root)
                                         matches.append(f"{rel}:{idx}:{line.rstrip()}")
                                         break

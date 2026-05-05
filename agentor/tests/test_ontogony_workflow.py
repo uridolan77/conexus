@@ -126,6 +126,7 @@ async def test_workflow_includes_source_content():
     tool.register(
         "read_source_file",
         ToolResult(tool_name="read_source_file", content="Astro docs excerpt here."),
+        path="docs/astro.md",
     )
 
     call_idx = [-1]
@@ -153,6 +154,8 @@ async def test_workflow_includes_source_content():
     source_bundle = run.state.get("source_bundle")
     assert source_bundle is not None
     assert "Astro docs excerpt here." in source_bundle
+    manifest = run.state.get("source_manifest")
+    assert manifest == [{"path": "docs/astro.md", "ok": True, "error": None}]
 
 
 # ---------------------------------------------------------------------------

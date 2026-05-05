@@ -205,18 +205,23 @@ def _build_nodes(
         paths: list[str] = state.get("source_paths") or []
         if not paths:
             state.set("source_bundle", "")
+            state.set("source_manifest", [])
             return
 
         excerpts: list[str] = []
+        manifest: list[dict] = []
         for path in paths:
             result = await tool.read_source_file(path)
             if result.ok:
                 # Limit each file to 2 000 chars to stay within token budgets
                 excerpts.append(f"--- {path} ---\n{result.content[:2000]}")
+                manifest.append({"path": path, "ok": True, "error": None})
             else:
                 excerpts.append(f"--- {path} (error: {result.error}) ---")
+                manifest.append({"path": path, "ok": False, "error": result.error})
 
         state.set("source_bundle", "\n\n".join(excerpts))
+        state.set("source_manifest", manifest)
 
     # ------------------------------------------------------------------ #
     # 3. WriteDraftNode                                                     #
