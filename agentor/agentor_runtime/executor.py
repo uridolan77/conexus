@@ -60,6 +60,10 @@ class NodeExecutor:
         """
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(timezone.utc)
+        run.finished_at = None
+        run.error = None
+        run.next_node_index = 0
+        run.paused_at = None
 
         try:
             await self._execute_nodes(run, self._nodes, auto_approve=auto_approve)
@@ -83,12 +87,69 @@ class NodeExecutor:
             run.finished_at = datetime.now(timezone.utc)
         return run
 
+    async def resume(self, run: AgentRun, *, auto_approve: bool = False) -> AgentRun:
+        """Resume an interrupted run after a human decision.
+
+        Resumes from ``run.next_node_index`` without re-running earlier nodes.
+        """
+        if run.status != RunStatus.AWAITING_APPROVAL:
+            return run
+
+        if run.checkpoint is None:
+            run.status = RunStatus.FAILED
+            run.error = "Cannot resume: missing checkpoint"
+            run.finished_at = datetime.now(timezone.utc)
+            return run
+
+        if not run.checkpoint.is_decided:
+            return run
+
+        if run.checkpoint.approved is False:
+            run.status = RunStatus.REJECTED
+            run.error = f"Workflow rejected by reviewer: {run.checkpoint.reviewer_note}"
+            run.finished_at = datetime.now(timezone.utc)
+            return run
+
+        # Approved: continue from the recorded next node index.
+        run.status = RunStatus.RUNNING
+        run.paused_at = None
+        run.error = None
+        run.finished_at = None
+
+        remaining = self._nodes[run.next_node_index :]
+        try:
+            await self._execute_nodes(run, remaining, auto_approve=auto_approve)
+        except ApprovalRequiredError:
+            pass
+        except ApprovalRejectedError as exc:
+            run.status = RunStatus.REJECTED
+            run.error = str(exc)
+        except Exception as exc:
+            run.status = RunStatus.FAILED
+            run.error = str(exc)
+            logger.exception("Workflow %s failed in run %s", run.workflow_name, run.id)
+        else:
+            if run.status == RunStatus.RUNNING:
+                run.status = RunStatus.COMPLETED
+
+        if run.status != RunStatus.AWAITING_APPROVAL:
+            run.finished_at = datetime.now(timezone.utc)
+        return run
+
     async def _execute_nodes(
         self, run: AgentRun, nodes: list[GraphNode], *, auto_approve: bool
     ) -> None:
         for node in nodes:
             if run.is_terminal:
                 break
+
+            # Record that this node is about to run (absolute index in the full graph).
+            # This ensures resume() can continue from the correct point.
+            try:
+                absolute_index = self._nodes.index(node)
+            except ValueError:
+                absolute_index = run.next_node_index
+            run.next_node_index = absolute_index
 
             outcome = NodeOutcome(
                 node_id=node.id,
@@ -114,6 +175,9 @@ class NodeExecutor:
                         run.checkpoint.approve(note="auto-approved")
                     else:
                         run.status = RunStatus.AWAITING_APPROVAL
+                        run.paused_at = datetime.now(timezone.utc)
+                        # Next node to execute is the one after the checkpointing node.
+                        run.next_node_index = absolute_index + 1
                         outcome.status = NodeStatus.COMPLETED
                         outcome.finished_at = datetime.now(timezone.utc)
                         raise ApprovalRequiredError(run.checkpoint)
@@ -122,6 +186,7 @@ class NodeExecutor:
                     raise ApprovalRejectedError(run.checkpoint.reviewer_note)
 
                 outcome.status = NodeStatus.COMPLETED
+                run.next_node_index = absolute_index + 1
 
             except (ApprovalRequiredError, ApprovalRejectedError):
                 raise

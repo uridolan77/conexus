@@ -19,6 +19,7 @@ State keys written/consumed:
 """
 from __future__ import annotations
 
+import re
 import json
 import textwrap
 from typing import TYPE_CHECKING
@@ -32,6 +33,98 @@ if TYPE_CHECKING:
 
 _WRITER_MODEL = "conexus-smart"
 _CRITIC_MODEL = "conexus-fast"
+
+_DEFAULT_COLLECTION = "essays"
+
+
+def _slugify(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^\w\s-]", "", value)
+    value = re.sub(r"[\s_]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value)
+    return value.strip("-") or "untitled"
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    """Best-effort extraction of the first top-level JSON object from text."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def parse_json_response(text: str) -> tuple[dict, str | None]:
+    """Parse JSON with progressively more tolerant fallbacks.
+
+    Returns (parsed_dict, warning_or_None). Never raises JSONDecodeError.
+    """
+    raw = text.strip()
+    if not raw:
+        return {}, "Empty response"
+
+    try:
+        parsed = json.loads(raw)
+        return (parsed if isinstance(parsed, dict) else {"value": parsed}), None
+    except json.JSONDecodeError:
+        pass
+
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, flags=re.IGNORECASE)
+    if fenced:
+        try:
+            parsed = json.loads(fenced.group(1))
+            return (parsed if isinstance(parsed, dict) else {"value": parsed}), "Parsed fenced JSON"
+        except json.JSONDecodeError:
+            pass
+
+    candidate = _extract_first_json_object(raw)
+    if candidate:
+        try:
+            parsed = json.loads(candidate)
+            return (parsed if isinstance(parsed, dict) else {"value": parsed}), "Extracted first JSON object"
+        except json.JSONDecodeError:
+            pass
+
+    return {"raw": raw}, "Failed to parse JSON; stored raw text"
+
+
+def _yaml_quote(s: str) -> str:
+    # Use double quotes with minimal escaping.
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def dump_frontmatter_yaml(data: dict) -> str:
+    """Minimal YAML serializer for safe frontmatter (dict + scalars/lists)."""
+    lines: list[str] = ["---"]
+    for key, value in data.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            lines.append(f"{key}: {'true' if value else 'false'}")
+        elif isinstance(value, (int, float)):
+            lines.append(f"{key}: {value}")
+        elif isinstance(value, str):
+            lines.append(f"{key}: {_yaml_quote(value)}")
+        elif isinstance(value, list):
+            lines.append(f"{key}:")
+            for item in value:
+                if isinstance(item, str):
+                    lines.append(f"  - {_yaml_quote(item)}")
+                else:
+                    lines.append(f"  - {_yaml_quote(str(item))}")
+        else:
+            lines.append(f"{key}: {_yaml_quote(str(value))}")
+    lines.append("---")
+    return "\n".join(lines) + "\n"
 
 
 def _build_nodes(
@@ -54,7 +147,11 @@ def _build_nodes(
                     "content": (
                         "You are an expert content strategist for the Ontogony website. "
                         "Return your answer as JSON with keys: "
-                        "'title' (string), 'thesis' (string), 'outline' (list of strings)."
+                        "'collection' (string), 'title' (string), 'slug' (string), "
+                        "'summary' (string), 'thesis' (string), 'register' (string), "
+                        "'outline' (list of strings), 'cites' (list of strings), "
+                        "'whereNext' (list of strings). "
+                        "Set collection='essays'."
                     ),
                 },
                 {
@@ -68,11 +165,21 @@ def _build_nodes(
             temperature=0.3,
             max_tokens=512,
         )
-        try:
-            plan = json.loads(response.content)
-        except json.JSONDecodeError:
-            # Tolerate a non-JSON response; wrap it so downstream nodes work
-            plan = {"title": topic, "thesis": response.content, "outline": []}
+        plan, warn = parse_json_response(response.content)
+        if warn:
+            state.set("_warnings.plan_page", warn)
+
+        title = str(plan.get("title") or topic)
+        slug = str(plan.get("slug") or _slugify(title))
+        plan.setdefault("collection", _DEFAULT_COLLECTION)
+        plan["title"] = title
+        plan["slug"] = slug
+        plan.setdefault("summary", str(plan.get("thesis") or "")[:200])
+        plan.setdefault("thesis", str(plan.get("thesis") or response.content))
+        plan.setdefault("register", "neutral")
+        plan.setdefault("outline", plan.get("outline") or [])
+        plan.setdefault("cites", plan.get("cites") or [])
+        plan.setdefault("whereNext", plan.get("whereNext") or [])
         state.set("page_plan", plan)
 
     # ------------------------------------------------------------------ #
@@ -86,7 +193,7 @@ def _build_nodes(
 
         excerpts: list[str] = []
         for path in paths:
-            result = await tool.invoke("read_file", path=path)
+            result = await tool.read_source_file(path)
             if result.ok:
                 # Limit each file to 2 000 chars to stay within token budgets
                 excerpts.append(f"--- {path} ---\n{result.content[:2000]}")
@@ -153,8 +260,12 @@ def _build_nodes(
                     "content": (
                         "You are a critical editor. "
                         "Return JSON with keys: "
-                        "'score' (integer 0-10), 'notes' (list of strings). "
-                        "Be concise."
+                        "'clarity' (0-10), 'rigor' (0-10), 'hallucination_risk' (0-10), "
+                        "'style_fit' (0-10), 'overall' (0-10), "
+                        "'blocking_issues' (list of strings), "
+                        "'revision_notes' (list of strings), "
+                        "'approved_for_human_review' (boolean). "
+                        "Be concise and specific."
                     ),
                 },
                 {
@@ -162,7 +273,7 @@ def _build_nodes(
                     "content": (
                         f"Thesis: {plan.get('thesis', '')}\n\n"
                         f"Draft:\n{draft}\n\n"
-                        "Score this draft and list specific revision notes. "
+                        "Critique this draft with the schema above. "
                         "Return only valid JSON."
                     ),
                 },
@@ -170,10 +281,18 @@ def _build_nodes(
             temperature=0.2,
             max_tokens=512,
         )
-        try:
-            critique = json.loads(response.content)
-        except json.JSONDecodeError:
-            critique = {"score": None, "notes": [response.content]}
+        critique, warn = parse_json_response(response.content)
+        if warn:
+            state.set("_warnings.critique_draft", warn)
+
+        critique.setdefault("clarity", None)
+        critique.setdefault("rigor", None)
+        critique.setdefault("hallucination_risk", None)
+        critique.setdefault("style_fit", None)
+        critique.setdefault("overall", None)
+        critique.setdefault("blocking_issues", [])
+        critique.setdefault("revision_notes", [])
+        critique.setdefault("approved_for_human_review", False)
         state.set("critique", critique)
 
     # ------------------------------------------------------------------ #
@@ -182,23 +301,26 @@ def _build_nodes(
     async def format_cms(state: GraphState) -> None:
         plan: dict = state.get("page_plan") or {}
         draft: str = state.get("draft") or ""
-        title = plan.get("title", "Untitled")
-        thesis = plan.get("thesis", "")
+        title = str(plan.get("title", "Untitled"))
+        summary = str(plan.get("summary") or plan.get("thesis") or "")[:280]
+        slug = str(plan.get("slug") or _slugify(title))
+        cites = plan.get("cites") or []
+        where_next = plan.get("whereNext") or []
+        register = plan.get("register") or None
 
-        # TODO(#safe-frontmatter): replace f-string injection with PyYAML dump.
-        # Until then, strip double-quotes from title/description to prevent
-        # broken frontmatter if LLM output contains embedded quotes.
-        title_safe = title.replace('"', "'")
-        thesis_safe = thesis[:160].replace('"', "'")
+        frontmatter_obj = {
+            "title": title,
+            "summary": summary,
+            "status": "draft",
+            "register": register,
+            "cites": cites,
+            "whereNext": where_next,
+        }
+        target_path = f"src/content/essays/{slug}.mdx"
+        state.set("target_path", target_path)
 
-        frontmatter = textwrap.dedent(f"""\
-            ---
-            title: "{title_safe}"
-            description: "{thesis_safe}"
-            draft: true
-            ---
-        """)
-        state.set("cms_output", frontmatter + "\n" + draft)
+        frontmatter = dump_frontmatter_yaml(frontmatter_obj)
+        state.set("cms_output", frontmatter + "\n" + draft.lstrip())
 
     # ------------------------------------------------------------------ #
     # 6. ApprovalNode                                                       #
@@ -207,18 +329,22 @@ def _build_nodes(
         plan: dict = state.get("page_plan") or {}
         critique: dict = state.get("critique") or {}
         title = plan.get("title", "Untitled")
-        score = critique.get("score", "n/a")
-        notes = critique.get("notes", [])
+        overall = critique.get("overall", "n/a")
+        blocking = critique.get("blocking_issues", []) or []
+        notes = critique.get("revision_notes", []) or []
+        blocking_text = "\n".join(f"- {n}" for n in blocking) if blocking else "None"
         notes_text = "\n".join(f"- {n}" for n in notes) if notes else "None"
 
         checkpoint = HumanApprovalCheckpoint(
             prompt=(
                 f"Approve publishing '{title}'?\n"
-                f"Critic score: {score}/10\n"
-                f"Notes:\n{notes_text}"
+                f"Critic overall: {overall}/10\n"
+                f"Blocking issues:\n{blocking_text}\n"
+                f"Revision notes:\n{notes_text}"
             ),
             proposed_action={
                 "title": title,
+                "target_path": state.get("target_path"),
                 "cms_output_preview": (state.get("cms_output") or "")[:500],
             },
         )

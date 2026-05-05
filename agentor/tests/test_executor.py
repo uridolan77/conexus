@@ -193,6 +193,8 @@ async def test_awaiting_approval_run_has_no_finished_at():
     assert run.finished_at is None, (
         "finished_at must remain None while the run is AWAITING_APPROVAL"
     )
+    assert run.paused_at is not None
+    assert run.next_node_index == 1
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +202,6 @@ async def test_awaiting_approval_run_has_no_finished_at():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="resume() not yet implemented — see NodeExecutor docstring")
 async def test_resume_after_approval_continues_remaining_nodes():
     """After approving a checkpoint, remaining nodes should execute.
 
@@ -213,11 +214,74 @@ async def test_resume_after_approval_continues_remaining_nodes():
 
     await executor.run(run)
     assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.next_node_index == 2
+    assert run.state.get("visited_a") is True
+    assert run.state.get("visited_b") is None
 
     # Human approves
     run.checkpoint.approve(note="looks good")
 
-    # TODO: call executor.resume(run) when implemented
-    # await executor.resume(run)
-    # assert run.status == RunStatus.COMPLETED
-    # assert run.state.get("visited_b") is True
+    await executor.resume(run)
+    assert run.status == RunStatus.COMPLETED
+    assert run.state.get("visited_b") is True
+
+
+async def test_resume_does_not_rerun_nodes_before_checkpoint():
+    calls: list[str] = []
+
+    async def a_handler(state: GraphState) -> None:
+        calls.append("a")
+        state.set("count_a", (state.get("count_a") or 0) + 1)
+
+    async def gate_handler(state: GraphState) -> None:
+        calls.append("gate")
+        state.set(
+            "_checkpoint",
+            HumanApprovalCheckpoint(
+                prompt="Approve?",
+                proposed_action={"action": "write"},
+            ),
+        )
+
+    async def b_handler(state: GraphState) -> None:
+        calls.append("b")
+        state.set("count_b", (state.get("count_b") or 0) + 1)
+
+    nodes = [
+        GraphNode(id="a", name="A", handler=a_handler),
+        GraphNode(id="gate", name="Gate", handler=gate_handler),
+        GraphNode(id="b", name="B", handler=b_handler),
+    ]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert calls == ["a", "gate"]
+    assert run.state.get("count_a") == 1
+    assert run.state.get("count_b") is None
+
+    run.checkpoint.approve(note="ok")
+    await executor.resume(run)
+
+    assert run.status == RunStatus.COMPLETED
+    assert calls == ["a", "gate", "b"]
+    assert run.state.get("count_a") == 1
+    assert run.state.get("count_b") == 1
+
+
+async def test_resume_rejected_checkpoint_marks_run_rejected():
+    nodes = [make_node("a"), make_checkpoint_node("gate"), make_node("b")]
+    executor = NodeExecutor(nodes)
+    run = AgentRun(workflow_name="test")
+
+    await executor.run(run)
+    assert run.status == RunStatus.AWAITING_APPROVAL
+    assert run.finished_at is None
+
+    run.checkpoint.reject(note="nope")
+    await executor.resume(run)
+
+    assert run.status == RunStatus.REJECTED
+    assert run.state.get("visited_b") is None
+    assert run.finished_at is not None

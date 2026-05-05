@@ -119,6 +119,8 @@ class AgentRun:
     state: GraphState = field(default_factory=GraphState)
     node_outcomes: list[NodeOutcome] = field(default_factory=list)
     checkpoint: HumanApprovalCheckpoint | None = None
+    next_node_index: int = 0
+    paused_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None

@@ -31,6 +31,15 @@ class ToolClient(ABC):
     async def invoke(self, tool_name: str, **kwargs: object) -> ToolResult:
         """Invoke a named tool with keyword arguments."""
 
+    async def read_source_file(self, path: str) -> ToolResult:
+        return await self.invoke("read_source_file", path=path)
+
+    async def search_sources(self, query: str, limit: int = 20) -> ToolResult:
+        return await self.invoke("search_sources", query=query, limit=limit)
+
+    async def list_collection(self, collection: str) -> ToolResult:
+        return await self.invoke("list_collection", collection=collection)
+
     async def aclose(self) -> None:
         """Release resources. Override if the implementation holds connections."""
 
@@ -69,8 +78,9 @@ class FilesystemToolClient(ToolClient):
     can handle the failure gracefully.
 
     Supported tools:
-    - ``read_file(path: str)`` — read a file as text
-    - ``list_dir(path: str)`` — list directory entries
+    - ``read_source_file(path: str)`` — read a file as text
+    - ``search_sources(query: str, limit: int)`` — search text files under roots
+    - ``list_collection(collection: str)`` — list directory entries under roots
     """
 
     def __init__(self, allowed_roots: list[str] | None = None) -> None:
@@ -96,6 +106,14 @@ class FilesystemToolClient(ToolClient):
         Rejects the path if it escapes every allowed root.
         """
         import os
+        from pathlib import PurePath
+
+        try:
+            parts = PurePath(path).parts
+        except Exception:
+            parts = ()
+        if ".." in parts:
+            return "", "Path traversal is not allowed"
 
         try:
             resolved = os.path.realpath(os.path.abspath(path))
@@ -116,7 +134,7 @@ class FilesystemToolClient(ToolClient):
     async def invoke(self, tool_name: str, **kwargs: object) -> ToolResult:
         import os
 
-        if tool_name == "read_file":
+        if tool_name == "read_source_file":
             path = str(kwargs.get("path", ""))
             resolved, err = self._check_path(path)
             if err:
@@ -128,9 +146,9 @@ class FilesystemToolClient(ToolClient):
             except OSError as exc:
                 return ToolResult(tool_name=tool_name, content="", error=str(exc))
 
-        if tool_name == "list_dir":
-            path = str(kwargs.get("path", "."))
-            resolved, err = self._check_path(path)
+        if tool_name == "list_collection":
+            collection = str(kwargs.get("collection", "."))
+            resolved, err = self._check_path(collection)
             if err:
                 return ToolResult(tool_name=tool_name, content="", error=err)
             try:
@@ -139,6 +157,41 @@ class FilesystemToolClient(ToolClient):
                 return ToolResult(tool_name=tool_name, content=content)
             except OSError as exc:
                 return ToolResult(tool_name=tool_name, content="", error=str(exc))
+
+        if tool_name == "search_sources":
+            query = str(kwargs.get("query", "")).strip()
+            limit = int(kwargs.get("limit", 20) or 20)
+            if not query:
+                return ToolResult(tool_name=tool_name, content="", error="Query is empty")
+            if not self._allowed:
+                return ToolResult(
+                    tool_name=tool_name,
+                    content="",
+                    error="FilesystemToolClient has no allowed_roots configured",
+                )
+
+            matches: list[str] = []
+            for root in self._allowed:
+                for dirpath, _dirnames, filenames in os.walk(root):
+                    for filename in filenames:
+                        if len(matches) >= limit:
+                            break
+                        path = os.path.join(dirpath, filename)
+                        try:
+                            with open(path, encoding="utf-8") as fh:
+                                for idx, line in enumerate(fh, start=1):
+                                    if query in line:
+                                        rel = os.path.relpath(path, root)
+                                        matches.append(f"{rel}:{idx}:{line.rstrip()}")
+                                        break
+                        except OSError:
+                            continue
+                    if len(matches) >= limit:
+                        break
+                if len(matches) >= limit:
+                    break
+
+            return ToolResult(tool_name=tool_name, content="\n".join(matches))
 
         return ToolResult(
             tool_name=tool_name,
