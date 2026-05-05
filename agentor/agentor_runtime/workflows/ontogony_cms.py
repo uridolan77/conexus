@@ -1,21 +1,21 @@
 """Ontogony CMS page-generation workflow.
 
 Nodes:
-    1. PlanPageNode      — produces title, thesis, outline
-    2. GatherSourcesNode — reads source files via ToolClient
-    3. WriteDraftNode    — calls Conexus to write the draft
-    4. CritiqueDraftNode — calls Conexus as critic, scores the draft
-    5. FormatCmsNode     — formats to Astro/TinaCMS markdown + frontmatter
-    6. ApprovalNode      — installs a HumanApprovalCheckpoint before writing
+    1. PlanPageNode      — Conexus JSON plan (collection, title, slug, summary, thesis,
+                           register, outline, cites, whereNext)
+    2. GatherSourcesNode — ``read_source_file`` per path; ``source_bundle`` + ``source_manifest``
+    3. WriteDraftNode    — Conexus draft markdown
+    4. CritiqueDraftNode — Conexus JSON critique (clarity, rigor, hallucination_risk, style_fit,
+                           overall, blocking_issues, revision_notes, approved_for_human_review)
+    5. FormatCmsNode     — essay frontmatter (YAML) + body; ``target_path`` under ``src/content/essays/``
+    6. ApprovalNode      — :class:`~agentor_runtime.models.HumanApprovalCheckpoint` before any write
 
-State keys written/consumed:
-    topic            (in)  topic brief supplied by the caller
-    source_paths     (in)  optional list[str] of file paths to read as context
-    page_plan        (out) dict with title, thesis, outline
-    source_bundle    (out) str concatenation of source file excerpts
-    draft            (out) full article markdown from Conexus
-    critique         (out) dict with score (0-10) and notes
-    cms_output       (out) frontmatter + markdown ready to write to disk
+State keys (main):
+    topic, source_paths (in)
+    page_plan, source_bundle, source_manifest, draft, critique, target_path, cms_output (out)
+
+Convention: ``page_plan["collection"]`` is ``"essays"`` (plural), matching Astro content dir
+``src/content/essays/``. Singular "essay" in docs refers to the content type, not this field.
 """
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 _WRITER_MODEL = "conexus-smart"
 _CRITIC_MODEL = "conexus-fast"
 
+# Plural matches ``src/content/essays/``; do not use singular "essay" here.
 _DEFAULT_COLLECTION = "essays"
 _VALID_REGISTERS = {"R1", "R2", "R3", "R4"}
 
@@ -51,6 +52,17 @@ def _estimate_reading_time_minutes(markdown: str, *, wpm: int = 200) -> int:
     # Very rough: count word-like tokens in the markdown.
     words = len(re.findall(r"\b\w+\b", markdown))
     return max(1, (words + wpm - 1) // wpm)
+
+
+def _where_next_item_valid(item: dict) -> bool:
+    kind = item.get("kind")
+    slug = item.get("slug")
+    return (
+        isinstance(kind, str)
+        and kind.strip() != ""
+        and isinstance(slug, str)
+        and slug.strip() != ""
+    )
 
 
 def _extract_first_json_object(text: str) -> str | None:
@@ -341,7 +353,7 @@ def _build_nodes(
         where_next: list[dict] = []
         if isinstance(where_next_raw, list):
             for item in where_next_raw:
-                if isinstance(item, dict):
+                if isinstance(item, dict) and _where_next_item_valid(item):
                     where_next.append(item)
 
         now = datetime.now(timezone.utc).isoformat()
@@ -406,9 +418,9 @@ class OntogonyCmsWorkflow:
     """Orchestrates the Ontogony CMS page-generation workflow.
 
     Args:
-        conexus: A :class:`~app.clients.conexus.ConexusClient` instance.
-        tool:    A :class:`~app.clients.tool.ToolClient` instance.
-                 Defaults to :class:`~app.clients.tool.StubToolClient`.
+        conexus: A :class:`~agentor_runtime.clients.conexus.ConexusClient` instance.
+        tool:    A :class:`~agentor_runtime.clients.tool.ToolClient` instance.
+                 Defaults to :class:`~agentor_runtime.clients.tool.StubToolClient`.
     """
 
     def __init__(
@@ -436,7 +448,7 @@ class OntogonyCmsWorkflow:
             auto_approve: Skip human approval gate (useful in tests/CI).
 
         Returns:
-            The completed :class:`~app.models.AgentRun`.
+            The :class:`~agentor_runtime.models.AgentRun` (may be ``AWAITING_APPROVAL``).
         """
         run = AgentRun(workflow_name="ontogony_cms")
         run.state.set("topic", topic)

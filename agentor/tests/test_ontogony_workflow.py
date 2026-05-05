@@ -273,3 +273,43 @@ async def test_frontmatter_escapes_quotes_and_colons():
     assert 'slug: "next-step"' in cms
     assert 'title: "Next:step"' in cms
     assert 'why: "Because \\"reasons\\""' in cms
+
+
+async def test_where_next_drops_entries_without_kind_and_slug():
+    """Invalid whereNext rows must not appear in frontmatter."""
+    conexus = MockConexusClient()
+    plan = {
+        "collection": "essays",
+        "title": "T",
+        "slug": "t",
+        "summary": "S",
+        "thesis": "x",
+        "register": "R1",
+        "outline": [],
+        "cites": [],
+        "whereNext": [
+            {"kind": "essay", "slug": "valid-slug", "title": "OK", "why": "w"},
+            {"kind": "", "slug": "ignored", "title": "x"},
+            {"kind": "essay", "slug": "", "title": "y"},
+            {"title": "no kind or slug"},
+        ],
+    }
+    plan_resp = make_conexus_response(content=json.dumps(plan))
+    draft_resp = make_conexus_response(content="Draft.")
+    critique_resp = make_conexus_response(content=_critique_response(6))
+    call_idx = [-1]
+
+    async def _ordered_chat(model, messages, **kwargs):
+        call_idx[0] += 1
+        responses = [plan_resp, draft_resp, critique_resp]
+        if call_idx[0] < len(responses):
+            return responses[call_idx[0]]
+        return make_conexus_response()
+
+    conexus.chat = _ordered_chat  # type: ignore[method-assign]
+    workflow = OntogonyCmsWorkflow(conexus=conexus)
+    run = await workflow.run("T", auto_approve=True)
+    cms = run.state.get("cms_output")
+    assert cms is not None
+    assert 'slug: "valid-slug"' in cms
+    assert 'slug: "ignored"' not in cms
