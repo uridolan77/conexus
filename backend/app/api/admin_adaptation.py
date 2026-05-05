@@ -7,6 +7,7 @@ The browser must never call the adaptation service directly.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -29,6 +30,8 @@ from app.services.admin_permissions_service import (
     require_adaptation_permission,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/adaptation", tags=["admin"])
 
@@ -118,6 +121,7 @@ async def proxy_adaptation_request(
             detail=str(exc),
         )
     except Exception:
+        logger.exception("admin_adaptation_proxy_unexpected_error path=%s", upstream_path)
         return _problem(
             status_code=status.HTTP_502_BAD_GATEWAY,
             title="Adaptation proxy error.",

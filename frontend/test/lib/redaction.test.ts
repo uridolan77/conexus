@@ -104,6 +104,21 @@ describe("redactSensitiveString", () => {
     expect(result).not.toContain("cnx_live_supersecretkey123");
   });
 
+  it("redacts sk-ant-api keys", () => {
+    const raw = "key=sk-ant-api03-abcdefghijklmnop1234567890AB";
+    const result = redactSensitiveString(raw);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("sk-ant-api03");
+  });
+
+  it("redacts JWT-like three-part tokens", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3j_VNHQgqUkeBPuuvhdsWBDHLBKkvp8";
+    const result = redactSensitiveString(`Authorization ${jwt}`);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+
   it("leaves safe strings unchanged", () => {
     const safe = "model=gpt-4o-mini provider=openai";
     expect(redactSensitiveString(safe)).toBe(safe);

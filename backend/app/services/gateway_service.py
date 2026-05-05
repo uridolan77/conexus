@@ -21,6 +21,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -31,6 +32,13 @@ from collections.abc import AsyncIterator
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.domain_enums import (
+    GatewayAdaptationMode,
+    GatewayAdapterProfileActivationStatus,
+    GatewayRequestStatus,
+    ProjectLimitMode,
+)
+from app.core.errors import ConexusDomainError
 from app.db.models import (
     GatewayAdapterProfile,
     GatewayAdapterProfileActivation,
@@ -74,15 +82,38 @@ logger = logging.getLogger(__name__)
 # guaranteed without a distributed lock or a serializable DB transaction.
 # Production-safe future options: serializable Postgres transactions on the
 # reservation INSERT, or a Redis-based distributed lock per project_id.
-_project_reserve_locks: dict[str, asyncio.Lock] = {}
+_MAX_PROJECT_RESERVE_LOCK_ENTRIES = 10_000
+_project_reserve_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
 
 
 def _project_reserve_lock(project_id: str) -> asyncio.Lock:
     lock = _project_reserve_locks.get(project_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _project_reserve_locks[project_id] = lock
-    return lock
+    if lock is not None:
+        _project_reserve_locks.move_to_end(project_id)
+        return lock
+    while len(_project_reserve_locks) >= _MAX_PROJECT_RESERVE_LOCK_ENTRIES:
+        evicted = False
+        for k in list(_project_reserve_locks.keys()):
+            candidate = _project_reserve_locks[k]
+            if not candidate.locked():
+                del _project_reserve_locks[k]
+                evicted = True
+                break
+        if not evicted:
+            stale_key, stale_lock = _project_reserve_locks.popitem(last=False)
+            if stale_lock.locked():
+                _project_reserve_locks[stale_key] = stale_lock
+                _project_reserve_locks.move_to_end(stale_key)
+                logger.warning(
+                    "project_reserve_locks_cap_all_busy evicted_reinserted key=%s size=%d",
+                    stale_key,
+                    len(_project_reserve_locks),
+                )
+            else:
+                evicted = True
+    new_lock = asyncio.Lock()
+    _project_reserve_locks[project_id] = new_lock
+    return new_lock
 
 
 class _LimitReservedBlocked(Exception):
@@ -115,7 +146,12 @@ async def _resolve_adapter_profile_association(
                 code="unknown_gateway_profile_id",
                 request_id=request_id,
             )
-        return (row.gateway_profile_id, row.adapter_profile_id, row.domain_key, "explicit")
+        return (
+            row.gateway_profile_id,
+            row.adapter_profile_id,
+            row.domain_key,
+            GatewayAdaptationMode.EXPLICIT,
+        )
 
     if domain is None:
         return (None, None, None, None)
@@ -123,20 +159,20 @@ async def _resolve_adapter_profile_association(
     active = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
-            GatewayAdapterProfileActivation.status == "Active",
+            GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.ACTIVE,
         ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     canary = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain,
-            GatewayAdapterProfileActivation.status == "Canary",
+            GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.CANARY,
         ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if active is None:
-        return (None, None, domain, "domain_only")
+        return (None, None, domain, GatewayAdaptationMode.DOMAIN_ONLY)
 
     selected_gateway_profile_id = active.gateway_profile_id
-    mode = "active"
+    mode: GatewayAdaptationMode = GatewayAdaptationMode.ACTIVE
     if (
         settings.adapter_profile_canary_routing_enabled
         and canary is not None
@@ -147,7 +183,7 @@ async def _resolve_adapter_profile_association(
         bucket = int.from_bytes(h[:2], "big") % 100
         if bucket < canary.canary_percent:
             selected_gateway_profile_id = canary.gateway_profile_id
-            mode = "canary"
+            mode = GatewayAdaptationMode.CANARY
 
     selected = await session.scalar(
         select(GatewayAdapterProfile).where(
@@ -175,7 +211,7 @@ async def _reserve_hard_limit_or_raise(
         async with sessionmaker() as session:
             async with session.begin():
                 limits = await get_project_limits(session, project_id=project_id)
-                if limits is None or limits.limit_mode != "hard":
+                if limits is None or limits.limit_mode != ProjectLimitMode.HARD:
                     return None
                 r = await reserve_gateway_request(
                     session,
@@ -214,26 +250,32 @@ async def _reconcile_reservation(
             )
 
 
-class GatewayClientError(Exception):
+class GatewayClientError(ConexusDomainError):
     """Caller-visible 4xx — bad model, bad input."""
 
+    http_status = 400
+
     def __init__(self, message: str, *, code: str, request_id: str) -> None:
-        super().__init__(message)
+        super().__init__(message, request_id=request_id)
         self.code = code
         self.request_id = request_id
 
 
-class GatewayUpstreamError(Exception):
+class GatewayUpstreamError(ConexusDomainError):
     """Caller-visible 502/503 — all providers failed."""
 
+    http_status = 502
+
     def __init__(self, message: str, *, code: str, request_id: str) -> None:
-        super().__init__(message)
+        super().__init__(message, request_id=request_id)
         self.code = code
         self.request_id = request_id
 
 
-class GatewayLimitError(Exception):
+class GatewayLimitError(ConexusDomainError):
     """Caller-visible 429 — project hard limit exceeded."""
+
+    http_status = 429
 
     def __init__(
         self,
@@ -247,7 +289,15 @@ class GatewayLimitError(Exception):
         window: str,
         reset_at: datetime | None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(
+            message,
+            request_id=request_id,
+            limit_type=limit_type,
+            current_value=current_value,
+            limit_value=limit_value,
+            window=window,
+            reset_at=reset_at,
+        )
         self.code = code
         self.request_id = request_id
         self.limit_type = limit_type
@@ -436,7 +486,7 @@ async def run_chat_completion(
                 gateway_profile_id=(explicit_gateway_profile_id or "").strip() or None,
                 adapter_profile_id=None,
                 domain_key=(domain_key or "").strip() or None,
-                adaptation_mode="explicit",
+                adaptation_mode=GatewayAdaptationMode.EXPLICIT,
             )
             await finish_request_failure(
                 log_session,
@@ -452,7 +502,7 @@ async def run_chat_completion(
             limit_reservation_id=limit_reservation_id,
             actual_tokens=0,
             actual_cost=0.0,
-            status="failed",
+            status=GatewayRequestStatus.FAILED,
         )
         raise
     except BaseException:
@@ -461,7 +511,7 @@ async def run_chat_completion(
             limit_reservation_id=limit_reservation_id,
             actual_tokens=0,
             actual_cost=0.0,
-            status="failed",
+            status=GatewayRequestStatus.FAILED,
         )
         raise
 
@@ -659,7 +709,7 @@ async def run_chat_completion_stream(
                 gateway_profile_id=(explicit_gateway_profile_id or "").strip() or None,
                 adapter_profile_id=None,
                 domain_key=(domain_key or "").strip() or None,
-                adaptation_mode="explicit",
+                adaptation_mode=GatewayAdaptationMode.EXPLICIT,
             )
             await finish_request_failure(
                 log_session,
@@ -675,7 +725,7 @@ async def run_chat_completion_stream(
             limit_reservation_id=limit_reservation_id,
             actual_tokens=0,
             actual_cost=0.0,
-            status="failed",
+            status=GatewayRequestStatus.FAILED,
         )
         raise
     except BaseException:
@@ -684,7 +734,7 @@ async def run_chat_completion_stream(
             limit_reservation_id=limit_reservation_id,
             actual_tokens=0,
             actual_cost=0.0,
-            status="failed",
+            status=GatewayRequestStatus.FAILED,
         )
         raise
 
@@ -844,7 +894,7 @@ async def _record_failure(
                 reservation_id=limit_reservation_id,
                 actual_tokens=0,
                 actual_cost=0.0,
-                status="failed",
+                status=GatewayRequestStatus.FAILED,
             )
 
     await _with_log_session(sessionmaker, _do)

@@ -20,11 +20,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
+from app.core.domain_enums import (
+    GatewayAdapterProfileActivationStatus,
+    GatewayAdapterProfileStatus,
+    GatewayRequestStatus,
+)
 from app.db.models import GatewayAdapterProfile, GatewayAdapterProfileActivation
 from app.db.session import get_session
 from app.services.audit_service import log_admin_action
 
 router = APIRouter(prefix="/internal/adapter-profiles", tags=["internal"])
+
+
+def _is_adapter_activation_unique_violation(exc: IntegrityError) -> bool:
+    raw = str(exc.orig or exc).lower()
+    return "uq_gw_profile_activation_domain" in raw or (
+        "unique" in raw and "gateway_adapter_profile_activations" in raw
+    )
+
+
+async def _flush_adapter_activation_or_conflict(session: AsyncSession) -> None:
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if not _is_adapter_activation_unique_violation(exc):
+            raise
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="adapter profile activation conflict for this domain",
+        ) from exc
 
 
 def _utcnow() -> datetime:
@@ -107,7 +132,7 @@ async def register_adapter_profile(
         adapter_profile_id=adapter_profile_id,
         domain_key=domain_key,
         profile_version=body.profileVersion,
-        status="Registered",
+        status=GatewayAdapterProfileStatus.REGISTERED,
         source_run_id=body.runId,
         source_plan_id=body.planId,
         composite_score=body.compositeScore,
@@ -200,7 +225,7 @@ async def activate_canary(
     existing_canary = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
-            GatewayAdapterProfileActivation.status == "Canary",
+            GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.CANARY,
         ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if existing_canary is not None and existing_canary.gateway_profile_id != gatewayProfileId:
@@ -210,7 +235,7 @@ async def activate_canary(
         row = GatewayAdapterProfileActivation(
             domain_key=domain_key,
             gateway_profile_id=gatewayProfileId,
-            status="Canary",
+            status=GatewayAdapterProfileActivationStatus.CANARY,
             canary_percent=body.canaryPercent,
             previous_gateway_profile_id=None,
             created_at=_utcnow(),
@@ -222,7 +247,7 @@ async def activate_canary(
             else json.dumps(body.metadata, separators=(",", ":"), sort_keys=True),
         )
         session.add(row)
-        await session.flush()
+        await _flush_adapter_activation_or_conflict(session)
         existing_canary = row
     else:
         existing_canary.canary_percent = body.canaryPercent
@@ -232,7 +257,7 @@ async def activate_canary(
             if body.metadata is None
             else json.dumps(body.metadata, separators=(",", ":"), sort_keys=True)
         )
-        await session.flush()
+        await _flush_adapter_activation_or_conflict(session)
 
     await log_admin_action(
         session,
@@ -249,7 +274,7 @@ async def activate_canary(
     return ActivationResponse(
         domainKey=domain_key,
         gatewayProfileId=gatewayProfileId,
-        status="Canary",
+        status=GatewayAdapterProfileActivationStatus.CANARY,
         canaryPercent=existing_canary.canary_percent,
     )
 
@@ -270,7 +295,7 @@ async def promote(
     active = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
-            GatewayAdapterProfileActivation.status == "Active",
+            GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.ACTIVE,
         ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     previous_id = active.gateway_profile_id if active is not None else None
@@ -278,12 +303,12 @@ async def promote(
         return ActivationResponse(
             domainKey=domain_key,
             gatewayProfileId=gatewayProfileId,
-            status="Active",
+            status=GatewayAdapterProfileActivationStatus.ACTIVE,
             previousGatewayProfileId=active.previous_gateway_profile_id,
         )
 
     if active is not None:
-        active.status = "Retired"
+        active.status = GatewayAdapterProfileActivationStatus.RETIRED
         await session.flush()
 
     # Preserve canary history: if the promoted profile was previously canary, mark it Promoted.
@@ -292,22 +317,22 @@ async def promote(
         await session.execute(
             select(GatewayAdapterProfileActivation).where(
                 GatewayAdapterProfileActivation.domain_key == domain_key,
-                GatewayAdapterProfileActivation.status == "Canary",
+                GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.CANARY,
             )
         )
     ).scalars().all()
     for c in canaries:
         if c.gateway_profile_id == gatewayProfileId:
-            c.status = "Promoted"
+            c.status = GatewayAdapterProfileActivationStatus.PROMOTED
             c.promoted_at = _utcnow()
         else:
-            c.status = "Retired"
+            c.status = GatewayAdapterProfileActivationStatus.RETIRED
         await session.flush()
 
     row = GatewayAdapterProfileActivation(
         domain_key=domain_key,
         gateway_profile_id=gatewayProfileId,
-        status="Active",
+        status=GatewayAdapterProfileActivationStatus.ACTIVE,
         canary_percent=None,
         previous_gateway_profile_id=previous_id,
         created_at=_utcnow(),
@@ -317,7 +342,7 @@ async def promote(
         metadata_json=None,
     )
     session.add(row)
-    await session.flush()
+    await _flush_adapter_activation_or_conflict(session)
     await log_admin_action(
         session,
         actor=None,
@@ -334,7 +359,7 @@ async def promote(
     return ActivationResponse(
         domainKey=domain_key,
         gatewayProfileId=gatewayProfileId,
-        status="Active",
+        status=GatewayAdapterProfileActivationStatus.ACTIVE,
         previousGatewayProfileId=previous_id,
     )
 
@@ -355,7 +380,7 @@ async def rollback(
     active = await session.scalar(
         select(GatewayAdapterProfileActivation).where(
             GatewayAdapterProfileActivation.domain_key == domain_key,
-            GatewayAdapterProfileActivation.status == "Active",
+            GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.ACTIVE,
         ).order_by(desc(GatewayAdapterProfileActivation.created_at))
     )
     if active is None or active.gateway_profile_id != gatewayProfileId:
@@ -364,7 +389,7 @@ async def rollback(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no previous profile to roll back to")
 
     previous_id = active.previous_gateway_profile_id
-    active.status = "RolledBack"
+    active.status = GatewayAdapterProfileActivationStatus.ROLLED_BACK
     active.rolled_back_at = _utcnow()
     await session.flush()
 
@@ -373,18 +398,18 @@ async def rollback(
         await session.execute(
             select(GatewayAdapterProfileActivation).where(
                 GatewayAdapterProfileActivation.domain_key == domain_key,
-                GatewayAdapterProfileActivation.status == "Canary",
+                GatewayAdapterProfileActivation.status == GatewayAdapterProfileActivationStatus.CANARY,
             )
         )
     ).scalars().all()
     for c in canaries:
-        c.status = "Retired"
+        c.status = GatewayAdapterProfileActivationStatus.RETIRED
     await session.flush()
 
     row = GatewayAdapterProfileActivation(
         domain_key=domain_key,
         gateway_profile_id=previous_id,
-        status="Active",
+        status=GatewayAdapterProfileActivationStatus.ACTIVE,
         canary_percent=None,
         previous_gateway_profile_id=None,
         created_at=_utcnow(),
@@ -394,7 +419,7 @@ async def rollback(
         metadata_json=None,
     )
     session.add(row)
-    await session.flush()
+    await _flush_adapter_activation_or_conflict(session)
     await log_admin_action(
         session,
         actor=None,
@@ -411,7 +436,7 @@ async def rollback(
     return ActivationResponse(
         domainKey=domain_key,
         gatewayProfileId=previous_id,
-        status="Active",
+        status=GatewayAdapterProfileActivationStatus.ACTIVE,
     )
 
 
@@ -488,19 +513,23 @@ async def get_observability(
             costPerAnswer=None,
         )
 
-    error_count = sum(1 for (status_value, _lat, _cost) in records if status_value == "failed")
+    error_count = sum(
+        1 for (status_value, _lat, _cost) in records if status_value == GatewayRequestStatus.FAILED
+    )
     error_rate = error_count / request_count
 
     latencies = sorted(
-        [lat for (_st, lat, _c) in records if lat is not None and _st == "completed"]
+        [lat for (_st, lat, _c) in records if lat is not None and _st == GatewayRequestStatus.COMPLETED]
     )
     latency_p95: int | None = None
     if latencies:
         idx = max(0, math.ceil(0.95 * len(latencies)) - 1)
         latency_p95 = int(latencies[idx])
 
-    completed_costs = [c for (st, _lat, c) in records if st == "completed" and c is not None]
-    completed_count = sum(1 for (st, _lat, _c) in records if st == "completed")
+    completed_costs = [
+        c for (st, _lat, c) in records if st == GatewayRequestStatus.COMPLETED and c is not None
+    ]
+    completed_count = sum(1 for (st, _lat, _c) in records if st == GatewayRequestStatus.COMPLETED)
     cost_per_answer: float | None = None
     if completed_count > 0 and completed_costs:
         cost_per_answer = float(sum(completed_costs) / completed_count)

@@ -38,8 +38,14 @@ def test_known_openai_cost() -> None:
 def test_unknown_model_falls_back_to_sonnet_rates() -> None:
     reload_pricing()
     # Falls back to (3.0, 15.0) per 1M tokens.
-    cost = get_cost("totally-made-up-model", 1_000_000, 0)
+    cost = get_cost("totally-made-up-model-unique-xyz", 1_000_000, 0)
     assert cost == 3.0
+
+
+def test_default_pricing_loads_from_package_without_pricing_config_path(monkeypatch) -> None:
+    monkeypatch.delenv("PRICING_CONFIG_PATH", raising=False)
+    reload_pricing(path=None)
+    assert model_has_explicit_rates("gpt-4o-mini") is True
 
 
 def test_model_has_explicit_rates() -> None:

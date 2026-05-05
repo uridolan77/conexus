@@ -28,6 +28,7 @@ from app.api import (
     internal_adapter_profiles,
     internal_domains,
 )
+from app.api.gateway import register_gateway_exception_handlers
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
@@ -66,6 +67,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(
             "invalid ENCRYPTION_KEY: expected a valid Fernet key"
         ) from exc
+    from app.core.process_worker_guard import enforce_hard_limit_worker_safety
+
+    enforce_hard_limit_worker_safety(settings=settings, log=logger)
+
     if settings.app_env.lower() == "prod":
         logger.warning("prod_startup use_alembic_migrations=true")
         if settings.effective_allow_create_all:
@@ -138,6 +143,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_routing.router)
     app.include_router(internal_adapter_profiles.router)
     app.include_router(internal_domains.router)
+
+    register_gateway_exception_handlers(app)
 
     @app.exception_handler(ModelAliasConfigError)
     async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):

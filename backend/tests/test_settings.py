@@ -10,6 +10,20 @@ def test_effective_allow_env_admin_fallback_defaults_false_in_prod() -> None:
     assert s.effective_allow_env_admin_fallback is False
 
 
+def test_effective_gateway_hard_limit_multi_worker_policy_auto() -> None:
+    prod = Settings.model_construct(app_env="prod", encryption_key="x")
+    local = Settings.model_construct(app_env="local", encryption_key="x")
+    assert prod.effective_gateway_hard_limit_multi_worker_policy == "error"
+    assert local.effective_gateway_hard_limit_multi_worker_policy == "warn"
+
+
+def test_effective_gateway_hard_limit_multi_worker_policy_explicit() -> None:
+    s = Settings.model_construct(
+        app_env="prod", encryption_key="x", gateway_hard_limit_multi_worker_policy="warn"
+    )
+    assert s.effective_gateway_hard_limit_multi_worker_policy == "warn"
+
+
 def test_effective_cookie_secure_defaults_true_in_prod_false_elsewhere() -> None:
     prod = Settings.model_construct(app_env="prod", encryption_key="x")
     local = Settings.model_construct(app_env="local", encryption_key="x")

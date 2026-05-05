@@ -26,9 +26,11 @@ def _reset_pricing_cache():
 
     pricing._pricing_cache = {}
     pricing._pricing_loaded = False
+    pricing._unknown_model_warned = set()
     yield
     pricing._pricing_cache = {}
     pricing._pricing_loaded = False
+    pricing._unknown_model_warned = set()
 
 
 @pytest.fixture(autouse=True)
@@ -73,10 +75,14 @@ def _reset_settings_overrides():
     from app.core.config import settings
 
     original_allow_env_admin_fallback = settings.allow_env_admin_fallback
+    original_enable_static = settings.enable_static_admin_fallback
+    original_bootstrap = settings.allow_static_bootstrap_when_no_db_admins
     try:
         yield
     finally:
         settings.allow_env_admin_fallback = original_allow_env_admin_fallback
+        settings.enable_static_admin_fallback = original_enable_static
+        settings.allow_static_bootstrap_when_no_db_admins = original_bootstrap
 
 
 @pytest.fixture(autouse=True)

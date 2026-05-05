@@ -162,7 +162,10 @@ export function StatusBadge({
     normalized === "promoted" ||
     normalized === "approved"
       ? "success"
-      : normalized === "failed" || normalized === "revoked" || normalized === "rolled_back"
+      : normalized === "failed" ||
+          normalized === "revoked" ||
+          normalized === "rolled_back" ||
+          normalized === "rolledback"
         ? "danger"
         : normalized === "running" || normalized === "started" || normalized === "registered"
           ? "info"
@@ -173,7 +176,7 @@ export function StatusBadge({
   const label =
     normalized === "not-run"
       ? "not run"
-      : normalized === "rolled_back"
+      : normalized === "rolled_back" || normalized === "rolledback"
         ? "rolled back"
         : raw || "—";
 

@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.domain_enums import ProjectLimitMode
 from app.db.models import (
     GatewayRequest,
     ProjectGatewayLimitReservation,
@@ -190,7 +191,7 @@ async def reserve_gateway_request(
     estimated_prompt_tokens: int | None,
     now: datetime,
 ) -> LimitReservationResult:
-    if limits.limit_mode != "hard":
+    if limits.limit_mode != ProjectLimitMode.HARD:
         return LimitReservationResult(True, None, None)
 
     if now.tzinfo is None:
