@@ -13,6 +13,7 @@ from app.db.models import GatewayModelAlias, ProviderConfig
 from app.llm.anthropic_adapter import AnthropicProvider
 from app.llm.errors import ProviderError
 from app.llm.openai_adapter import OpenAIProvider
+from app.services.audit_service import sanitize_audit_text
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 
 
@@ -66,8 +67,18 @@ def mask_api_key(secret: str) -> str:
     return f"{secret[:4]}...{secret[-4:]}"
 
 
-def sanitize_error(message: str, secret: str) -> str:
-    sanitized = message.replace(secret, "[redacted]")
+def sanitize_error(
+    message: str,
+    secret: str,
+    *,
+    encrypted_secret: str | None = None,
+    key_mask: str | None = None,
+) -> str:
+    sanitized = message
+    for sensitive in (secret, encrypted_secret, key_mask):
+        if sensitive:
+            sanitized = sanitized.replace(sensitive, "[redacted]")
+    sanitized = sanitize_audit_text(sanitized, max_len=240)
     if len(sanitized) > 240:
         return sanitized[:240]
     return sanitized
@@ -116,7 +127,7 @@ async def create_provider_config(
     return row
 
 
-async def revoke_provider_config(
+async def disable_provider_config(
     session: AsyncSession, row: ProviderConfig
 ) -> ProviderConfig:
     from datetime import datetime, timezone
@@ -125,6 +136,12 @@ async def revoke_provider_config(
     row.revoked_at = datetime.now(timezone.utc)
     await session.flush()
     return row
+
+
+async def revoke_provider_config(
+    session: AsyncSession, row: ProviderConfig
+) -> ProviderConfig:
+    return await disable_provider_config(session, row)
 
 
 async def test_provider_config(
@@ -148,7 +165,12 @@ async def test_provider_config(
             temperature=0,
         )
     except Exception as exc:
-        msg = sanitize_error(str(exc), secret)
+        msg = sanitize_error(
+            str(exc),
+            secret,
+            encrypted_secret=row.api_key_encrypted,
+            key_mask=row.key_mask,
+        )
         row.last_test_status = "failed"
         row.last_test_error = msg
         row.last_tested_at = datetime.now(timezone.utc)

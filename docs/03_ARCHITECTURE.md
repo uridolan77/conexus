@@ -114,6 +114,12 @@ the current M5/M6 slice. Runtime provider/model routing still uses the static
 YAML/model-alias configuration by default; DB-backed alias routing is deferred so
 existing boot and routing behavior does not change silently.
 
+Provider configs are BO-managed encrypted credentials. Listing APIs return only
+the provider, label, key mask, status, and test metadata; encrypted secrets stay
+inside the service layer. Disabling a provider is terminal for now: it sets
+`is_active=false` and `revoked_at`, removes the row from enabled-provider helper
+results, and does not re-enable the same secret.
+
 ## Design preference
 
 Start simple. Keep the gateway path clear before adding caching, broader runtime

@@ -1,0 +1,8 @@
+{
+  "package": "agentor_v01_ontogony_cms_code_agent_plan",
+  "created_at": "2026-05-05T12:34:29.143182Z",
+  "target_repo": "uridolan77/conexus",
+  "target_branch": "integration-init",
+  "goal": "Code-agent plan for Agentor v0.1 Ontogony CMS workflow",
+  "file_count": 16
+}
