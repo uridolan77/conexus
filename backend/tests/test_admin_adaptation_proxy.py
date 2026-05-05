@@ -157,7 +157,7 @@ async def test_admin_adaptation_forwards_query_params(monkeypatch: pytest.Monkey
     def factory(*, timeout: httpx.Timeout) -> _MockAsyncClient:
         return _MockAsyncClient(timeout=timeout, handler=handler)
 
-    monkeypatch.setattr("app.api.admin_adaptation.httpx.AsyncClient", factory)
+    monkeypatch.setattr("app.services.adaptation_proxy_service.httpx.AsyncClient", factory)
 
     response = await client.get("/admin/adaptation/plans?status=Draft&domainKey=dk&status=Draft")
     assert response.status_code == 200
@@ -182,7 +182,7 @@ async def test_admin_adaptation_passthrough_problem_details_400(monkeypatch: pyt
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -205,7 +205,7 @@ async def test_admin_adaptation_passthrough_problem_details_404(monkeypatch: pyt
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -225,7 +225,7 @@ async def test_admin_adaptation_connect_error_returns_502(monkeypatch: pytest.Mo
         raise httpx.ConnectError("connect failed", request=request)
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -244,7 +244,7 @@ async def test_admin_adaptation_timeout_returns_504(monkeypatch: pytest.MonkeyPa
         raise httpx.ReadTimeout("timed out", request=request)
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -265,7 +265,7 @@ async def test_admin_adaptation_approve_injects_identity(monkeypatch: pytest.Mon
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -300,7 +300,7 @@ async def test_admin_adaptation_run_injects_created_by_and_uses_longer_timeout(
         captured["timeout"] = timeout
         return _MockAsyncClient(timeout=timeout, handler=handler)
 
-    monkeypatch.setattr("app.api.admin_adaptation.httpx.AsyncClient", factory)
+    monkeypatch.setattr("app.services.adaptation_proxy_service.httpx.AsyncClient", factory)
 
     response = await client.post("/admin/adaptation/plans/plan_1/run", json={"createdByUserId": "spoof"})
     assert response.status_code == 200
@@ -334,7 +334,7 @@ async def test_GET_run_evaluation_forwards_to_upstream(monkeypatch: pytest.Monke
         return httpx.Response(200, json={"runId": "run_1"}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -360,7 +360,7 @@ async def test_GET_run_evaluation_preserves_404_problem_details(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -389,7 +389,7 @@ async def test_POST_publish_injects_admin_identity_and_roles(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -418,7 +418,7 @@ async def test_read_only_can_view_profiles_but_cannot_deploy(
         raise AssertionError(f"unexpected upstream proxy call: {kwargs['method']} {kwargs['url']}")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -443,7 +443,7 @@ async def test_deploy_without_permission_returns_403_before_proxy(
         raise AssertionError("should not proxy when forbidden")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -470,7 +470,7 @@ async def test_super_admin_gets_all_adaptation_roles(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -493,7 +493,7 @@ async def test_bootstrap_env_admin_has_all_adaptation_permissions(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -520,7 +520,7 @@ async def test_admin_with_empty_roles_has_no_permissions(
         raise AssertionError("should not proxy when forbidden")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -541,7 +541,7 @@ async def test_POST_publish_does_not_forward_browser_roles(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -575,7 +575,7 @@ async def test_POST_publish_preserves_409_problem_details(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -598,7 +598,7 @@ async def test_POST_activate_canary_injects_identity_roles_and_percent(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -626,7 +626,7 @@ async def test_POST_activate_canary_rejects_invalid_percent_before_proxy(
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -652,7 +652,7 @@ async def test_POST_promote_injects_identity_and_roles(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -676,7 +676,7 @@ async def test_POST_rollback_injects_identity_roles_and_reason(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -714,7 +714,7 @@ async def test_GET_profile_activations_forwards_to_upstream(
         return httpx.Response(200, json=[], headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -737,7 +737,7 @@ async def test_GET_domain_active_profile_forwards_to_upstream(
         return httpx.Response(200, json={"profileId": "p1"}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -760,7 +760,7 @@ async def test_browser_supplied_roles_are_ignored_for_activate_canary(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -787,7 +787,7 @@ async def test_POST_publish_malformed_json_returns_400_without_proxy(
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -817,7 +817,7 @@ async def test_POST_activate_canary_malformed_json_returns_400_without_proxy(
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -846,7 +846,7 @@ async def test_POST_rollback_malformed_json_returns_400_without_proxy(
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -875,7 +875,7 @@ async def test_POST_promote_malformed_json_returns_400_without_proxy(
         return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -903,7 +903,7 @@ async def test_GET_profile_deployment_events_forwards_to_upstream(
         return httpx.Response(200, json=[], headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -926,7 +926,7 @@ async def test_POST_publish_forwards_idempotency_key_to_upstream(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -955,7 +955,7 @@ async def _assert_forbidden_without_upstream_call(
         raise AssertionError("should not proxy when forbidden")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1065,7 +1065,7 @@ async def test_cancel_run_injects_admin_identity_and_trims_reason(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1091,7 +1091,7 @@ async def test_cancel_run_rejects_malformed_json_without_proxy(
         raise AssertionError("should not proxy on malformed JSON")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1120,7 +1120,7 @@ async def test_cancel_run_preserves_upstream_problem_details(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1144,7 +1144,7 @@ async def test_retry_run_injects_identity_and_forwards_idempotency_key(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1173,7 +1173,7 @@ async def test_resume_run_injects_identity_and_forwards_idempotency_key(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1204,7 +1204,7 @@ async def test_drift_status_forwards_to_upstream_and_preserves_404(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1226,7 +1226,7 @@ async def test_check_drift_rejects_malformed_json_without_proxy(
         raise AssertionError("should not proxy on malformed JSON")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1256,7 +1256,7 @@ async def test_check_drift_forwards_kind_and_preserves_problem_details(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1281,7 +1281,7 @@ async def test_queue_diagnostics_forwards_query_params(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1311,7 +1311,7 @@ async def test_queue_repair_dry_run_injects_identity_ignores_browser_and_trims_r
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1346,7 +1346,7 @@ async def test_queue_repair_dry_run_ignores_pascal_case_RequestedByUserId(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1374,7 +1374,7 @@ async def test_queue_repair_apply_rejects_malformed_json_without_proxy(
         raise AssertionError("should not proxy on malformed JSON")
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1400,7 +1400,7 @@ async def test_queue_repair_apply_ignores_snake_case_requested_by_user_id(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1427,7 +1427,7 @@ async def test_queue_repair_apply_ignores_roles(
         return httpx.Response(200, json={"ok": True}, headers={"content-type": "application/json"})
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 
@@ -1456,7 +1456,7 @@ async def test_queue_repair_apply_preserves_upstream_problem_details(
         )
 
     monkeypatch.setattr(
-        "app.api.admin_adaptation.httpx.AsyncClient",
+        "app.services.adaptation_proxy_service.httpx.AsyncClient",
         lambda *, timeout: _MockAsyncClient(timeout=timeout, handler=handler),
     )
 

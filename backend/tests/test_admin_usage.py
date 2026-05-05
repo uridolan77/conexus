@@ -282,6 +282,74 @@ async def test_usage_custom_dates_filter_requests(
 
 
 @pytest.mark.asyncio
+async def test_usage_timeseries_daily_buckets_aggregate_per_day(
+    client: AsyncClient,
+    db_sessionmaker,
+) -> None:
+    day0 = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    async with db_sessionmaker() as session:
+        project = models.Project(id="proj_daily_ts", name="Daily TS", created_at=day0)
+        session.add(project)
+        session.add_all(
+            [
+                models.GatewayRequest(
+                    id="daily_ts_1",
+                    request_id="daily-req-1",
+                    project_id=project.id,
+                    requested_model="gpt-4o-mini",
+                    provider="openai",
+                    model="gpt-4o-mini",
+                    status="completed",
+                    latency_ms=50,
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    total_tokens=2,
+                    estimated_cost=0.01,
+                    fallback_used=False,
+                    created_at=day0,
+                    completed_at=day0,
+                ),
+                models.GatewayRequest(
+                    id="daily_ts_2",
+                    request_id="daily-req-2",
+                    project_id=project.id,
+                    requested_model="gpt-4o-mini",
+                    provider="openai",
+                    model="gpt-4o-mini",
+                    status="completed",
+                    latency_ms=60,
+                    prompt_tokens=2,
+                    completion_tokens=2,
+                    total_tokens=4,
+                    estimated_cost=0.02,
+                    fallback_used=False,
+                    created_at=day0 + timedelta(days=1),
+                    completed_at=day0 + timedelta(days=1),
+                ),
+            ]
+        )
+        await session.commit()
+    await _login(client)
+
+    response = await client.get(
+        "/admin/usage/timeseries",
+        params={
+            "window": "7d",
+            "created_from": day0.isoformat(),
+            "created_to": (day0 + timedelta(days=2)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["interval"] == "day"
+    assert len(body["items"]) == 2
+    assert [item["total_requests"] for item in body["items"]] == [1, 1]
+    assert body["items"][0]["total_tokens"] == 2
+    assert body["items"][1]["total_tokens"] == 4
+
+
+@pytest.mark.asyncio
 async def test_usage_timeseries_returns_hourly_metadata_buckets(
     client: AsyncClient,
     db_sessionmaker,

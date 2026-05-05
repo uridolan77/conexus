@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     limit_reservation_force_repair_after_seconds: int = Field(
         default=3600, alias="LIMIT_RESERVATION_FORCE_REPAIR_AFTER_SECONDS", ge=300
     )
+    # When false, hard-limit admission uses only ProjectUsageWindow counters (no
+    # per-request scans of gateway_requests). Enable legacy fallbacks until
+    # windows are verified in production, then set to false in staging/prod.
+    use_legacy_hard_limit_gateway_fallbacks: bool = Field(
+        default=True, alias="USE_LEGACY_HARD_LIMIT_GATEWAY_FALLBACKS"
+    )
 
     admin_login_max_failures: int = Field(default=5, alias="ADMIN_LOGIN_MAX_FAILURES", ge=1)
     admin_login_window_seconds: int = Field(

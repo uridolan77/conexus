@@ -78,36 +78,42 @@ async def list_projects(
     _admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[ProjectView]:
-    projects = list((await session.execute(select(Project).order_by(Project.created_at.desc()))).scalars())
-    output: list[ProjectView] = []
-    for project in projects:
-        active_keys = (
-            await session.execute(
-                select(func.count())
-                .select_from(ProjectApiKey)
-                .where(
-                    ProjectApiKey.project_id == project.id,
-                    ProjectApiKey.revoked_at.is_(None),
-                )
-            )
-        ).scalar_one()
-        request_count = (
-            await session.execute(
-                select(func.count())
-                .select_from(GatewayRequest)
-                .where(GatewayRequest.project_id == project.id)
-            )
-        ).scalar_one()
-        output.append(
-            ProjectView(
-                id=project.id,
-                name=project.name,
-                created_at=project.created_at,
-                active_key_count=int(active_keys),
-                total_request_count=int(request_count),
-            )
+    active_by_project = (
+        select(
+            ProjectApiKey.project_id.label("project_id"),
+            func.count(ProjectApiKey.id).label("active_cnt"),
         )
-    return output
+        .where(ProjectApiKey.revoked_at.is_(None))
+        .group_by(ProjectApiKey.project_id)
+    ).subquery()
+    requests_by_project = (
+        select(
+            GatewayRequest.project_id.label("project_id"),
+            func.count(GatewayRequest.id).label("req_cnt"),
+        )
+        .group_by(GatewayRequest.project_id)
+    ).subquery()
+    stmt = (
+        select(
+            Project,
+            func.coalesce(active_by_project.c.active_cnt, 0).label("active_key_count"),
+            func.coalesce(requests_by_project.c.req_cnt, 0).label("total_request_count"),
+        )
+        .outerjoin(active_by_project, Project.id == active_by_project.c.project_id)
+        .outerjoin(requests_by_project, Project.id == requests_by_project.c.project_id)
+        .order_by(Project.created_at.desc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        ProjectView(
+            id=project.id,
+            name=project.name,
+            created_at=project.created_at,
+            active_key_count=int(active_cnt or 0),
+            total_request_count=int(req_cnt or 0),
+        )
+        for project, active_cnt, req_cnt in rows
+    ]
 
 
 @router.post("", response_model=ProjectView, status_code=status.HTTP_201_CREATED)

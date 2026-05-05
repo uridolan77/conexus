@@ -8,8 +8,9 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Integer, Select, case, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.sqltypes import DateTime
 
 from app.api.admin_auth import get_admin_session
 from app.db.models import GatewayRequest, Project
@@ -179,29 +180,6 @@ def _metrics_from_accumulator(accumulator: _MetricAccumulator) -> UsageMetrics:
     )
 
 
-def _record_metric(accumulator: _MetricAccumulator, row: GatewayRequest) -> None:
-    accumulator.total_requests += 1
-    if row.status == "completed":
-        accumulator.completed_requests += 1
-    if row.status == "failed":
-        accumulator.failed_requests += 1
-    if row.fallback_used:
-        accumulator.fallback_count += 1
-    accumulator.total_prompt_tokens += row.prompt_tokens or 0
-    accumulator.total_completion_tokens += row.completion_tokens or 0
-    accumulator.total_tokens += row.total_tokens or 0
-    accumulator.estimated_cost += row.estimated_cost or 0.0
-    if row.latency_ms is not None:
-        accumulator.latency_sum_ms += row.latency_ms
-        accumulator.latency_count += 1
-
-
-def _ensure_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
-
-
 def _timeseries_interval(window: Window) -> tuple[Literal["hour", "day"], timedelta]:
     if window == "24h":
         return "hour", timedelta(hours=1)
@@ -230,12 +208,16 @@ def _apply_time_bounds(stmt: Select, bounds: TimeBounds) -> Select:
     )
 
 
-def _bucket_index(created_at: datetime, bounds: TimeBounds, step: timedelta, count: int) -> int:
-    if count <= 1:
-        return 0
-    elapsed = _ensure_aware(created_at) - bounds.created_from
-    index = int(elapsed.total_seconds() // step.total_seconds())
-    return min(max(index, 0), count - 1)
+def _timeseries_bucket_idx(bounds: TimeBounds, step: timedelta):
+    """SQL bucket index aligned with ``_bucket_index`` (origin = bounds.created_from)."""
+    step_sec = max(1, int(step.total_seconds()))
+    origin = bounds.created_from
+    epoch_row = func.extract("epoch", GatewayRequest.created_at)
+    epoch_origin = func.extract("epoch", literal(origin, type_=DateTime(timezone=True)))
+    return cast(
+        func.floor((epoch_row - epoch_origin) / literal(step_sec)),
+        Integer,
+    ).label("bucket_idx")
 
 
 def _metrics_from_mapping(row: object) -> UsageMetrics:
@@ -379,13 +361,18 @@ async def get_usage_timeseries(
     )
     interval, step = _timeseries_interval(window)
     buckets = _empty_buckets(bounds, step)
-    stmt = _apply_time_bounds(select(GatewayRequest), bounds).order_by(
-        GatewayRequest.created_at.asc()
-    )
-    rows = list((await session.execute(stmt)).scalars())
-    for row in rows:
-        index = _bucket_index(row.created_at, bounds, step, len(buckets))
-        _record_metric(buckets[index][2], row)
+    n = len(buckets)
+    bucket_idx = _timeseries_bucket_idx(bounds, step)
+    stmt = _apply_time_bounds(
+        select(bucket_idx, *_metric_columns()).select_from(GatewayRequest),
+        bounds,
+    ).group_by(bucket_idx)
+    agg_rows = (await session.execute(stmt)).all()
+    idx_metrics: dict[int, UsageMetrics] = {}
+    for row in agg_rows:
+        raw_idx = int(row._mapping["bucket_idx"] or 0)
+        idx = max(0, min(raw_idx, n - 1))
+        idx_metrics[idx] = _metrics_from_mapping(row)
     return UsageTimeseriesResponse(
         window=bounds.window,
         created_from=bounds.created_from,
@@ -395,8 +382,12 @@ async def get_usage_timeseries(
             UsageTimeseriesPoint(
                 bucket_start=bucket_start,
                 bucket_end=bucket_end,
-                **_metrics_from_accumulator(accumulator).model_dump(),
+                **(
+                    idx_metrics[i].model_dump()
+                    if i in idx_metrics
+                    else _metrics_from_accumulator(acc).model_dump()
+                ),
             )
-            for bucket_start, bucket_end, accumulator in buckets
+            for i, (bucket_start, bucket_end, acc) in enumerate(buckets)
         ],
     )
