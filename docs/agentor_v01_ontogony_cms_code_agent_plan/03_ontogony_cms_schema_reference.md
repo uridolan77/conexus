@@ -37,7 +37,9 @@ concept
 fragment
 ```
 
-Default to `essay`.
+Use **`essay`** (singular) as the logical content type — e.g. in `whereNext[].kind`.
+
+**Agentor / Astro folder naming:** the generated plan field `collection` and on-disk path use the **plural** collection folder `essays` (`src/content/essays/{slug}.mdx`). Do not confuse `kind: essay` with `collection: essays`.
 
 ## Essay frontmatter
 
@@ -65,6 +67,15 @@ createdAt: "2026-05-05T00:00:00.000Z"
 updatedAt: "2026-05-05T00:00:00.000Z"
 ---
 ```
+
+## whereNext entries
+
+Each item must be an object with:
+
+- **`kind`** (string, non-empty): logical type to link to (e.g. `essay`, `concept`).
+- **`slug`** (string, non-empty): slug of the target page.
+
+Optional: **`title`**, **`why`**. Non-objects, missing keys, empty strings, or non-string `kind`/`slug` values are **dropped** when normalizing the planner JSON (they must not appear in frontmatter).
 
 For generated content, always use:
 

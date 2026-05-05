@@ -234,8 +234,10 @@ def _build_nodes(
                         "'collection' (string), 'title' (string), 'slug' (string), "
                         "'summary' (string), 'thesis' (string), 'register' (string, optional; use R1-R4), "
                         "'outline' (list of strings), 'cites' (list of strings), "
-                        "'whereNext' (list of objects with keys: kind, slug, title, why). "
-                        "Set collection='essays'."
+                        "'whereNext' (list of objects; each MUST have non-empty string "
+                        "'kind' (content type, e.g. essay, concept) and 'slug'; optional "
+                        "'title', 'why'; invalid entries are ignored). "
+                        "Set collection='essays' (Astro folder name under src/content/)."
                     ),
                 },
                 {
@@ -447,12 +449,20 @@ def _build_nodes(
 
 
 class OntogonyCmsWorkflow:
-    """Orchestrates the Ontogony CMS page-generation workflow.
+    """Orchestrates Ontogony CMS **essay** drafts for Astro/Tina (v0.1).
+
+    Pipeline: plan (JSON) → gather sources → draft markdown → critic JSON →
+    frontmatter + body → human approval. Outputs ``cms_output`` and
+    ``target_path`` (``src/content/essays/{slug}.mdx``); disk writes and PRs are
+    out of scope until v0.2.
+
+    **Naming:** ``page_plan["collection"]`` is always ``"essays"`` (plural),
+    matching ``src/content/essays/``. Use ``whereNext[].kind`` for the logical
+    content type (e.g. ``"essay"``, ``"concept"``).
 
     Args:
-        conexus: A :class:`~agentor_runtime.clients.conexus.ConexusClient` instance.
-        tool:    A :class:`~agentor_runtime.clients.tool.ToolClient` instance.
-                 Defaults to :class:`~agentor_runtime.clients.tool.StubToolClient`.
+        conexus: LLM gateway client implementing ``chat`` (e.g. :class:`~agentor_runtime.clients.conexus.ConexusClient` or :class:`~agentor_runtime.clients.mock_conexus.MockConexusClient`).
+        tool: Filesystem or stub tool for ``read_source_file``. Defaults to :class:`~agentor_runtime.clients.tool.StubToolClient`.
     """
 
     def __init__(
@@ -491,4 +501,5 @@ class OntogonyCmsWorkflow:
         return run
 
     async def resume(self, run: AgentRun, *, auto_approve: bool = False) -> AgentRun:
+        """Continue after :attr:`~agentor_runtime.models.AgentRun.checkpoint` approval/rejection."""
         return await self._executor.resume(run, auto_approve=auto_approve)
