@@ -16,8 +16,8 @@ from app.services.admin_auth_service import AdminSession
 from app.services.provider_config_service import (
     ProviderTestResult,
     create_provider_config,
+    disable_provider_config,
     list_provider_configs,
-    revoke_provider_config,
     test_provider_config,
 )
 from app.services.audit_service import log_admin_action, sanitize_audit_text
@@ -120,8 +120,7 @@ async def add_provider_config(
     return _to_view(row)
 
 
-@router.post("/{provider_id}/revoke", response_model=ProviderConfigView)
-async def revoke_provider(
+async def _disable_provider(
     provider_id: str,
     admin: Annotated[AdminSession, Depends(get_admin_session)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -132,11 +131,11 @@ async def revoke_provider(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="provider config not found",
         )
-    await revoke_provider_config(session, row)
+    await disable_provider_config(session, row)
     await log_admin_action(
         session,
         actor=admin,
-        action="provider.revoke",
+        action="provider.disabled",
         resource_type="provider_config",
         resource_id=row.id,
         metadata={
@@ -146,6 +145,24 @@ async def revoke_provider(
         },
     )
     return _to_view(row)
+
+
+@router.post("/{provider_id}/disable", response_model=ProviderConfigView)
+async def disable_provider(
+    provider_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProviderConfigView:
+    return await _disable_provider(provider_id, admin, session)
+
+
+@router.post("/{provider_id}/revoke", response_model=ProviderConfigView)
+async def revoke_provider(
+    provider_id: str,
+    admin: Annotated[AdminSession, Depends(get_admin_session)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProviderConfigView:
+    return await _disable_provider(provider_id, admin, session)
 
 
 @router.post("/{provider_id}/test", response_model=ProviderTestView)

@@ -20,7 +20,7 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ from app.db.models import Project, ProjectApiKey
 _KEY_PREFIX = "cx_live"
 _PREFIX_BYTES = 4  # 8 hex chars
 _SECRET_BYTES = 16  # 32 hex chars
+_LAST_USED_TOUCH_INTERVAL = timedelta(seconds=60)
 
 
 @dataclass(slots=True)
@@ -58,6 +59,16 @@ def _parse_key(token: str) -> tuple[str, str] | None:
     if not prefix or not secret:
         return None
     return prefix, secret
+
+
+def _should_touch_last_used_at(
+    last_used_at: datetime | None, *, now: datetime
+) -> bool:
+    if last_used_at is None:
+        return True
+    if last_used_at.tzinfo is None:
+        last_used_at = last_used_at.replace(tzinfo=timezone.utc)
+    return now - last_used_at >= _LAST_USED_TOUCH_INTERVAL
 
 
 async def create_api_key(
@@ -106,6 +117,10 @@ async def verify_api_key(
         return None
     if not hmac.compare_digest(api_key.secret_hash, _hash_secret(secret)):
         return None
+    now = datetime.now(timezone.utc)
+    if _should_touch_last_used_at(api_key.last_used_at, now=now):
+        api_key.last_used_at = now
+        await session.flush()
     return project, api_key
 
 

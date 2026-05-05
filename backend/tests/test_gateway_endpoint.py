@@ -29,7 +29,10 @@ from app.llm.errors import (
 from app.llm.gateway_router import GatewayProvider
 from app.llm.types import ChatMessage, ChatResult, ChatStreamChunk, TokenUsage
 from app.main import app
-from app.services.gateway_service import GatewayClientError
+from app.services.gateway_service import (
+    GatewayClientError,
+    run_chat_completion_stream,
+)
 from app.services.project_key_service import create_api_key
 from app.core.config import settings
 
@@ -389,6 +392,21 @@ async def test_chat_completions_happy_path(
         assert log.latency_ms is not None and log.latency_ms >= 0
         assert log.fallback_used is False
         assert log.completed_at is not None
+        usage = (
+            await session.execute(
+                select(models.UsageEvent).where(
+                    models.UsageEvent.gateway_request_id == log.id
+                )
+            )
+        ).scalar_one()
+        assert usage.project_id == project.id
+        assert usage.provider == "openai"
+        assert usage.model == "gpt-4o-mini"
+        assert usage.requested_model == "gpt-4o-mini"
+        assert usage.prompt_tokens == 11
+        assert usage.completion_tokens == 4
+        assert usage.total_tokens == 15
+        assert usage.cost_usd == log.estimated_cost
 
 
 @pytest.mark.asyncio
@@ -636,6 +654,20 @@ async def test_chat_completions_stream_true_returns_sse_and_logs_success(
         assert log.completion_tokens == 2
         assert log.total_tokens == 5
         assert log.completed_at is not None
+        usage = (
+            await session.execute(
+                select(models.UsageEvent).where(
+                    models.UsageEvent.gateway_request_id == log.id
+                )
+            )
+        ).scalar_one()
+        assert usage.project_id == project.id
+        assert usage.provider == "openai"
+        assert usage.model == "gpt-4o-mini"
+        assert usage.requested_model == "gpt-4o-mini"
+        assert usage.prompt_tokens == 3
+        assert usage.completion_tokens == 2
+        assert usage.total_tokens == 5
 
 
 @pytest.mark.asyncio
@@ -1377,6 +1409,16 @@ async def test_chat_completions_provider_failure_logs_failure(
         assert log.error_message == "everyone is down"
         assert log.completed_at is not None
         assert log.latency_ms is not None
+        usage_events = list(
+            (
+                await session.execute(
+                    select(models.UsageEvent).where(
+                        models.UsageEvent.gateway_request_id == log.id
+                    )
+                )
+            ).scalars()
+        )
+        assert usage_events == []
 
 
 @pytest.mark.asyncio
@@ -1571,6 +1613,59 @@ async def test_chat_completions_stream_times_out_emits_sse_error_and_done(
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_stream_cancelled_marks_failed_and_reconciles(
+    seeded, db_sessionmaker
+) -> None:
+    _plaintext, project, api_key = seeded
+    await _set_project_limits(
+        db_sessionmaker,
+        project_id=project.id,
+        limit_mode="hard",
+        daily_request_limit=10,
+    )
+    response = await run_chat_completion_stream(
+        sessionmaker=db_sessionmaker,
+        provider=_SlowProvider(sleep_seconds=10.0),
+        project=project,
+        api_key=api_key,
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        max_tokens=8,
+        temperature=0.2,
+    )
+    stream = response.stream.__aiter__()
+
+    first_chunk = await stream.__anext__()
+    assert first_chunk.role_delta == "assistant"
+
+    pending = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.05)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    async with db_sessionmaker() as session:
+        log = (
+            await session.execute(
+                select(models.GatewayRequest).where(
+                    models.GatewayRequest.request_id == response.request_id
+                )
+            )
+        ).scalar_one()
+        assert log.status == "failed"
+        assert log.error_code == "stream_cancelled"
+        assert log.completed_at is not None
+        assert log.limit_reservation_id is not None
+
+        reservation = await session.get(
+            models.ProjectGatewayLimitReservation,
+            log.limit_reservation_id,
+        )
+        assert reservation is not None
+        assert reservation.reconciled_at is not None
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_tokens(
     client, seeded, db_sessionmaker
 ) -> None:
@@ -1626,6 +1721,16 @@ async def test_chat_completions_stream_no_usage_chunk_logs_completed_with_null_t
         assert log.total_tokens is None
         assert log.estimated_cost is None
         assert log.completed_at is not None
+        usage_events = list(
+            (
+                await session.execute(
+                    select(models.UsageEvent).where(
+                        models.UsageEvent.gateway_request_id == log.id
+                    )
+                )
+            ).scalars()
+        )
+        assert usage_events == []
 
 
 @pytest.mark.asyncio

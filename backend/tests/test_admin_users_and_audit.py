@@ -270,7 +270,7 @@ async def test_successful_mutations_write_audit_rows_and_no_secrets_leak(
     for required in [
         "provider.create",
         "provider.test",
-        "provider.revoke",
+        "provider.disabled",
         "project.create",
         "project_api_key.issue",
         "project_api_key.revoke",
