@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { useUrlFilters } from "@/hooks/useUrlFilters";
 import {
   Badge,
   Button,
@@ -38,27 +39,9 @@ const defaultFilters: Filters = {
   runId: "",
 };
 
-function parseFiltersFromLocation(): Filters {
-  if (typeof window === "undefined") return defaultFilters;
-  const params = new URLSearchParams(window.location.search);
-  return {
-    domainKey: params.get("domainKey") ?? "",
-    status: params.get("status") ?? "",
-    approvedForRuntime: params.get("approvedForRuntime") ?? "",
-    planId: params.get("planId") ?? "",
-    runId: params.get("runId") ?? "",
-  };
-}
-
-function buildParams(filters: Filters) {
-  const params = new URLSearchParams();
-  if (filters.domainKey) params.set("domainKey", filters.domainKey);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.approvedForRuntime) params.set("approvedForRuntime", filters.approvedForRuntime);
-  if (filters.planId) params.set("planId", filters.planId);
-  if (filters.runId) params.set("runId", filters.runId);
-  return params;
-}
+const FILTER_KEYS = ["domainKey", "status", "approvedForRuntime", "planId", "runId"] as const satisfies readonly (
+  keyof Filters
+)[];
 
 function blockingFailedGate(profile: AdapterProfileListItem): boolean {
   const gates = profile.gateResults;
@@ -67,6 +50,11 @@ function blockingFailedGate(profile: AdapterProfileListItem): boolean {
 }
 
 export default function AdapterProfilesPage() {
+  const { parseFromSearch, toQuery, replaceUrl } = useUrlFilters<Filters>({
+    pathname: "/adaptation/profiles",
+    defaults: defaultFilters,
+    keys: FILTER_KEYS,
+  });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [items, setItems] = useState<AdapterProfileListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,23 +64,23 @@ export default function AdapterProfilesPage() {
   async function load(next: Filters) {
     setLoading(true);
     setLastError(null);
-    const params = buildParams(next);
+    const params = new URLSearchParams(toQuery(next));
     const res = await adaptationApi.listProfiles(params);
     if (!res.ok) {
       setItems([]);
       setLastError(res);
     } else {
       setItems(res.data);
-      const query = params.toString();
-      window.history.replaceState(null, "", query ? `/adaptation/profiles?${query}` : "/adaptation/profiles");
+      replaceUrl(next);
     }
     setLoading(false);
   }
 
   useEffect(() => {
-    const initial = parseFiltersFromLocation();
+    const initial = typeof window === "undefined" ? defaultFilters : parseFromSearch(window.location.search);
     setFilters(initial);
     void load(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function applyFilters(event: FormEvent) {

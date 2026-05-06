@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useUrlFilters } from "@/hooks/useUrlFilters";
 import {
   Badge,
   Button,
@@ -41,25 +42,9 @@ const defaultFilters: Filters = {
   requiresHumanApproval: "",
 };
 
-function parseFiltersFromLocation(): Filters {
-  if (typeof window === "undefined") return defaultFilters;
-  const params = new URLSearchParams(window.location.search);
-  return {
-    domainKey: params.get("domainKey") ?? "",
-    status: params.get("status") ?? "",
-    strategy: params.get("strategy") ?? "",
-    requiresHumanApproval: params.get("requiresHumanApproval") ?? "",
-  };
-}
-
-function buildParams(filters: Filters) {
-  const params = new URLSearchParams();
-  if (filters.domainKey) params.set("domainKey", filters.domainKey);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.strategy) params.set("strategy", filters.strategy);
-  if (filters.requiresHumanApproval) params.set("requiresHumanApproval", filters.requiresHumanApproval);
-  return params;
-}
+const FILTER_KEYS = ["domainKey", "status", "strategy", "requiresHumanApproval"] as const satisfies readonly (
+  keyof Filters
+)[];
 
 function planIdOf(plan: AdaptationPlanListItem) {
   return plan.id ?? plan.planId ?? "";
@@ -78,6 +63,11 @@ function requiresHumanApprovalOf(plan: AdaptationPlanListItem) {
 }
 
 export default function AdaptationPlansPage() {
+  const { parseFromSearch, toQuery, replaceUrl } = useUrlFilters<Filters>({
+    pathname: "/adaptation/plans",
+    defaults: defaultFilters,
+    keys: FILTER_KEYS,
+  });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [items, setItems] = useState<AdaptationPlanListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,23 +78,23 @@ export default function AdaptationPlansPage() {
   async function load(next: Filters) {
     setLoading(true);
     setLastError(null);
-    const params = buildParams(next);
+    const params = new URLSearchParams(toQuery(next));
     const res = await adaptationApi.listPlans(params);
     if (!res.ok) {
       setItems([]);
       setLastError(res);
     } else {
       setItems(res.data);
-      const query = params.toString();
-      window.history.replaceState(null, "", query ? `/adaptation/plans?${query}` : "/adaptation/plans");
+      replaceUrl(next);
     }
     setLoading(false);
   }
 
   useEffect(() => {
-    const initial = parseFiltersFromLocation();
+    const initial = typeof window === "undefined" ? defaultFilters : parseFromSearch(window.location.search);
     setFilters(initial);
     void load(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function applyFilters(event: FormEvent) {

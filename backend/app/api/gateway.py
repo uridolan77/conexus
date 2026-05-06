@@ -89,6 +89,50 @@ def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]
     return {"code": code, "message": message, "request_id": request_id}
 
 
+def _sse_error_payload(*, exc: Exception | None, request_id: str) -> dict[str, object]:
+    msg = getattr(exc, "message", None) if exc is not None else None
+    message = str(msg) if msg else (str(exc) if exc is not None else "Stream interrupted.")
+    if isinstance(exc, GatewayClientError):
+        return {
+            "error": {
+                "type": "client_error",
+                "code": exc.code,
+                "message": message,
+                "request_id": request_id,
+            }
+        }
+    if isinstance(exc, GatewayLimitError):
+        return {
+            "error": {
+                "type": "rate_limit_error",
+                "code": exc.code,
+                "message": message,
+                "request_id": request_id,
+                "limit_type": exc.limit_type,
+                "current_value": exc.current_value,
+                "limit_value": exc.limit_value,
+                "window": exc.window,
+                "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
+            }
+        }
+    if isinstance(exc, GatewayUpstreamError):
+        return {
+            "error": {
+                "type": "upstream_error",
+                "code": exc.code,
+                "message": message,
+                "request_id": request_id,
+            }
+        }
+    return {
+        "error": {
+            "type": "server_error",
+            "message": "Stream interrupted.",
+            "request_id": request_id,
+        }
+    }
+
+
 def register_gateway_exception_handlers(app: FastAPI) -> None:
     """Map gateway domain errors to the same JSON bodies as legacy HTTPException paths."""
 
@@ -185,17 +229,12 @@ async def chat_completions(
                         ],
                     }
                     yield f"data: {json.dumps(payload)}\n\n".encode("utf-8")
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "gateway_stream_interrupted request_id=%s", request_id
                 )
                 # Best-effort SSE error. The DB log is written by the stream wrapper.
-                err_payload = {
-                    "error": {
-                        "message": "Stream interrupted.",
-                        "type": "server_error",
-                    }
-                }
+                err_payload = _sse_error_payload(exc=exc, request_id=request_id)
                 yield f"data: {json.dumps(err_payload)}\n\n".encode("utf-8")
             finally:
                 yield b"data: [DONE]\n\n"

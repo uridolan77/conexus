@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { useUrlFilters } from "@/hooks/useUrlFilters";
 import {
   Badge,
   Button,
@@ -29,27 +30,14 @@ type Filters = {
 
 const defaultFilters: Filters = { domainKey: "", status: "", planId: "", recipeKey: "" };
 
-function parseFiltersFromLocation(): Filters {
-  if (typeof window === "undefined") return defaultFilters;
-  const params = new URLSearchParams(window.location.search);
-  return {
-    domainKey: params.get("domainKey") ?? "",
-    status: params.get("status") ?? "",
-    planId: params.get("planId") ?? "",
-    recipeKey: params.get("recipeKey") ?? "",
-  };
-}
-
-function buildParams(filters: Filters) {
-  const params = new URLSearchParams();
-  if (filters.domainKey) params.set("domainKey", filters.domainKey);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.planId) params.set("planId", filters.planId);
-  if (filters.recipeKey) params.set("recipeKey", filters.recipeKey);
-  return params;
-}
+const FILTER_KEYS = ["domainKey", "status", "planId", "recipeKey"] as const satisfies readonly (keyof Filters)[];
 
 export default function AdaptationRunsPage() {
+  const { parseFromSearch, toQuery, replaceUrl } = useUrlFilters<Filters>({
+    pathname: "/adaptation/runs",
+    defaults: defaultFilters,
+    keys: FILTER_KEYS,
+  });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [items, setItems] = useState<AdaptationRunListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,23 +47,23 @@ export default function AdaptationRunsPage() {
   async function load(next: Filters) {
     setLoading(true);
     setLastError(null);
-    const params = buildParams(next);
+    const params = new URLSearchParams(toQuery(next));
     const res = await adaptationApi.listRuns(params);
     if (!res.ok) {
       setItems([]);
       setLastError(res);
     } else {
       setItems(res.data);
-      const query = params.toString();
-      window.history.replaceState(null, "", query ? `/adaptation/runs?${query}` : "/adaptation/runs");
+      replaceUrl(next);
     }
     setLoading(false);
   }
 
   useEffect(() => {
-    const initial = parseFiltersFromLocation();
+    const initial = typeof window === "undefined" ? defaultFilters : parseFromSearch(window.location.search);
     setFilters(initial);
     void load(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function applyFilters(event: FormEvent) {
