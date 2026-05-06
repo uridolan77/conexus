@@ -1,0 +1,9 @@
+{
+  "name": "conexus-agent-os-package",
+  "version": "0.2.0",
+  "generated_at": "2026-05-06T12:06:17.709771+00:00",
+  "canonical_instruction_file": "AGENTS.md",
+  "profiles": [
+    "conexus"
+  ]
+}
