@@ -27,6 +27,10 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
 
+    db_pool_size: int | None = Field(default=None, alias="DB_POOL_SIZE", ge=1)
+    db_max_overflow: int | None = Field(default=None, alias="DB_MAX_OVERFLOW", ge=0)
+    db_pool_timeout: int | None = Field(default=None, alias="DB_POOL_TIMEOUT", ge=1)
+
     backend_base_url: str = Field(
         default="http://localhost:8000", alias="BACKEND_BASE_URL"
     )

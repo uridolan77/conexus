@@ -113,3 +113,18 @@ def test_llm_timeouts_validate_min_value() -> None:
             {"APP_ENV": "local", "ENCRYPTION_KEY": "x", "LLM_STREAM_TIMEOUT_SECONDS": 0}
         )
 
+
+def test_db_pool_settings_are_optional() -> None:
+    s = Settings.model_validate(
+        {
+            "APP_ENV": "local",
+            "ENCRYPTION_KEY": "x",
+            "DB_POOL_SIZE": 5,
+            "DB_MAX_OVERFLOW": 10,
+            "DB_POOL_TIMEOUT": 30,
+        }
+    )
+    assert s.db_pool_size == 5
+    assert s.db_max_overflow == 10
+    assert s.db_pool_timeout == 30
+
