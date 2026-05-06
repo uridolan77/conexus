@@ -1,7 +1,7 @@
 
-# File 2: `docs/contracts/gateway-runtime-contract.md`
-
 # Gateway Runtime Contract
+
+**Document path:** `docs/specs/gateway-runtime-contract.md`
 
 **Status:** Draft
 **Project:** Conexus

@@ -120,17 +120,33 @@ api_key
 
 Full OpenAI compatibility can come later.
 
-## Out of Scope for v0
+## Present but Not the M2/M3 Focus
 
-**Streaming:** The endpoint returns a complete response in one call. Server-sent events (SSE) / streaming responses are out of v0 scope. See `docs/product/conexus-v0-scope.md` for details.
+The current runtime already contains extracted support for:
+- streaming responses
+- gateway fallback/failover
+- `fallback_used` request/response metadata
 
-Other out-of-scope features:
+For M2/M3:
+- preserve existing behavior
+- do not expand or refactor streaming/fallback unless explicitly requested
+- focus on OpenAI stability, BO provider config, request logging, and BO request visibility
+
+M6:
+- harden Anthropic/fallback behavior
+- refine fallback policy
+- improve fallback observability
+- test fallback paths deliberately
+
+Later compatibility milestone:
+- harden streaming behavior
+- document exact OpenAI-compatible SSE behavior
+- add stronger streaming tests
+
+Other out-of-scope features for v0:
 - Tool/function calling
 - Response format / structured output
 - Logprobs
 - Multiple completions (n > 1)
 - Vision / image inputs
-- Fallback / failover
 - Request batching
-
-These can be added in later milestones once the core gateway is stable.
