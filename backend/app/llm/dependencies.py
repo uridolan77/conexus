@@ -3,16 +3,22 @@
 Lives in its own module so the test suite can override it without importing
 the heavy SDK clients.
 
-The provider is constructed once and cached at process scope. ``aclose`` is
-called by the app shutdown hook in :mod:`app.main`.
+The default provider is still cached at process scope. For gateway requests,
+we first attempt request-scoped BO-config resolution and fall back to the
+cached default provider when no BO-backed provider is available.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.db.session import get_session
 from app.llm import LLMProvider, make_provider
+from app.services.gateway_runtime_config_service import resolve_request_provider
 
 _provider: LLMProvider | None = None
 
@@ -30,11 +36,24 @@ def set_default_provider(provider: LLMProvider | None) -> None:
     _provider = provider
 
 
-async def get_provider() -> AsyncIterator[LLMProvider]:
-    """FastAPI dependency. Does not close the provider here — its lifetime
-    matches the app, not the request, so ``aclose`` runs at shutdown.
+async def get_provider(
+    session: AsyncSession = Depends(get_session),
+) -> AsyncIterator[LLMProvider]:
+    """FastAPI dependency.
+
+    BO-configured providers are request scoped and closed after the request.
+    The cached process-wide provider is used as fallback and is closed on
+    application shutdown.
     """
-    yield get_default_provider()
+    resolved = await resolve_request_provider(session)
+    if resolved is None:
+        yield get_default_provider()
+        return
+
+    try:
+        yield resolved
+    finally:
+        await resolved.aclose()
 
 
 async def shutdown_provider() -> None:

@@ -58,6 +58,19 @@ conexus-fast → configured OpenAI model
 
 **Note on fallback:** The codebase includes fallback support (Anthropic secondary, OpenAI fallback), but this capability is not actively configured or hardened in M2-M5. Focus is on OpenAI stability. Fallback hardening and optimization are planned for M6.
 
+### Runtime credential source (current)
+
+Gateway provider credentials resolve with this precedence:
+
+```text
+1) BO provider config (active + not revoked) per provider
+2) Environment provider key fallback
+```
+
+This means a saved BO provider config is used for real `/v1/chat/completions`
+calls when present. Env keys remain a compatibility fallback for local/dev and
+recovery scenarios.
+
 ### M6: Harden Anthropic/fallback behavior (later milestone)
 
 In a future milestone, add:
@@ -93,7 +106,8 @@ created_at
 completed_at
 ```
 
-**Note:** The `fallback_used` field will be added in M6 when fallback is implemented.
+`fallback_used` is currently captured in request logs and returned in the
+gateway response.
 
 ## Response compatibility
 
