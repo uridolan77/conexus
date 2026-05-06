@@ -19,16 +19,25 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
     mapped_column,
     relationship,
+)
+
+from app.core.domain_enums import (
+    GatewayAdapterProfileActivationStatus,
+    GatewayAdapterProfileStatus,
+    GatewayRequestStatus,
+    ProjectLimitMode,
 )
 
 
@@ -180,7 +189,7 @@ class ProjectLimit(Base):
     daily_request_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     daily_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     limit_mode: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="disabled"
+        String(16), nullable=False, default=ProjectLimitMode.DISABLED
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
@@ -238,7 +247,7 @@ class GatewayRequest(Base):
     requested_model: Mapped[str] = mapped_column(String(120), nullable=False)
     provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="started")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=GatewayRequestStatus.STARTED)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -318,7 +327,9 @@ class GatewayAdapterProfile(Base):
     adapter_profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     domain_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     profile_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="Registered", index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=GatewayAdapterProfileStatus.REGISTERED, index=True
+    )
     source_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_plan_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     composite_score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -335,6 +346,22 @@ class GatewayAdapterProfile(Base):
 
 class GatewayAdapterProfileActivation(Base):
     __tablename__ = "gateway_adapter_profile_activations"
+    __table_args__ = (
+        Index(
+            "uq_gw_profile_activation_domain_active",
+            "domain_key",
+            unique=True,
+            sqlite_where=text("status = 'Active'"),
+            postgresql_where=text("status = 'Active'"),
+        ),
+        Index(
+            "uq_gw_profile_activation_domain_canary",
+            "domain_key",
+            unique=True,
+            sqlite_where=text("status = 'Canary'"),
+            postgresql_where=text("status = 'Canary'"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     domain_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)

@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+
+import { useUrlFilters } from "@/hooks/useUrlFilters";
 import {
   Button,
   Card,
@@ -47,6 +49,17 @@ const defaultFilters: Filters = {
   limit: String(DEFAULT_LIMIT),
 };
 
+const ACTIVITY_FILTER_KEYS = [
+  "actor_username",
+  "actor_admin_user_id",
+  "action",
+  "resource_type",
+  "resource_id",
+  "created_from",
+  "created_to",
+  "limit",
+] as const satisfies readonly (keyof Filters)[];
+
 function activeFiltersSummary(filters: Filters) {
   const parts: string[] = [];
 
@@ -78,31 +91,12 @@ function activeFiltersSummary(filters: Filters) {
   return parts.length ? `Active filters: ${parts.join(" · ")}` : "No active filters.";
 }
 
-function filtersFromLocation(): Filters {
-  if (typeof window === "undefined") return defaultFilters;
-  const params = new URLSearchParams(window.location.search);
-  return {
-    actor_username: params.get("actor_username") ?? "",
-    actor_admin_user_id: params.get("actor_admin_user_id") ?? "",
-    action: params.get("action") ?? "",
-    resource_type: params.get("resource_type") ?? "",
-    resource_id: params.get("resource_id") ?? "",
-    created_from: params.get("created_from") ?? "",
-    created_to: params.get("created_to") ?? "",
-    limit: params.get("limit") ?? String(DEFAULT_LIMIT),
-  };
-}
-
-function toQuery(filters: Filters) {
-  const params = new URLSearchParams();
-  for (const [k, v] of Object.entries(filters)) {
-    const value = v.trim();
-    if (value) params.set(k, value);
-  }
-  return params.toString();
-}
-
 export default function ActivityPage() {
+  const { parseFromSearch, replaceUrl } = useUrlFilters<Filters>({
+    pathname: "/activity",
+    defaults: defaultFilters,
+    keys: ACTIVITY_FILTER_KEYS,
+  });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<AuditListResponse | null>(null);
@@ -135,15 +129,15 @@ export default function ActivityPage() {
       setData(result.data);
       setOffset(nextOffset);
 
-      const query = toQuery({ ...nextFilters, limit: String(limit) });
-      window.history.replaceState(null, "", query ? `/activity?${query}` : "/activity");
+      replaceUrl({ ...nextFilters, limit: String(limit) });
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    const initial = filtersFromLocation();
+    const initial =
+      typeof window === "undefined" ? defaultFilters : parseFromSearch(window.location.search);
     setFilters(initial);
     void load(initial, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps

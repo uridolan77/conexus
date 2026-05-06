@@ -18,8 +18,20 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+      ]
     environment:
       APP_ENV: ${APP_ENV:-local}
+      WEB_CONCURRENCY: "1"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://conexus:conexus@postgres:5432/conexus}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://localhost:8000}

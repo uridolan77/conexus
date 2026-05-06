@@ -154,7 +154,9 @@ async def test_env_fallback_only_when_no_admin_users_exist(client: AsyncClient, 
 
 @pytest.mark.asyncio
 async def test_env_fallback_disabled_requires_bootstrap_when_no_admin_users_exist(client: AsyncClient) -> None:
-    settings.allow_env_admin_fallback = False
+    settings.allow_env_admin_fallback = None
+    settings.allow_static_bootstrap_when_no_db_admins = False
+    settings.enable_static_admin_fallback = False
     res = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
     assert res.status_code == 401
     assert res.json()["detail"] == "admin bootstrap required"
@@ -162,7 +164,9 @@ async def test_env_fallback_disabled_requires_bootstrap_when_no_admin_users_exis
 
 @pytest.mark.asyncio
 async def test_env_fallback_enabled_allows_login_when_no_admin_users_exist(client: AsyncClient) -> None:
-    settings.allow_env_admin_fallback = True
+    settings.allow_env_admin_fallback = None
+    settings.allow_static_bootstrap_when_no_db_admins = False
+    settings.enable_static_admin_fallback = True
     res = await client.post("/admin/auth/login", json={"username": "admin", "password": "admin"})
     assert res.status_code == 200
     assert res.json()["admin_user_id"] is None

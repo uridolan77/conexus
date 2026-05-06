@@ -62,6 +62,20 @@ class Settings(BaseSettings):
     allow_env_admin_fallback: bool | None = Field(
         default=None, alias="ALLOW_ENV_ADMIN_FALLBACK"
     )
+    enable_static_admin_fallback: bool = Field(
+        default=False, alias="ENABLE_STATIC_ADMIN_FALLBACK"
+    )
+    allow_static_bootstrap_when_no_db_admins: bool = Field(
+        default=True, alias="ALLOW_STATIC_BOOTSTRAP_WHEN_NO_DB_ADMINS"
+    )
+    gateway_hard_limit_distributed_lock_enabled: bool = Field(
+        default=False, alias="GATEWAY_HARD_LIMIT_DISTRIBUTED_LOCK_ENABLED"
+    )
+    gateway_hard_limit_multi_worker_policy: str = Field(
+        default="auto",
+        alias="GATEWAY_HARD_LIMIT_MULTI_WORKER_POLICY",
+        description='One of "auto" (prod=error, else=warn), "error", "warn", "ignore".',
+    )
     allow_create_all: bool | None = Field(default=None, alias="ALLOW_CREATE_ALL")
     encryption_key: str = Field(..., alias="ENCRYPTION_KEY")
 
@@ -84,6 +98,12 @@ class Settings(BaseSettings):
     # After this age, "started but not completed" reservations may be force-repaired as failed.
     limit_reservation_force_repair_after_seconds: int = Field(
         default=3600, alias="LIMIT_RESERVATION_FORCE_REPAIR_AFTER_SECONDS", ge=300
+    )
+    # When false, hard-limit admission uses only ProjectUsageWindow counters (no
+    # per-request scans of gateway_requests). Enable legacy fallbacks until
+    # windows are verified in production, then set to false in staging/prod.
+    use_legacy_hard_limit_gateway_fallbacks: bool = Field(
+        default=True, alias="USE_LEGACY_HARD_LIMIT_GATEWAY_FALLBACKS"
     )
 
     admin_login_max_failures: int = Field(default=5, alias="ADMIN_LOGIN_MAX_FAILURES", ge=1)
@@ -191,7 +211,18 @@ class Settings(BaseSettings):
     def effective_allow_env_admin_fallback(self) -> bool:
         if self.allow_env_admin_fallback is not None:
             return self.allow_env_admin_fallback
-        return self.app_env.lower() != "prod"
+        if self.enable_static_admin_fallback:
+            return True
+        return self.allow_static_bootstrap_when_no_db_admins and self.app_env.lower() != "prod"
+
+    @property
+    def effective_gateway_hard_limit_multi_worker_policy(self) -> str:
+        raw = self.gateway_hard_limit_multi_worker_policy.strip().lower()
+        if raw in ("error", "warn", "ignore"):
+            return raw
+        if raw in ("auto", ""):
+            return "error" if self.app_env.lower() == "prod" else "warn"
+        return "warn"
 
     @property
     def effective_cookie_secure(self) -> bool:

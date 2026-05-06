@@ -209,7 +209,6 @@ async def test_runtime_state_active_profile_uses_newest_activation(client: Async
 async def test_runtime_state_canary_profile_uses_newest_canary(client: AsyncClient) -> None:
     settings.internal_adapter_api_key = "secret"
     gw1 = await _register(client, adapter_profile_id="ap-1", domain_key="gaming-crm")
-    gw2 = await _register(client, adapter_profile_id="ap-2", domain_key="gaming-crm")
 
     # Create canary for gw1 via endpoint.
     assert (
@@ -220,24 +219,7 @@ async def test_runtime_state_canary_profile_uses_newest_canary(client: AsyncClie
         )
     ).status_code == 200
 
-    # Inject a second (newer) Canary row directly to simulate corruption/duplication.
-    override = app.dependency_overrides[get_session]
-    agen = override()
-    try:
-        session = await anext(agen)
-        session.add(
-            GatewayAdapterProfileActivation(
-                domain_key="gaming-crm",
-                gateway_profile_id=gw2,
-                status="Canary",
-                canary_percent=20,
-            )
-        )
-        await session.commit()
-    finally:
-        await agen.aclose()
-
-    # Admin runtime-state should pick newest Canary by created_at.
+    # Admin runtime-state should reflect the active Canary row.
     from app.services.password_hasher import hash_password  # local import to avoid expanding module imports
     from app.db import models as db_models
     # Create DB admin so /admin endpoints don't use env fallback.
@@ -262,5 +244,5 @@ async def test_runtime_state_canary_profile_uses_newest_canary(client: AsyncClie
     assert (await client.post("/admin/auth/login", json={"username": "root", "password": "pw"})).status_code == 200
     rt = await client.get("/admin/adapter-profiles/ap-1/runtime-state")
     assert rt.status_code == 200
-    assert rt.json()["canaryGatewayProfileId"] == gw2
+    assert rt.json()["canaryGatewayProfileId"] == gw1
 

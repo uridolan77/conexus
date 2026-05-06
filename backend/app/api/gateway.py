@@ -12,10 +12,10 @@ from __future__ import annotations
 import logging
 import time
 import json
-from typing import Annotated, NoReturn
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.auth import AuthenticatedProject, require_project_api_key
@@ -89,33 +89,41 @@ def _error_detail(code: str, message: str, request_id: str) -> dict[str, object]
     return {"code": code, "message": message, "request_id": request_id}
 
 
-def _raise_gateway_http(exc: Exception) -> NoReturn:
-    if isinstance(exc, GatewayClientError):
-        raise HTTPException(
+def register_gateway_exception_handlers(app: FastAPI) -> None:
+    """Map gateway domain errors to the same JSON bodies as legacy HTTPException paths."""
+
+    @app.exception_handler(GatewayClientError)
+    async def _gateway_client_error(_request: Request, exc: GatewayClientError) -> Response:
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            content={"detail": _error_detail(exc.code, exc.message, exc.request_id)},
             headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
-    if isinstance(exc, GatewayLimitError):
-        raise HTTPException(
+        )
+
+    @app.exception_handler(GatewayLimitError)
+    async def _gateway_limit_error(_request: Request, exc: GatewayLimitError) -> Response:
+        return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                **_error_detail(exc.code, str(exc), exc.request_id),
-                "limit_type": exc.limit_type,
-                "current_value": exc.current_value,
-                "limit_value": exc.limit_value,
-                "window": exc.window,
-                "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
+            content={
+                "detail": {
+                    **_error_detail(exc.code, exc.message, exc.request_id),
+                    "limit_type": exc.limit_type,
+                    "current_value": exc.current_value,
+                    "limit_value": exc.limit_value,
+                    "window": exc.window,
+                    "reset_at": exc.reset_at.isoformat() if exc.reset_at is not None else None,
+                }
             },
             headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
-    if isinstance(exc, GatewayUpstreamError):
-        raise HTTPException(
+        )
+
+    @app.exception_handler(GatewayUpstreamError)
+    async def _gateway_upstream_error(_request: Request, exc: GatewayUpstreamError) -> Response:
+        return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=_error_detail(exc.code, str(exc), exc.request_id),
+            content={"detail": _error_detail(exc.code, exc.message, exc.request_id)},
             headers={REQUEST_ID_HEADER: exc.request_id},
-        ) from exc
-    raise exc
+        )
 
 
 @router.post("/chat/completions", response_model=ChatCompletionsResponse)
@@ -136,21 +144,18 @@ async def chat_completions(
         "X-Conexus-Adapter-Profile-Id"
     )
     if body.stream:
-        try:
-            stream_result = await run_chat_completion_stream(
-                sessionmaker=sessionmaker,
-                provider=provider,
-                project=auth.project,
-                api_key=auth.api_key,
-                model=body.model,
-                messages=_to_chat_messages(body.messages),
-                max_tokens=body.max_tokens,
-                temperature=body.temperature,
-                domain_key=domain_key,
-                explicit_gateway_profile_id=explicit_gateway_profile_id,
-            )
-        except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
-            _raise_gateway_http(exc)
+        stream_result = await run_chat_completion_stream(
+            sessionmaker=sessionmaker,
+            provider=provider,
+            project=auth.project,
+            api_key=auth.api_key,
+            model=body.model,
+            messages=_to_chat_messages(body.messages),
+            max_tokens=body.max_tokens,
+            temperature=body.temperature,
+            domain_key=domain_key,
+            explicit_gateway_profile_id=explicit_gateway_profile_id,
+        )
 
         request_id = stream_result.request_id
         chat_id = f"chatcmpl-{request_id}"
@@ -201,21 +206,18 @@ async def chat_completions(
             headers={REQUEST_ID_HEADER: request_id},
         )
 
-    try:
-        result = await run_chat_completion(
-            sessionmaker=sessionmaker,
-            provider=provider,
-            project=auth.project,
-            api_key=auth.api_key,
-            model=body.model,
-            messages=_to_chat_messages(body.messages),
-            max_tokens=body.max_tokens,
-            temperature=body.temperature,
-            domain_key=domain_key,
-            explicit_gateway_profile_id=explicit_gateway_profile_id,
-        )
-    except (GatewayClientError, GatewayLimitError, GatewayUpstreamError) as exc:
-        _raise_gateway_http(exc)
+    result = await run_chat_completion(
+        sessionmaker=sessionmaker,
+        provider=provider,
+        project=auth.project,
+        api_key=auth.api_key,
+        model=body.model,
+        messages=_to_chat_messages(body.messages),
+        max_tokens=body.max_tokens,
+        temperature=body.temperature,
+        domain_key=domain_key,
+        explicit_gateway_profile_id=explicit_gateway_profile_id,
+    )
 
     chat_result = result.result
     response.headers[REQUEST_ID_HEADER] = result.request_id

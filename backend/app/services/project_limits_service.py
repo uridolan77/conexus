@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.domain_enums import ProjectLimitMode
 from app.db.models import GatewayRequest, ProjectLimit
 
 
@@ -141,7 +142,7 @@ async def check_hard_limits(
     ``docs/strict-limit-reservations.md``.
     """
 
-    if limits.limit_mode != "hard":
+    if limits.limit_mode != ProjectLimitMode.HARD:
         return None
 
     day_start, day_end = _utc_day_bounds(now)

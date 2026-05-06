@@ -275,6 +275,22 @@ async def test_frontmatter_escapes_quotes_and_colons():
     assert 'why: "Because \\"reasons\\""' in cms
 
 
+def test_where_next_normalization_drops_non_string_kind_or_slug():
+    from agentor_runtime.workflows.ontogony_cms import _normalize_where_next
+
+    assert _normalize_where_next(
+        [
+            {"kind": "essay", "slug": "ok"},
+            {"kind": 1, "slug": "bad-kind"},
+            {"kind": "essay", "slug": 99},
+            {"kind": "concept", "slug": "fine", "title": "T"},
+        ]
+    ) == [
+        {"kind": "essay", "slug": "ok"},
+        {"kind": "concept", "slug": "fine", "title": "T"},
+    ]
+
+
 async def test_where_next_drops_entries_without_kind_and_slug():
     """Invalid whereNext rows must not appear in frontmatter."""
     conexus = MockConexusClient()

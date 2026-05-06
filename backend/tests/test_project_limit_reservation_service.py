@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.db import models
 from app.services.project_limit_reservation_service import (
     reconcile_gateway_request,
@@ -304,3 +305,73 @@ async def test_reserve_monthly_hard_allows_conexus_default_alias_when_priced(
                 now=now,
             )
             assert r.allowed and r.reservation_id
+
+
+@pytest.mark.asyncio
+async def test_reserve_ignores_gateway_request_rows_when_legacy_fallback_disabled(
+    db_sessionmaker,
+) -> None:
+    """With USE_LEGACY_HARD_LIMIT_GATEWAY_FALLBACKS=false, admission uses windows only."""
+    now = datetime(2026, 5, 6, 15, 30, tzinfo=timezone.utc)
+    async with db_sessionmaker() as session:
+        proj = models.Project(name="legacy-off")
+        session.add(proj)
+        await session.flush()
+        lim = models.ProjectLimit(
+            project_id=proj.id,
+            limit_mode="hard",
+            daily_request_limit=1,
+            daily_token_limit=None,
+            monthly_cost_limit=None,
+        )
+        session.add(lim)
+        session.add_all(
+            [
+                models.GatewayRequest(
+                    request_id="orphan-1",
+                    project_id=proj.id,
+                    requested_model="m",
+                    status="completed",
+                    total_tokens=1,
+                    estimated_cost=0.0,
+                    fallback_used=False,
+                    created_at=now,
+                    completed_at=now,
+                ),
+                models.GatewayRequest(
+                    request_id="orphan-2",
+                    project_id=proj.id,
+                    requested_model="m",
+                    status="completed",
+                    total_tokens=1,
+                    estimated_cost=0.0,
+                    fallback_used=False,
+                    created_at=now - timedelta(minutes=1),
+                    completed_at=now - timedelta(minutes=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    prev = settings.use_legacy_hard_limit_gateway_fallbacks
+    settings.use_legacy_hard_limit_gateway_fallbacks = False
+    try:
+        async with db_sessionmaker() as session:
+            async with session.begin():
+                lim2 = (
+                    await session.execute(
+                        select(models.ProjectLimit).where(models.ProjectLimit.project_id == proj.id)
+                    )
+                ).scalar_one()
+                r = await reserve_gateway_request(
+                    session,
+                    project_id=proj.id,
+                    limits=lim2,
+                    model="gpt-4o-mini",
+                    requested_max_tokens=100,
+                    estimated_prompt_tokens=None,
+                    now=now,
+                )
+                assert r.allowed and r.reservation_id
+    finally:
+        settings.use_legacy_hard_limit_gateway_fallbacks = prev

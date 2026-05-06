@@ -54,5 +54,7 @@ export function redactSensitiveString(value: string): string {
   return value
     .replace(/Bearer\s+[^\s"',)]+/gi, `Bearer ${REDACTED}`)
     .replace(/\b(sk-[A-Za-z0-9_-]{8,})/g, REDACTED)
-    .replace(/\b(cnx_[A-Za-z0-9_-]{8,})/g, REDACTED);
+    .replace(/\b(sk-ant-[A-Za-z0-9_-]{8,})/g, REDACTED)
+    .replace(/\b(cnx_[A-Za-z0-9_-]{8,})/g, REDACTED)
+    .replace(/\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,})/g, REDACTED);
 }

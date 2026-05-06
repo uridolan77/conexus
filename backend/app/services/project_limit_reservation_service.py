@@ -12,6 +12,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.domain_enums import ProjectLimitMode
 from app.db.models import (
     GatewayRequest,
     ProjectGatewayLimitReservation,
@@ -190,7 +192,7 @@ async def reserve_gateway_request(
     estimated_prompt_tokens: int | None,
     now: datetime,
 ) -> LimitReservationResult:
-    if limits.limit_mode != "hard":
+    if limits.limit_mode != ProjectLimitMode.HARD:
         return LimitReservationResult(True, None, None)
 
     if now.tzinfo is None:
@@ -234,15 +236,20 @@ async def reserve_gateway_request(
         window_end=day_end,
     )
 
-    legacy_requests = await _legacy_daily_request_count(
-        session, project_id=project_id, day_start=day_start, day_end=day_end
-    )
-    legacy_tokens = await _legacy_daily_token_sum(
-        session, project_id=project_id, day_start=day_start, day_end=day_end
-    )
-    legacy_cost = await _legacy_monthly_cost_sum(
-        session, project_id=project_id, month_start=month_start, month_end=month_end
-    )
+    if settings.use_legacy_hard_limit_gateway_fallbacks:
+        legacy_requests = await _legacy_daily_request_count(
+            session, project_id=project_id, day_start=day_start, day_end=day_end
+        )
+        legacy_tokens = await _legacy_daily_token_sum(
+            session, project_id=project_id, day_start=day_start, day_end=day_end
+        )
+        legacy_cost = await _legacy_monthly_cost_sum(
+            session, project_id=project_id, month_start=month_start, month_end=month_end
+        )
+    else:
+        legacy_requests = 0
+        legacy_tokens = 0
+        legacy_cost = 0.0
 
     if limits.daily_request_limit is not None:
         if legacy_requests + daily.request_count_reserved >= limits.daily_request_limit:

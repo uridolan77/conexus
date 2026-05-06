@@ -17,6 +17,7 @@ from app.core.errors import (
     ServiceUnavailableError,
     ValidationError,
 )
+from app.services.gateway_service import GatewayClientError, GatewayLimitError, GatewayUpstreamError
 
 
 # ── base class behaviour ──────────────────────────────────────────────
@@ -99,6 +100,27 @@ def test_subclass_http_status_and_code(
     err = cls("test")
     assert err.http_status == expected_status
     assert err.code == expected_code
+
+
+def test_gateway_service_errors_inherit_conexus_domain_error() -> None:
+    assert issubclass(GatewayClientError, ConexusDomainError)
+    assert issubclass(GatewayLimitError, ConexusDomainError)
+    assert issubclass(GatewayUpstreamError, ConexusDomainError)
+    client = GatewayClientError("bad", code="bad_request", request_id="r1")
+    assert client.http_status == 400
+    assert client.code == "bad_request"
+    lim = GatewayLimitError(
+        "blocked",
+        code="daily",
+        request_id="r2",
+        limit_type="daily",
+        current_value=1.0,
+        limit_value=2.0,
+        window="d",
+        reset_at=None,
+    )
+    assert lim.http_status == 429
+    assert lim.limit_type == "daily"
 
 
 # ── default messages from docstring ──────────────────────────────────

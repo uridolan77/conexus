@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.domain_enums import LimitReservationRepairKind
 from app.db.models import GatewayRequest, ProjectGatewayLimitReservation, ProjectUsageWindow
 from app.services.project_limit_reservation_service import (
     reconcile_gateway_request,
@@ -25,11 +26,13 @@ def _as_utc_aware(dt: datetime) -> datetime:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
-REPAIR_KIND_NO_GATEWAY_REQUEST = "no_gateway_request"
-REPAIR_KIND_FAILED = "gateway_request_failed"
-REPAIR_KIND_COMPLETED_WITHOUT_RECONCILE = "gateway_request_completed_without_reconcile"
-REPAIR_KIND_STARTED_NOT_COMPLETED = "gateway_request_started_but_not_completed"
-REPAIR_KIND_UNKNOWN = "unknown"
+REPAIR_KIND_NO_GATEWAY_REQUEST = LimitReservationRepairKind.NO_GATEWAY_REQUEST.value
+REPAIR_KIND_FAILED = LimitReservationRepairKind.GATEWAY_REQUEST_FAILED.value
+REPAIR_KIND_COMPLETED_WITHOUT_RECONCILE = (
+    LimitReservationRepairKind.COMPLETED_WITHOUT_RECONCILE.value
+)
+REPAIR_KIND_STARTED_NOT_COMPLETED = LimitReservationRepairKind.STARTED_NOT_COMPLETED.value
+REPAIR_KIND_UNKNOWN = LimitReservationRepairKind.UNKNOWN.value
 
 ACTION_RELEASE = "release"
 ACTION_RECONCILE_FROM_REQUEST = "reconcile_from_request"

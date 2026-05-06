@@ -11,11 +11,18 @@ class LoginAttemptKey:
     client_ip: str | None
 
 
+_MAX_TRACKED_LOGIN_KEYS = 5000
+
+
 class AdminLoginRateLimiter:
     def __init__(self, *, max_failures: int, window_seconds: int) -> None:
         self._max_failures = max_failures
         self._window_seconds = window_seconds
         self._failures: dict[LoginAttemptKey, deque[float]] = {}
+
+    def _evict_if_over_cap(self) -> None:
+        while len(self._failures) >= _MAX_TRACKED_LOGIN_KEYS:
+            self._failures.pop(next(iter(self._failures)))
 
     def _prune(self, now: float, q: deque[float]) -> None:
         cutoff = now - self._window_seconds
@@ -38,6 +45,8 @@ class AdminLoginRateLimiter:
         now_ts = time.time() if now is None else now
         key = self._key(username=username, client_ip=client_ip)
         q = self._failures.get(key)
+        if q is None and len(self._failures) >= _MAX_TRACKED_LOGIN_KEYS:
+            self._evict_if_over_cap()
         if q is None:
             q = deque()
             self._failures[key] = q

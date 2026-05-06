@@ -1,15 +1,14 @@
 """LLM pricing — single source of truth for per-model token costs.
 
-Copied from ``KGB/backend/app/llm/pricing.py`` with one change: the bundled
-default file path now points at ``backend/app/static_config/pricing.yaml``
-inside the Conexus repo. Behaviour is otherwise identical:
+Copied from ``KGB/backend/app/llm/pricing.py`` with Conexus packaging changes:
 
-- YAML config is loaded lazily on first ``get_cost`` call.
-- ``PRICING_CONFIG_PATH`` env var overrides the bundled default file.
-- ``PRICING_OVERRIDES_JSON`` env var injects per-model overrides
-  (useful in tests).
+- Default ``pricing.yaml`` is loaded from the installed ``app.static_config``
+  package via ``importlib.resources`` (works when the backend is installed as a
+  wheel).
+- ``PRICING_CONFIG_PATH`` env var still overrides the bundled default file.
+- ``PRICING_OVERRIDES_JSON`` env var injects per-model overrides (useful in tests).
 - Unknown models fall back to Sonnet 4 rates so estimates are conservative
-  rather than zero.
+  rather than zero; the first use of each unknown model name logs a warning.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from importlib import resources
 from pathlib import Path
 
 import yaml
@@ -25,21 +25,33 @@ from app.llm.model_alias_config import ModelAliasConfig, resolve_pricing_model_c
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PRICING_PATH = (
-    Path(__file__).resolve().parent.parent / "static_config" / "pricing.yaml"
-)
-
 _pricing_cache: dict[str, tuple[float, float]] = {}
 _pricing_loaded: bool = False
+_unknown_model_warned: set[str] = set()
+
+
+def _open_default_pricing_file():
+    return resources.files("app").joinpath("static_config", "pricing.yaml").open(
+        "r", encoding="utf-8"
+    )
 
 
 def _load_pricing(path: Path | None = None) -> dict[str, tuple[float, float]]:
-    config_path = path
-    if config_path is None:
+    path_label: str
+    if path is None:
         env_path = os.environ.get("PRICING_CONFIG_PATH", "").strip()
-        config_path = Path(env_path) if env_path else _DEFAULT_PRICING_PATH
+        if env_path:
+            config_path = Path(env_path)
+            path_label = str(config_path)
+            fh = config_path.open(encoding="utf-8")
+        else:
+            path_label = "app.static_config/pricing.yaml"
+            fh = _open_default_pricing_file()
+    else:
+        path_label = str(path)
+        fh = path.open(encoding="utf-8")
 
-    with config_path.open() as fh:
+    with fh:
         raw: dict[str, dict[str, dict[str, float]]] = yaml.safe_load(fh) or {}
 
     table: dict[str, tuple[float, float]] = {}
@@ -53,15 +65,16 @@ def _load_pricing(path: Path | None = None) -> dict[str, tuple[float, float]]:
         for model_name, prices in overrides.items():
             table[model_name] = (float(prices["input"]), float(prices["output"]))
 
-    logger.info("pricing_loaded path=%s models=%d", config_path, len(table))
+    logger.info("pricing_loaded path=%s models=%d", path_label, len(table))
     return table
 
 
 def reload_pricing(path: Path | None = None) -> None:
     """Force a reload of the pricing config from disk."""
-    global _pricing_cache, _pricing_loaded
+    global _pricing_cache, _pricing_loaded, _unknown_model_warned
     _pricing_cache = _load_pricing(path)
     _pricing_loaded = True
+    _unknown_model_warned = set()
 
 
 def _ensure_loaded() -> None:
@@ -77,6 +90,12 @@ _FALLBACK_OUTPUT_PER_1M = 15.0
 def get_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Return the USD cost for *model* given the token counts."""
     _ensure_loaded()
+    if model not in _pricing_cache and model not in _unknown_model_warned:
+        _unknown_model_warned.add(model)
+        logger.warning(
+            "pricing_unknown_model_using_fallback_rates model=%s",
+            model,
+        )
     inp_price, out_price = _pricing_cache.get(
         model, (_FALLBACK_INPUT_PER_1M, _FALLBACK_OUTPUT_PER_1M)
     )
