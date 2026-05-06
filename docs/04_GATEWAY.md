@@ -48,25 +48,28 @@ For M6 (add Anthropic/fallback), also extract:
 
 ## Provider behavior timeline
 
-### M2-M5: OpenAI only
+### M2-M5: OpenAI primary, optional fallback
 
-The gateway routes all requests through OpenAI:
+The gateway routes requests primarily through OpenAI:
 
 ```text
 conexus-fast → configured OpenAI model
 ```
 
-### M6: Add Anthropic and fallback (later milestone)
+**Note on fallback:** The codebase includes fallback support (Anthropic secondary, OpenAI fallback), but this capability is not actively configured or hardened in M2-M5. Focus is on OpenAI stability. Fallback hardening and optimization are planned for M6.
+
+### M6: Harden Anthropic/fallback behavior (later milestone)
 
 In a future milestone, add:
 
 ```text
-primary provider fails with retryable error
-→ fallback provider handles request
-→ request log records fallback_used = true
+primary provider configuration and monitoring
+fallback policy refinement and testing
+request log recording of fallback_used
+automatic fallback recovery patterns
 ```
 
-**Note:** Fallback (automatic retry with a different provider) is out of scope for v0. See `docs/product/conexus-v0-scope.md` for details.
+**Note:** Fallback is present in the codebase but inactive by default. See `docs/product/conexus-v0-scope.md` for details. Do **not** refactor fallback logic unless explicitly asked; preserve existing behavior.
 
 ## Request log fields
 

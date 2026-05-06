@@ -47,8 +47,8 @@ The following files/folders are the **authoritative sources** for all agent-assi
 - **`.windsurf/workflows/`** — Windsurf workflow templates
 - **`.continue/rules/`** — Continue extension rules
 - **`.aider.conf.yml`** — Aider configuration
-- **`.claude/settings.json`** — Claude configuration
-- **`.claude/hooks/`** — Claude execution hooks
+- **`.claude/settings.json`** (optional) — Claude configuration
+- **`.claude/hooks/`** (optional) — Claude execution hooks (guard_tool_use, post_edit_advisor)
 
 ### Installation & Validation
 

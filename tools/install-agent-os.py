@@ -21,6 +21,7 @@ from pathlib import Path
 # Files to install (governance layer only, not runtime code)
 INSTALL_FILES = [
     'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CONVENTIONS.md', 'QUICKSTART.md',
+    '.agent-os/profile.yml',
     '.github/copilot-instructions.md',
     '.aider.conf.yml',
     '.cursor/rules/000-project-rules.mdc',
