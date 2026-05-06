@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useUrlFilters } from "@/hooks/useUrlFilters";
 import {
   Badge,
   Button,
@@ -41,11 +42,42 @@ import {
 import { redactSensitiveObject } from "@/lib/redaction";
 import type { ProjectRow, RequestDetail, RequestListResponse, RequestRow } from "@/lib/types";
 
+const REQUEST_FILTER_KEYS = [
+  "limit",
+  "request_id",
+  "status",
+  "project_id",
+  "api_key_id",
+  "provider",
+  "requested_model",
+  "model",
+  "model_search",
+  "fallback_used",
+  "error_code",
+  "created_from",
+  "created_to",
+  "completed_from",
+  "completed_to",
+  "min_latency_ms",
+  "max_latency_ms",
+  "min_total_tokens",
+  "max_total_tokens",
+  "min_estimated_cost",
+  "max_estimated_cost",
+  "sort_by",
+  "sort_dir",
+] as const satisfies readonly (keyof Filters)[];
+
 function empty(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "-" : value;
 }
 
 export default function RequestsPage() {
+  const { parseFromSearch, replaceUrl } = useUrlFilters<Filters>({
+    pathname: "/requests",
+    defaults: defaultFilters,
+    keys: REQUEST_FILTER_KEYS,
+  });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [response, setResponse] = useState<RequestListResponse | null>(null);
@@ -104,11 +136,8 @@ export default function RequestsPage() {
       }
       setResponse(result.data as RequestListResponse);
       setOffset(nextOffset);
-
-      const visibleParams = requestFiltersToQuery(nextFilters, nextOffset);
-      visibleParams.delete("offset");
-      const query = visibleParams.toString();
-      window.history.replaceState(null, "", query ? `/requests?${query}` : "/requests");
+      // Shareable filter state is stored in the URL (offset is intentionally excluded).
+      replaceUrl({ ...nextFilters, limit: String(limit) });
     } finally {
       setLoading(false);
     }
@@ -133,7 +162,8 @@ export default function RequestsPage() {
   }
 
   useEffect(() => {
-    const initialFilters = requestFiltersFromLocation();
+    const initialFilters =
+      typeof window === "undefined" ? defaultFilters : parseFromSearch(window.location.search);
     setFilters(initialFilters);
     setSelectedRequestId(initialFilters.request_id);
     void loadProjects();
@@ -141,6 +171,7 @@ export default function RequestsPage() {
     if (initialFilters.request_id) {
       void loadDetail(initialFilters.request_id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function applyFilters(event: FormEvent) {
@@ -170,9 +201,7 @@ export default function RequestsPage() {
     setFilters(nextFilters);
     setSelectedRequestId(row.request_id);
     void loadDetail(row.request_id);
-    const params = requestFiltersToQuery(nextFilters, offset);
-    params.delete("offset");
-    window.history.replaceState(null, "", `/requests?${params.toString()}`);
+    replaceUrl(nextFilters);
   }
 
   function closeDetail() {
@@ -182,10 +211,7 @@ export default function RequestsPage() {
     // Preserve current filters but clear request_id from URL for shareable state.
     const nextFilters = { ...filters, request_id: "" };
     setFilters(nextFilters);
-    const params = requestFiltersToQuery(nextFilters, offset);
-    params.delete("offset");
-    const q = params.toString();
-    window.history.replaceState(null, "", q ? `/requests?${q}` : "/requests");
+    replaceUrl(nextFilters);
   }
 
   const items = response?.items ?? [];

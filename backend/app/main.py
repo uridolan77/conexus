@@ -74,8 +74,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.app_env.lower() == "prod":
         logger.warning("prod_startup use_alembic_migrations=true")
         if settings.effective_allow_create_all:
-            logger.warning(
-                "prod_startup_schema_notice create_all_enabled=true create_all_is_not_migrations=true"
+            raise RuntimeError(
+                "unsafe production config: ALLOW_CREATE_ALL=true "
+                "(create_all is not migrations; run `alembic upgrade head` and set ALLOW_CREATE_ALL=false)"
             )
         else:
             logger.warning(

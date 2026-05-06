@@ -16,6 +16,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -127,63 +129,87 @@ async def register_adapter_profile(
             status=existing.status,
         )
 
-    row = GatewayAdapterProfile(
-        gateway_profile_id=_new_gateway_profile_id(),
-        adapter_profile_id=adapter_profile_id,
-        domain_key=domain_key,
-        profile_version=body.profileVersion,
-        status=GatewayAdapterProfileStatus.REGISTERED,
-        source_run_id=body.runId,
-        source_plan_id=body.planId,
-        composite_score=body.compositeScore,
-        evidence_hash=body.evidenceHash,
-        semantic_context_hash=body.semanticContextHash,
-        slod_model_version=body.slodModelVersion,
-        metadata_json=None if body.metadata is None else json.dumps(body.metadata, separators=(",", ":"), sort_keys=True),
-        created_at=_utcnow(),
-        updated_at=_utcnow(),
-        published_at=None,
-    )
-    session.add(row)
-    try:
-        await session.flush()
-    except BaseException as exc:
-        if not isinstance(exc, IntegrityError):
-            raise
-        # Race: another request inserted the same adapter_profile_id concurrently.
-        await session.rollback()
-        existing = None
-        # The winning transaction may not be committed yet; retry briefly.
-        for _ in range(100):
-            existing = await session.scalar(
-                select(GatewayAdapterProfile).where(
-                    GatewayAdapterProfile.adapter_profile_id == adapter_profile_id
-                )
-            )
-            if existing is not None:
-                break
-            import asyncio
+    now = _utcnow()
+    gwid = _new_gateway_profile_id()
+    values: dict[str, Any] = {
+        "gateway_profile_id": gwid,
+        "adapter_profile_id": adapter_profile_id,
+        "domain_key": domain_key,
+        "profile_version": body.profileVersion,
+        "status": GatewayAdapterProfileStatus.REGISTERED,
+        "source_run_id": body.runId,
+        "source_plan_id": body.planId,
+        "composite_score": body.compositeScore,
+        "evidence_hash": body.evidenceHash,
+        "semantic_context_hash": body.semanticContextHash,
+        "slod_model_version": body.slodModelVersion,
+        "metadata_json": None
+        if body.metadata is None
+        else json.dumps(body.metadata, separators=(",", ":"), sort_keys=True),
+        "created_at": now,
+        "updated_at": now,
+        "published_at": None,
+    }
 
-            await asyncio.sleep(0.01)
-        if existing is None:
-            raise
-        return RegisterAdapterProfileResponse(
-            gatewayProfileId=existing.gateway_profile_id,
-            status=existing.status,
+    inserted = False
+    dialect = session.bind.dialect.name if session.bind is not None else ""
+    try:
+        if dialect == "postgresql":
+            stmt = (
+                pg_insert(GatewayAdapterProfile)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[GatewayAdapterProfile.adapter_profile_id]
+                )
+                .returning(GatewayAdapterProfile.gateway_profile_id)
+            )
+            inserted = (await session.execute(stmt)).first() is not None
+        elif dialect == "sqlite":
+            stmt = (
+                sqlite_insert(GatewayAdapterProfile)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["adapter_profile_id"])
+            )
+            result = await session.execute(stmt)
+            inserted = bool(result.rowcount)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"unsupported database dialect for adapter profile registry: {dialect or 'unknown'}",
+            )
+    except IntegrityError:
+        # Should be rare with ON CONFLICT, but if it happens: read existing row.
+        await session.rollback()
+        inserted = False
+
+    row = await session.scalar(
+        select(GatewayAdapterProfile).where(
+            GatewayAdapterProfile.adapter_profile_id == adapter_profile_id
         )
-    await log_admin_action(
-        session,
-        actor=None,
-        action="gateway.adapter_profile.registered",
-        resource_type="gateway_adapter_profile",
-        resource_id=row.gateway_profile_id,
-        metadata={
-            "adapter_profile_id": adapter_profile_id,
-            "domain_key": domain_key,
-            "internal_actor": internal_actor,
-        },
     )
-    return RegisterAdapterProfileResponse(gatewayProfileId=row.gateway_profile_id, status=row.status)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="adapter profile registration not visible yet; retry",
+        )
+
+    if inserted:
+        await log_admin_action(
+            session,
+            actor=None,
+            action="gateway.adapter_profile.registered",
+            resource_type="gateway_adapter_profile",
+            resource_id=row.gateway_profile_id,
+            metadata={
+                "adapter_profile_id": adapter_profile_id,
+                "domain_key": domain_key,
+                "internal_actor": internal_actor,
+            },
+        )
+    return RegisterAdapterProfileResponse(
+        gatewayProfileId=row.gateway_profile_id,
+        status=row.status,
+    )
 
 
 class ActivateCanaryBody(BaseModel):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -29,11 +30,27 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
+        url = make_url(settings.database_url)
+        is_sqlite = url.get_backend_name() == "sqlite"
+
+        engine_kwargs: dict[str, object] = {
+            "echo": False,
+            "pool_pre_ping": True,
+            "future": True,
+        }
+        # SQLite test engines may not accept queue-pool sizing options. Apply
+        # pool config only where it is expected to work (e.g. Postgres).
+        if not is_sqlite:
+            if settings.db_pool_size is not None:
+                engine_kwargs["pool_size"] = settings.db_pool_size
+            if settings.db_max_overflow is not None:
+                engine_kwargs["max_overflow"] = settings.db_max_overflow
+            if settings.db_pool_timeout is not None:
+                engine_kwargs["pool_timeout"] = settings.db_pool_timeout
+
         _engine = create_async_engine(
             settings.database_url,
-            echo=False,
-            pool_pre_ping=True,
-            future=True,
+            **engine_kwargs,
         )
     return _engine
 

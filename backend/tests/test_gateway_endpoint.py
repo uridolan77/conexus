@@ -827,6 +827,7 @@ async def test_chat_completions_stream_true_logs_failure_on_mid_stream_error(
     assert "data: [DONE]" in payload
     assert "\"error\"" in payload
     assert "Stream interrupted." in payload
+    assert request_id in payload
 
     async with db_sessionmaker() as session:
         log = (
@@ -877,7 +878,9 @@ async def test_stream_failure_after_partial_output_emits_safe_sse_error_and_logs
     assert "hello" in payload
     # A safe error object is delivered (not the raw provider exception).
     assert "\"error\"" in payload
-    assert "Stream interrupted." in payload
+    assert "\"type\": \"upstream_error\"" in payload
+    assert "upstream broke" in payload
+    assert request_id in payload
     assert "data: [DONE]" in payload
 
     async with db_sessionmaker() as session:
