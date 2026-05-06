@@ -1,0 +1,20 @@
+---
+description: SPDD implementation workflow
+globs:
+  - "**/*"
+alwaysApply: false
+---
+
+# SPDD Implementation Workflow
+
+For feature work, extract REASONS before editing:
+
+- Requirements
+- Evidence
+- Architecture
+- Scope
+- Operations
+- Naming
+- Safety
+
+Then implement the smallest vertical slice and validate.

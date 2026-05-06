@@ -1,0 +1,14 @@
+---
+description: Canonical project rules for Cursor Agent
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Cursor Project Rules
+
+Read `AGENTS.md` first. Treat it as the canonical instruction file.
+
+Then read `.agent-os/profile.yml`.
+
+Use the SPDD flow: orient, frame, plan, implement, validate, review, summarize.
