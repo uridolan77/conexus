@@ -26,11 +26,10 @@ DB connection works
 Deliver:
 
 ```text
-provider interface
-OpenAI adapter
-Anthropic adapter
-pricing helper
-provider factory
+provider interface (abstract contract)
+OpenAI adapter (only)
+fake provider (for unit tests)
+provider factory/router
 unit tests copied/refactored from KGB behavior
 ```
 
@@ -38,9 +37,9 @@ Acceptance:
 
 ```text
 mocked OpenAI call works
-mocked Anthropic call works
-fallback test works
-cost calculation works
+fake provider call works
+provider factory resolves by name
+unit test suite passes
 ```
 
 ## M2 — First real gateway call

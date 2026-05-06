@@ -2,6 +2,33 @@
 
 Build Conexus as a small deployed product, not a large speculative platform.
 
+## Canonical package
+
+The Conexus agent-os package is installed at the **repository root**. This is the canonical source of truth for all agent-assisted work.
+
+Read these first before non-trivial implementation work:
+
+```text
+AGENTS.md
+.agent-os/profile.yml
+docs/product/conexus-v0-scope.md
+docs/architecture/architecture-principles.md
+docs/specs/provider-abstraction.md
+docs/specs/reasons-canvas.md
+docs/ai/SPDD_WORKFLOW.md
+docs/ai/OPERATING_MODES.md
+```
+
+Note: `docs/spdd-agent-os-starter/` is a reusable template package, not the active source of truth.
+
+Treat the package docs as the source of truth for:
+
+- Conexus scope boundaries
+- provider abstraction rules
+- REASONS/SPDD workflow
+- agent operating modes
+- protected docs and guardrails
+
 ## Current priority
 
 Create a standalone Conexus repo by extracting the useful LLM gateway code from KGB.
@@ -13,6 +40,7 @@ Create a standalone Conexus repo by extracting the useful LLM gateway code from 
 - Keep each milestone deployable.
 - Keep docs short and current.
 - Make the BO useful early.
+- Keep provider SDK details behind Conexus adapters.
 
 ## First successful checkpoint
 
