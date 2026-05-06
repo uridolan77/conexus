@@ -16,19 +16,27 @@ source_of_truth:
 validation:
   install:
     - "python -m pip install -e ./backend[dev]"
-    - "python -m pip install -e ./agentor[dev]"
     - "npm --prefix frontend install"
   lint:
-    - "python -m ruff check backend agentor"
+    - "python -m ruff check backend"
     - "npm --prefix frontend run lint"
   typecheck:
     - "python -m mypy backend/app"
   test:
     - "python -m pytest backend/tests"
-    - "python -m pytest agentor/tests"
     - "npm --prefix frontend run test"
   build:
     - "npm --prefix frontend run build"
+
+# Optional: Agentor validation (only if developing Agentor adapters)
+# Note: Conexus does not depend on Agentor; see docs/architecture/architecture-principles.md
+optional_agentor_validation:
+  install:
+    - "python -m pip install -e ./agentor[dev]"
+  lint:
+    - "python -m ruff check agentor"
+  test:
+    - "python -m pytest agentor/tests"
 
 protected_paths:
   - ".env"

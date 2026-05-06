@@ -35,23 +35,30 @@ return response
 
 ## KGB code to reuse
 
-Use KGB’s router logic as the source:
+For M1 (extract core), extract from KGB's router logic:
 
-- `ConexusRouter` for failover behavior
-- `OpenAIRouter` for OpenAI request/usage mapping
-- `LLMRouter` for Anthropic request/usage mapping
-- `pricing.py` for token cost calculation
 - `BaseLLMRouter` for interface shape
+- `OpenAIRouter` for OpenAI request/usage mapping
+- `pricing.py` for token cost calculation (basic, v0-scoped only)
 
-## V1 provider behavior
+For M6 (add Anthropic/fallback), also extract:
 
-Start with OpenAI only:
+- `ConexusRouter` for failover/fallback behavior
+- `LLMRouter` for Anthropic request/usage mapping
+
+## Provider behavior timeline
+
+### M2-M5: OpenAI only
+
+The gateway routes all requests through OpenAI:
 
 ```text
 conexus-fast → configured OpenAI model
 ```
 
-Then add Anthropic and fallback:
+### M6: Add Anthropic and fallback (later milestone)
+
+In a future milestone, add:
 
 ```text
 primary provider fails with retryable error
@@ -59,15 +66,17 @@ primary provider fails with retryable error
 → request log records fallback_used = true
 ```
 
+**Note:** Fallback (automatic retry with a different provider) is out of scope for v0. See `docs/product/conexus-v0-scope.md` for details.
+
 ## Request log fields
 
-Capture:
+Fields to capture in v0 (OpenAI only):
 
 ```text
 request_id
 project_id
 api_key_id
-provider_id
+provider
 model
 status
 latency_ms
@@ -77,10 +86,11 @@ total_tokens
 estimated_cost
 error_code
 error_message
-fallback_used
 created_at
 completed_at
 ```
+
+**Note:** The `fallback_used` field will be added in M6 when fallback is implemented.
 
 ## Response compatibility
 
@@ -92,3 +102,18 @@ api_key
 ```
 
 Full OpenAI compatibility can come later.
+
+## Out of Scope for v0
+
+**Streaming:** The endpoint returns a complete response in one call. Server-sent events (SSE) / streaming responses are out of v0 scope. See `docs/product/conexus-v0-scope.md` for details.
+
+Other out-of-scope features:
+- Tool/function calling
+- Response format / structured output
+- Logprobs
+- Multiple completions (n > 1)
+- Vision / image inputs
+- Fallback / failover
+- Request batching
+
+These can be added in later milestones once the core gateway is stable.
