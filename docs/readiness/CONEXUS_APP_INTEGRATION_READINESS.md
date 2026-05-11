@@ -45,13 +45,21 @@ This is what other apps should target **today**.
 | --- | --- |
 | **Base URL** | Deployed Conexus API origin (e.g. `https://api.example.com` or `http://localhost:8000` locally). |
 | **Auth** | `Authorization: Bearer <project_api_key>` for `POST /v1/chat/completions`. |
-| **Optional headers** | `X-Conexus-Domain-Key`, `X-Conexus-Gateway-Profile-Id` (or legacy `X-Conexus-Adapter-Profile-Id`) for adapter-profile routing context. Optional **`X-Conexus-Request-Id`**: when sent and valid (`1–64` chars from `[A-Za-z0-9_-]`), Conexus uses it as the gateway `request_id` (must be unique per new request); when omitted, Conexus generates a UUID-like id. |
+| **Optional headers** | `X-Conexus-Domain-Key`, `X-Conexus-Gateway-Profile-Id` (or legacy `X-Conexus-Adapter-Profile-Id`) for adapter-profile routing context. Optional **`X-Conexus-Request-Id`**: correlation only (see below); when sent and valid (`1–64` chars from `[A-Za-z0-9_-]`), Conexus uses it as the gateway `request_id` (must be unique per **new** call); when omitted, Conexus generates an id. |
 | **Chat request body** | OpenAI-compatible subset: `model`, `messages[]` with `role` in `system|user|assistant`, `content`, optional `max_tokens`, `temperature`, `stream`, plus ignored/extra fields per `ChatCompletionsRequest` schema. |
 | **Chat response body (JSON)** | `id`, `object`=`chat.completion`, `created` (unix int), `model`, `provider`, `fallback_used`, **`request_id`** (same as `X-Conexus-Request-Id`), `choices[]`, `usage` with `prompt_tokens`, `completion_tokens`, `total_tokens`. |
 | **Correlation** | Response header **`X-Conexus-Request-Id`**; JSON **`request_id`**; `id` uses `chatcmpl-{request_id}`. Callers may supply their own id via the request header when it is unique. |
-| **Errors** | Often `{"detail": {"code", "message", "request_id", ...}}` for gateway domain errors; reused caller `X-Conexus-Request-Id` returns **409** `request_id_conflict`. `POST /v1/chat/completions` **422** responses include `X-Conexus-Request-Id` (generated) when body validation fails. |
+| **Errors** | Often `{"detail": {"code", "message", "request_id", ...}}` for gateway domain errors. **409** `request_id_conflict` applies only when the **caller** supplied `X-Conexus-Request-Id` and it collides with an existing gateway row; server-generated ids are not remapped to 409. `POST /v1/chat/completions` **422** includes `X-Conexus-Request-Id` (generated) but not a normalized error body. |
 | **Model alias behavior** | Request `model` may be a configured alias key (see `model_aliases.yaml`) or a concrete provider model id with known prefixes. |
 | **Timeouts / retries** | Clients should use conservative HTTP timeouts and **retry only on idempotent reads** or application-level idempotency keys (not yet first-class on gateway). Streaming retries are inherently lossy. |
+
+### Correlation vs idempotency
+
+`X-Conexus-Request-Id` (and JSON `request_id`) are **correlation** identifiers for BO/logs and cross-service tracing — **not** idempotency keys. Use a **fresh** value for each new LLM call. Reusing a previous id for a new request yields **409** `request_id_conflict`. After an ambiguous timeout, either use a **new** Conexus request id on retry or explicitly document that your app interprets 409 as “possibly already accepted.” True idempotent replay would need a dedicated mechanism (e.g. future `Idempotency-Key`); it is **not** this header.
+
+### FastAPI `422` on chat
+
+For invalid JSON bodies, the response body remains FastAPI’s usual `{"detail": [...]}` list shape; a single normalized gateway error object is **not** guaranteed. For correlation on `POST /v1/chat/completions` **422** responses, rely on the **`X-Conexus-Request-Id`** header (Conexus generates one).
 
 ## Gap Analysis
 
@@ -87,7 +95,7 @@ This is what other apps should target **today**.
 | Streaming | **Yes**, SSE; client must parse stream; usage may be missing on some streams. |
 | Tool calls | **No** — rejected with `tool_calls_not_supported`. |
 | Embeddings | **No**. |
-| Retries | **Client responsibility** — no idempotency key in API. |
+| Retries | **Client responsibility** — use a new `X-Conexus-Request-Id` per attempt unless you explicitly handle 409; no `Idempotency-Key` on gateway yet. |
 
 **Verdict:** **Usable with wrapper** for text chat agents that do not require tools or embeddings and that can tolerate correlation via `X-Conexus-Request-Id` instead of a trace document API.
 

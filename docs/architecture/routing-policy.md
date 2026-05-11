@@ -27,3 +27,9 @@ It is useful for planning and diffing against future gateway features, but **the
 ## Determinism (target)
 
 Given the same request, same static alias configuration, and the same provider availability, routing should be explainable and repeatable. Today, “explainability” is primarily via logs and BO request rows rather than a `POST /v1/route` preview endpoint.
+
+## Adapter canary bucketing and `request_id`
+
+When adapter canary routing is enabled, the gateway hashes `project_id`, `api_key_id`, and the **gateway `request_id`** (the same value as `X-Conexus-Request-Id` when the caller supplies one, otherwise the server-generated id) to pick a canary bucket.
+
+**Integration note:** `X-Conexus-Request-Id` is a **correlation** handle for logs and BO, not an idempotency key (see OpenAPI and readiness docs). Callers should send a **fresh** value per new LLM attempt. Do not treat caller-chosen ids as a stable or intentional traffic-splitting control for canary semantics; if canary behavior must be independent of client-supplied correlation ids, that requires a deliberate product change to bucketing inputs.

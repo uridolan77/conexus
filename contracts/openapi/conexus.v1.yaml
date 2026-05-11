@@ -112,9 +112,14 @@ paths:
             maxLength: 64
             pattern: "^[a-zA-Z0-9_-]{1,64}$"
           description: |
-            Optional caller correlation id. When present and valid, Conexus stores it as the
-            gateway ``request_id`` (must be unique per new request). When omitted, Conexus generates one.
-            Echoed on every response in this header and, for non-streaming JSON, in ``request_id``.
+            **Correlation identifier, not an idempotency key.** Optional caller-owned id for logs and BO lookup.
+            When present and valid, Conexus stores it as the gateway ``request_id`` (must be **unique for each new LLM call**).
+            When omitted, Conexus generates one. Echoed on every response in this header and, for non-streaming JSON, in ``request_id``.
+
+            Reusing a value from a **previous completed or in-flight** request for a **new** call returns **409** ``request_id_conflict``.
+            Do **not** reuse the same value across retries unless the caller treats 409 as “possibly already accepted.”
+            For normal retries after an unknown outcome, generate a **new** ``X-Conexus-Request-Id`` and keep a separate stable app-level
+            operation id (e.g. workflow/run id). True idempotent replay semantics would require a dedicated header such as ``Idempotency-Key`` (not implemented).
       requestBody:
         required: true
         content:
@@ -150,7 +155,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/HttpErrorWrapper"
         "422":
-          description: Request body failed FastAPI/Pydantic validation
+          description: |
+            Request body failed FastAPI/Pydantic validation. The JSON body keeps FastAPI's usual ``{"detail": [...]}`` shape;
+            a normalized gateway error envelope is **not** guaranteed for this path. For correlation, use the ``X-Conexus-Request-Id`` response header (generated for this route).
           headers:
             X-Conexus-Request-Id:
               description: Present for POST /v1/chat/completions only; generated when body validation fails.
@@ -182,7 +189,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/HttpErrorWrapper"
         "409":
-          description: Reused X-Conexus-Request-Id for a new gateway request (unique constraint)
+          description: |
+            Client supplied ``X-Conexus-Request-Id`` that is already stored on a gateway request row (correlation id reused for a **new** call).
+            **Not** used for server-generated id collisions (those are not mapped to this response).
           headers:
             X-Conexus-Request-Id:
               schema:

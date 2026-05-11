@@ -344,6 +344,9 @@ async def reserve_and_start_gateway_chat_request(
     """Reserve hard limits, insert ``started`` gateway row, or raise limit/client errors."""
     caller_supplied_request_id = preferred_request_id is not None
     request_id = preferred_request_id if caller_supplied_request_id else new_request_id()
+    # 409 request_id_conflict only when the *caller* supplied preferred_request_id. For
+    # server-generated ids, conflict_hint stays None so a freak unique violation is not
+    # misclassified as a client conflict.
     conflict_hint = request_id if caller_supplied_request_id else None
 
     try:
