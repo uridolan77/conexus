@@ -1,0 +1,676 @@
+openapi: 3.1.0
+info:
+  title: Conexus API
+  version: 1.0.0
+  description: |
+    Contract for the Conexus FastAPI gateway as implemented in this repository (v0 / v1 boundary).
+
+    **Implemented in code today:** health and readiness, OpenAI-compatible `POST /v1/chat/completions`,
+    and internal adapter-profile registry routes (when enabled).
+
+    **Not implemented on the public gateway:** `GET /v1/models`, `POST /v1/route`, `POST /v1/embeddings`,
+    `GET /v1/usage/{trace_id}`, `GET /v1/traces/{trace_id}`. Those appear in the work-package as forward
+    targets; see `docs/readiness/CONEXUS_APP_INTEGRATION_READINESS.md`.
+
+    **Identifiers:** successful gateway calls return `X-Conexus-Request-Id` and a response `id` of the form
+    `chatcmpl-{request_id}`. This is a per-request correlation id stored with gateway request logs; it is
+    not the same as a future first-class `trace_id` field in JSON bodies.
+
+    **Auth:** project-scoped gateway calls use `Authorization: Bearer <project_api_key>`. Internal
+    adapter routes use `X-Internal-Api-Key` (and optional `X-Internal-Actor`).
+  x-contract-source: merged-from-conexus-v1-contracts-work-package-2026-05-11
+  x-contract-notes:
+    - FastAPI auto-docs remain at /docs; this file is the portable contract for other apps.
+    - JSON Schemas under contracts/json-schema/ supplement components where noted.
+
+servers:
+  - url: http://localhost:8000
+    description: Local development (docker compose default)
+
+tags:
+  - name: Health
+  - name: Gateway
+  - name: InternalAdapterProfiles
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe (checks DB, encryption, model-alias config, prod internal key)
+      operationId: getReadyz
+      responses:
+        "200":
+          description: All readiness checks passed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: One or more checks failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyFailure"
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Alias for GET /readyz
+      operationId: getHealthReady
+      responses:
+        "200":
+          description: Same as /readyz
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Same as /readyz
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyFailure"
+
+  /v1/chat/completions:
+    post:
+      tags: [Gateway]
+      summary: OpenAI-compatible chat completion (minimal supported subset)
+      operationId: createChatCompletion
+      security:
+        - ProjectApiKey: []
+      parameters:
+        - name: X-Conexus-Domain-Key
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Optional domain key for adapter-profile routing context.
+        - name: X-Conexus-Gateway-Profile-Id
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Optional explicit gateway profile id (alias `X-Conexus-Adapter-Profile-Id`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionsRequest"
+      responses:
+        "200":
+          description: Non-streaming completion, or SSE when `stream=true`
+          headers:
+            X-Conexus-Request-Id:
+              description: Correlates with gateway request logs in the BO.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionsResponse"
+            text/event-stream:
+              schema:
+                type: string
+              description: |
+                OpenAI-style SSE (`data: {json}\\n\\n`, terminal `data: [DONE]`). Error payloads in-stream
+                use a documented `error` object shape (see gateway implementation).
+        "400":
+          description: Client / validation error from gateway domain
+          headers:
+            X-Conexus-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HttpErrorWrapper"
+        "422":
+          description: Request body failed FastAPI/Pydantic validation
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "429":
+          description: Project limits / rate-style gateway error
+          headers:
+            X-Conexus-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HttpErrorWrapper"
+        "502":
+          description: Upstream provider error surfaced by Conexus
+          headers:
+            X-Conexus-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HttpErrorWrapper"
+
+  /internal/adapter-profiles/register:
+    post:
+      tags: [InternalAdapterProfiles]
+      summary: Register an adapter profile (returns existing gateway id if already registered)
+      operationId: internalRegisterAdapterProfile
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/InternalActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterAdapterProfileBody"
+      responses:
+        "200":
+          description: Registered or idempotent hit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterAdapterProfileResponse"
+        "400":
+          description: Bad request
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: Registry feature disabled
+        "503":
+          description: Misconfigured registry / unsupported DB dialect
+
+  /internal/adapter-profiles/{gatewayProfileId}/activate-canary:
+    post:
+      tags: [InternalAdapterProfiles]
+      summary: Activate canary routing for a gateway profile
+      operationId: internalActivateCanary
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayProfileId"
+        - $ref: "#/components/parameters/InternalActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateCanaryBody"
+      responses:
+        "200":
+          description: Canary activation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationResponse"
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: Profile not found or feature disabled
+        "409":
+          description: Activation conflict for domain
+
+  /internal/adapter-profiles/{gatewayProfileId}/promote:
+    post:
+      tags: [InternalAdapterProfiles]
+      summary: Promote profile to active for its domain
+      operationId: internalPromoteAdapterProfile
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayProfileId"
+        - $ref: "#/components/parameters/InternalActor"
+      responses:
+        "200":
+          description: Promotion result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationResponse"
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: Profile not found or feature disabled
+
+  /internal/adapter-profiles/{gatewayProfileId}/rollback:
+    post:
+      tags: [InternalAdapterProfiles]
+      summary: Roll active profile back to previous for its domain
+      operationId: internalRollbackAdapterProfile
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayProfileId"
+        - $ref: "#/components/parameters/InternalActor"
+      responses:
+        "200":
+          description: Rollback result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivationResponse"
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: Active profile not found for rollback
+        "409":
+          description: No previous profile to roll back to
+
+  /internal/adapter-profiles/{gatewayProfileId}/observability:
+    get:
+      tags: [InternalAdapterProfiles]
+      summary: Aggregated observability window for a gateway profile
+      operationId: internalAdapterProfileObservability
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayProfileId"
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ISO-8601 window start (optional).
+        - name: until
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ISO-8601 window end (optional).
+      responses:
+        "200":
+          description: Window aggregates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservabilityResponse"
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: Profile not found, observability disabled, or feature disabled
+
+  /internal/domains/{domainKey}/active-profile:
+    get:
+      tags: [InternalAdapterProfiles]
+      summary: Resolve active gateway profile id for a domain
+      operationId: internalGetActiveProfileForDomain
+      security:
+        - InternalAdapterApiKey: []
+      parameters:
+        - name: domainKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Active profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveProfileResponse"
+        "401":
+          description: Invalid internal API key
+        "404":
+          description: No active profile or feature disabled
+
+components:
+  securitySchemes:
+    ProjectApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: Project API key
+    InternalAdapterApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Api-Key
+
+  parameters:
+    GatewayProfileId:
+      name: gatewayProfileId
+      in: path
+      required: true
+      schema:
+        type: string
+    InternalActor:
+      name: X-Internal-Actor
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional actor label for audit metadata.
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: conexus
+        version:
+          type: string
+
+    ReadyResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          example: ready
+        checks:
+          type: object
+          additionalProperties:
+            type: boolean
+
+    ReadyFailure:
+      type: object
+      description: |
+        In non-prod, `detail` may include `checks`. In prod, `detail` is typically `{ "status": "not_ready" }` only.
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+
+    ChatCompletionsRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Concrete provider model id or configured alias (see `backend/static_config/model_aliases.yaml`).
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        max_tokens:
+          type: integer
+          minimum: 1
+          maximum: 128000
+          default: 4096
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.2
+        stream:
+          type: boolean
+          default: false
+        top_p:
+          type: number
+          nullable: true
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          nullable: true
+        user:
+          type: string
+          nullable: true
+        response_format:
+          type: object
+          nullable: true
+          additionalProperties: true
+        seed:
+          type: integer
+          nullable: true
+        n:
+          type: integer
+          nullable: true
+        tools:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        tool_choice:
+          nullable: true
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: string
+        logprobs:
+          type: boolean
+          nullable: true
+        top_logprobs:
+          type: integer
+          nullable: true
+        presence_penalty:
+          type: number
+          nullable: true
+        frequency_penalty:
+          type: number
+          nullable: true
+
+    ChatChoice:
+      type: object
+      required: [index, message, finish_reason]
+      properties:
+        index:
+          type: integer
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+        finish_reason:
+          type: string
+
+    TokenUsageOpenAI:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
+    ChatCompletionsResponse:
+      type: object
+      required: [id, object, created, model, provider, fallback_used, choices, usage]
+      properties:
+        id:
+          type: string
+          example: chatcmpl-01ARANDOM
+        object:
+          type: string
+          const: chat.completion
+        created:
+          type: integer
+          format: int64
+          description: Unix epoch seconds (integer), not RFC3339 string.
+        model:
+          type: string
+        provider:
+          type: string
+        fallback_used:
+          type: boolean
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatChoice"
+        usage:
+          $ref: "#/components/schemas/TokenUsageOpenAI"
+
+    ConexusErrorDetail:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+        limit_type:
+          type: string
+          nullable: true
+        current_value:
+          type: integer
+          nullable: true
+        limit_value:
+          type: integer
+          nullable: true
+        window:
+          type: string
+          nullable: true
+        reset_at:
+          type: string
+          nullable: true
+
+    HttpErrorWrapper:
+      type: object
+      properties:
+        detail:
+          oneOf:
+            - $ref: "#/components/schemas/ConexusErrorDetail"
+            - type: string
+
+    RegisterAdapterProfileBody:
+      type: object
+      required: [adapterProfileId, domainKey]
+      properties:
+        adapterProfileId:
+          type: string
+        domainKey:
+          type: string
+        runId:
+          type: string
+          nullable: true
+        planId:
+          type: string
+          nullable: true
+        compositeScore:
+          type: number
+          nullable: true
+        evidenceHash:
+          type: string
+          nullable: true
+        semanticContextHash:
+          type: string
+          nullable: true
+        slodModelVersion:
+          type: string
+          nullable: true
+        profileVersion:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    RegisterAdapterProfileResponse:
+      type: object
+      required: [gatewayProfileId, status]
+      properties:
+        gatewayProfileId:
+          type: string
+        status:
+          type: string
+
+    ActivateCanaryBody:
+      type: object
+      required: [canaryPercent]
+      properties:
+        canaryPercent:
+          type: integer
+          minimum: 1
+          maximum: 50
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    ActivationResponse:
+      type: object
+      required: [domainKey, gatewayProfileId, status]
+      properties:
+        domainKey:
+          type: string
+        gatewayProfileId:
+          type: string
+        status:
+          type: string
+        canaryPercent:
+          type: integer
+          nullable: true
+        previousGatewayProfileId:
+          type: string
+          nullable: true
+
+    ObservabilityResponse:
+      type: object
+      required:
+        [gatewayProfileId, windowStart, windowEnd, requestCount, errorRate, latencyP95Ms, costPerAnswer]
+      properties:
+        gatewayProfileId:
+          type: string
+        windowStart:
+          type: string
+        windowEnd:
+          type: string
+        requestCount:
+          type: integer
+        errorRate:
+          type: number
+        latencyP95Ms:
+          type: integer
+          nullable: true
+        costPerAnswer:
+          type: number
+          nullable: true
+        citationFailureRate:
+          type: number
+          nullable: true
+        refusalRate:
+          type: number
+          nullable: true
+        userNegativeFeedbackRate:
+          type: number
+          nullable: true
+
+    ActiveProfileResponse:
+      type: object
+      required: [domainKey, gatewayProfileId, status]
+      properties:
+        domainKey:
+          type: string
+        gatewayProfileId:
+          type: string
+        status:
+          type: string

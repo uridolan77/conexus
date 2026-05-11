@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conexus.dev/schemas/trace-event.forward-looking.schema.json",
+  "title": "Conexus Trace Event (forward-looking public API shape)",
+  "description": "No GET /v1/traces/{trace_id} in Conexus v0. Gateway logs exist in Postgres and the BO; this schema is a possible future public envelope.",
+  "x-contract-status": "not-implemented",
+  "type": "object",
+  "required": ["trace_id", "started_at", "caller", "route", "events", "status"],
+  "properties": {
+    "trace_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "ended_at": { "type": ["string", "null"] },
+    "caller": { "type": "object", "additionalProperties": true },
+    "route": { "type": "object", "additionalProperties": true },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "name"],
+        "properties": {
+          "timestamp": { "type": "string" },
+          "name": { "type": "string" },
+          "data": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": false
+      }
+    },
+    "status": { "type": "string", "enum": ["succeeded", "failed", "partial"] }
+  },
+  "additionalProperties": true
+}

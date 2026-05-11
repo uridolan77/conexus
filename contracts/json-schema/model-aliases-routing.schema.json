@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conexus.dev/schemas/model-aliases-routing.v1.json",
+  "title": "Conexus model alias routing file (v0)",
+  "description": "JSON projection of backend/static_config/model_aliases.yaml consumed by app/llm/model_alias_config.py.",
+  "type": "object",
+  "required": ["default_primary_model", "default_fallback_model", "aliases"],
+  "properties": {
+    "default_primary_model": { "type": "string", "minLength": 1 },
+    "default_fallback_model": { "type": "string", "minLength": 1 },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["anthropic", "openai"],
+        "properties": {
+          "anthropic": { "type": "string", "minLength": 1 },
+          "openai": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

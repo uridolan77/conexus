@@ -1,0 +1,14 @@
+{
+  "default_primary_model": "claude-sonnet-4-20250514",
+  "default_fallback_model": "gpt-4o",
+  "aliases": {
+    "conexus-fast": {
+      "anthropic": "claude-haiku-4-5-20251001",
+      "openai": "gpt-4o-mini"
+    },
+    "conexus-default": {
+      "anthropic": "claude-sonnet-4-20250514",
+      "openai": "gpt-4o"
+    }
+  }
+}

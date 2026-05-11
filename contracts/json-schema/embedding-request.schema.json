@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conexus.dev/schemas/embedding-request.forward-looking.schema.json",
+  "title": "Conexus Embedding Request (forward-looking)",
+  "description": "No POST /v1/embeddings in Conexus v0. Retained from the work package for future alignment.",
+  "x-contract-status": "not-implemented",
+  "type": "object",
+  "required": ["input", "caller"],
+  "properties": {
+    "trace_id": { "type": ["string", "null"] },
+    "model_alias": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "input": {
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+    },
+    "dimensions": { "type": ["integer", "null"] },
+    "caller": {
+      "type": "object",
+      "required": ["system"],
+      "properties": {
+        "system": { "type": "string" },
+        "component": { "type": "string" },
+        "operation": { "type": "string" },
+        "user_id": { "type": ["string", "null"] },
+        "tenant_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": false
+}

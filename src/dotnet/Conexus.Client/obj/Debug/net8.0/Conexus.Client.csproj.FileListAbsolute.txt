@@ -1,0 +1,13 @@
+c:\dev\conexus\src\dotnet\Conexus.Client\bin\Debug\net8.0\Conexus.Client.deps.json
+c:\dev\conexus\src\dotnet\Conexus.Client\bin\Debug\net8.0\Conexus.Client.dll
+c:\dev\conexus\src\dotnet\Conexus.Client\bin\Debug\net8.0\Conexus.Client.pdb
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.csproj.AssemblyReference.cache
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.GeneratedMSBuildEditorConfig.editorconfig
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.AssemblyInfoInputs.cache
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.AssemblyInfo.cs
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.csproj.CoreCompileInputs.cache
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.sourcelink.json
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.dll
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\refint\Conexus.Client.dll
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\Conexus.Client.pdb
+c:\dev\conexus\src\dotnet\Conexus.Client\obj\Debug\net8.0\ref\Conexus.Client.dll

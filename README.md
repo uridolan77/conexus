@@ -16,6 +16,12 @@ Admin login
 
 This is not a theoretical rewrite. Start by harvesting the relevant LLM code from KGB, then simplify it into a standalone gateway.
 
+### Contract and app integration readiness
+
+- **OpenAPI (v1, implementation-aligned):** `contracts/openapi/conexus.v1.yaml`
+- **Readiness assessment (Agentor / Athanor / .NET):** `docs/readiness/CONEXUS_APP_INTEGRATION_READINESS.md`
+- **Minimal .NET client (health + chat):** `src/dotnet/Conexus.Client/README.md`
+
 Read first:
 
 1. `docs/00_START_HERE.md`

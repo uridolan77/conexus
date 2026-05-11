@@ -1,0 +1,10 @@
+{
+  "model": "conexus-fast",
+  "messages": [
+    { "role": "system", "content": "You are a precise assistant." },
+    { "role": "user", "content": "Say hello from Conexus in one sentence." }
+  ],
+  "max_tokens": 256,
+  "temperature": 0.2,
+  "stream": false
+}

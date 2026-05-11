@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conexus.dev/schemas/routing-policy.forward-looking.schema.json",
+  "title": "Conexus routing policy (forward-looking multi-provider catalog)",
+  "description": "Conexus v0 loads Anthropic/OpenAI alias pairs from YAML (see model-aliases-routing.schema.json). This richer catalog shape is not loaded by the backend today.",
+  "x-contract-status": "not-implemented",
+  "type": "object",
+  "required": ["policy_version", "aliases", "models"],
+  "properties": {
+    "policy_version": { "type": "string" },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["primary"],
+        "properties": {
+          "primary": {
+            "type": "object",
+            "required": ["provider", "model"],
+            "properties": {
+              "provider": { "type": "string" },
+              "model": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "fallback_chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["provider", "model"],
+              "properties": {
+                "provider": { "type": "string" },
+                "model": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required_capabilities": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["provider", "model", "capabilities", "enabled"],
+        "properties": {
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "capabilities": { "type": "array", "items": { "type": "string" } },
+          "enabled": { "type": "boolean" },
+          "context_window": { "type": ["integer", "null"] },
+          "cost_tier": { "type": "string", "enum": ["low", "balanced", "high"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

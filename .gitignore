@@ -26,3 +26,6 @@ npm-debug.log*
 dist/
 build/
 frontend/tsconfig.tsbuildinfo
+
+# Extracted incoming work packages (keep the zip; do not commit unpacked trees)
+docs/_incoming/conexus-v1-contracts-work-package/

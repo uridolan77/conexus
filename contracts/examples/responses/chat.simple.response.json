@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl-example-request-id",
+  "object": "chat.completion",
+  "created": 1715432100,
+  "model": "gpt-4o-mini",
+  "provider": "openai",
+  "fallback_used": false,
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Hello from Conexus." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 24,
+    "completion_tokens": 6,
+    "total_tokens": 30
+  }
+}

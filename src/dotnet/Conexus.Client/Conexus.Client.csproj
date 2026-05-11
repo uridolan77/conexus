@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Conexus.Client</RootNamespace>
+    <PackageId>Conexus.Client</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Minimal typed .NET client for the Conexus gateway (health + OpenAI-compatible chat). No provider SDKs.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+  </ItemGroup>
+
+</Project>
