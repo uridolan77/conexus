@@ -27,5 +27,6 @@ public sealed record ChatCompletionResponse(
     string Model,
     string Provider,
     bool FallbackUsed,
+    string RequestId,
     IReadOnlyList<ChatChoice> Choices,
     TokenUsage Usage);

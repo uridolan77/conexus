@@ -367,6 +367,7 @@ async def test_chat_completions_happy_path(
     }
     request_id = body["id"].removeprefix("chatcmpl-")
     assert request_id
+    assert body["request_id"] == request_id
     # Success response advertises the request id so callers can correlate logs.
     assert response.headers[REQUEST_ID_HEADER] == request_id
 
@@ -1813,3 +1814,139 @@ async def test_gateway_request_with_unknown_gateway_profile_returns_400(
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "unknown_gateway_profile_id"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_preserves_x_conexus_request_id_in_db_and_json(
+    client, seeded, db_sessionmaker
+) -> None:
+    plaintext, _project, _api_key = seeded
+    custom = "agentor-correlation-abc-123"
+    stub = _StubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        response = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                REQUEST_ID_HEADER: custom,
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["request_id"] == custom
+    assert body["id"] == f"chatcmpl-{custom}"
+    assert response.headers[REQUEST_ID_HEADER] == custom
+
+    async with db_sessionmaker() as session:
+        row = (
+            await session.execute(
+                select(models.GatewayRequest).where(models.GatewayRequest.request_id == custom)
+            )
+        ).scalar_one()
+        assert row.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_invalid_x_conexus_request_id_returns_400(client, seeded) -> None:
+    plaintext, _project, _api_key = seeded
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {plaintext}",
+            REQUEST_ID_HEADER: "bad id has spaces",
+        },
+        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"]["code"] == "invalid_conexus_request_id"
+    rid = body["detail"]["request_id"]
+    assert response.headers[REQUEST_ID_HEADER] == rid
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_reused_request_id_returns_409(client, seeded) -> None:
+    plaintext, _project, _api_key = seeded
+    custom = "reuse-test-id-789"
+    stub = _StubProvider(
+        result=ChatResult(
+            content="ok",
+            model="gpt-4o-mini",
+            provider="openai",
+            usage=TokenUsage(input_tokens=1, output_tokens=1),
+        )
+    )
+    _set_provider(stub)
+    try:
+        r1 = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                REQUEST_ID_HEADER: custom,
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert r1.status_code == 200
+        r2 = await client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {plaintext}",
+                REQUEST_ID_HEADER: custom,
+            },
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "again"}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_provider, None)
+
+    assert r2.status_code == 409
+    body = r2.json()
+    assert body["detail"]["code"] == "request_id_conflict"
+    assert body["detail"]["request_id"] == custom
+    assert r2.headers[REQUEST_ID_HEADER] == custom
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_compat_error_preserves_caller_request_id(client, seeded) -> None:
+    plaintext, _project, _api_key = seeded
+    cid = "compat-err-id-001"
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {plaintext}",
+            REQUEST_ID_HEADER: cid,
+        },
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {"name": "x", "parameters": {}}}],
+        },
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["detail"]["code"] == "tool_calls_not_supported"
+    assert body["detail"]["request_id"] == cid
+    assert response.headers[REQUEST_ID_HEADER] == cid
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_validation_error_includes_request_id_header(client, seeded) -> None:
+    plaintext, _project, _api_key = seeded
+    response = await client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {plaintext}"},
+        json={"model": "gpt-4o-mini", "messages": "not-a-list"},
+    )
+    assert response.status_code == 422
+    assert REQUEST_ID_HEADER in response.headers

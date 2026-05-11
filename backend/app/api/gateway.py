@@ -29,12 +29,13 @@ from app.schemas.openai_compat import (
 )
 from app.services.gateway_service import (
     GatewayClientError,
+    GatewayConflictError,
     GatewayLimitError,
     GatewayUpstreamError,
     run_chat_completion,
     run_chat_completion_stream,
 )
-from app.services.request_log_service import new_request_id
+from app.services.request_log_service import is_valid_client_request_id, new_request_id
 from app.llm.types import ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,16 @@ def _to_chat_messages(messages: list[ChatMessageBody]) -> list[ChatMessage]:
     return [{"role": m.role, "content": m.content} for m in messages]
 
 
-def _raise_compat_error(*, code: str, message: str) -> None:
-    request_id = new_request_id()
+def _compat_error_request_id(client_request_id: str | None) -> str:
+    if client_request_id is not None:
+        return client_request_id
+    return new_request_id()
+
+
+def _raise_compat_error(
+    *, code: str, message: str, client_request_id: str | None
+) -> None:
+    request_id = _compat_error_request_id(client_request_id)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=_error_detail(code, message, request_id),
@@ -57,23 +66,26 @@ def _raise_compat_error(*, code: str, message: str) -> None:
     )
 
 
-def _validate_compat(body: ChatCompletionsBody) -> None:
+def _validate_compat(body: ChatCompletionsBody, *, client_request_id: str | None) -> None:
     if body.n is not None and body.n != 1:
         _raise_compat_error(
             code="n_not_supported",
             message="Only n=1 is supported.",
+            client_request_id=client_request_id,
         )
 
     if body.tools is not None or body.tool_choice is not None:
         _raise_compat_error(
             code="tool_calls_not_supported",
             message="Tool calls are not supported yet.",
+            client_request_id=client_request_id,
         )
 
     if body.logprobs is not None or body.top_logprobs is not None:
         _raise_compat_error(
             code="logprobs_not_supported",
             message="logprobs are not supported yet.",
+            client_request_id=client_request_id,
         )
 
     if body.response_format is not None:
@@ -82,6 +94,7 @@ def _validate_compat(body: ChatCompletionsBody) -> None:
             _raise_compat_error(
                 code="response_format_not_supported",
                 message="Only response_format.type='text' is supported.",
+                client_request_id=client_request_id,
             )
 
 
@@ -136,6 +149,14 @@ def _sse_error_payload(*, exc: Exception | None, request_id: str) -> dict[str, o
 def register_gateway_exception_handlers(app: FastAPI) -> None:
     """Map gateway domain errors to the same JSON bodies as legacy HTTPException paths."""
 
+    @app.exception_handler(GatewayConflictError)
+    async def _gateway_conflict_error(_request: Request, exc: GatewayConflictError) -> Response:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": _error_detail(exc.code, exc.message, exc.request_id)},
+            headers={REQUEST_ID_HEADER: exc.request_id},
+        )
+
     @app.exception_handler(GatewayClientError)
     async def _gateway_client_error(_request: Request, exc: GatewayClientError) -> Response:
         return JSONResponse(
@@ -181,7 +202,25 @@ async def chat_completions(
     ],
     provider: Annotated[LLMProvider, Depends(get_provider)],
 ) -> ChatCompletionsResponse | StreamingResponse:
-    _validate_compat(body)
+    raw_header = request.headers.get(REQUEST_ID_HEADER)
+    if raw_header is not None and raw_header.strip():
+        candidate = raw_header.strip()
+        if not is_valid_client_request_id(candidate):
+            err_rid = new_request_id()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_error_detail(
+                    "invalid_conexus_request_id",
+                    "X-Conexus-Request-Id must be 1-64 characters from [A-Za-z0-9_-].",
+                    err_rid,
+                ),
+                headers={REQUEST_ID_HEADER: err_rid},
+            )
+        client_request_id = candidate
+    else:
+        client_request_id = None
+
+    _validate_compat(body, client_request_id=client_request_id)
     created = int(time.time())
     domain_key = request.headers.get("X-Conexus-Domain-Key")
     explicit_gateway_profile_id = request.headers.get("X-Conexus-Gateway-Profile-Id") or request.headers.get(
@@ -199,6 +238,7 @@ async def chat_completions(
             temperature=body.temperature,
             domain_key=domain_key,
             explicit_gateway_profile_id=explicit_gateway_profile_id,
+            client_request_id=client_request_id,
         )
 
         request_id = stream_result.request_id
@@ -256,6 +296,7 @@ async def chat_completions(
         temperature=body.temperature,
         domain_key=domain_key,
         explicit_gateway_profile_id=explicit_gateway_profile_id,
+        client_request_id=client_request_id,
     )
 
     chat_result = result.result
@@ -266,6 +307,7 @@ async def chat_completions(
         model=chat_result.model,
         provider=chat_result.provider,
         fallback_used=chat_result.fallback_used,
+        request_id=result.request_id,
         choices=[
             {
                 "index": 0,

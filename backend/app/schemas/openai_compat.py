@@ -58,5 +58,6 @@ class ChatCompletionsResponse(BaseModel):
     model: str
     provider: str
     fallback_used: bool
+    request_id: str
     choices: list[_Choice]
     usage: _Usage

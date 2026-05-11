@@ -14,6 +14,7 @@ logs for a single client call.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -21,9 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import GatewayRequest
 
+_CLIENT_REQUEST_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
 
 def new_request_id() -> str:
     return uuid.uuid4().hex
+
+
+def is_valid_client_request_id(value: str) -> bool:
+    """True if *value* is safe to store as ``gateway_requests.request_id`` (caller-supplied)."""
+    return bool(_CLIENT_REQUEST_ID_RE.fullmatch(value))
 
 
 async def start_request(

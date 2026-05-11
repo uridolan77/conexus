@@ -45,11 +45,11 @@ This is what other apps should target **today**.
 | --- | --- |
 | **Base URL** | Deployed Conexus API origin (e.g. `https://api.example.com` or `http://localhost:8000` locally). |
 | **Auth** | `Authorization: Bearer <project_api_key>` for `POST /v1/chat/completions`. |
-| **Optional headers** | `X-Conexus-Domain-Key`, `X-Conexus-Gateway-Profile-Id` (or legacy `X-Conexus-Adapter-Profile-Id`) for adapter-profile routing context. |
+| **Optional headers** | `X-Conexus-Domain-Key`, `X-Conexus-Gateway-Profile-Id` (or legacy `X-Conexus-Adapter-Profile-Id`) for adapter-profile routing context. Optional **`X-Conexus-Request-Id`**: when sent and valid (`1–64` chars from `[A-Za-z0-9_-]`), Conexus uses it as the gateway `request_id` (must be unique per new request); when omitted, Conexus generates a UUID-like id. |
 | **Chat request body** | OpenAI-compatible subset: `model`, `messages[]` with `role` in `system|user|assistant`, `content`, optional `max_tokens`, `temperature`, `stream`, plus ignored/extra fields per `ChatCompletionsRequest` schema. |
-| **Chat response body (JSON)** | `id`, `object`=`chat.completion`, `created` (unix int), `model`, `provider`, `fallback_used`, `choices[]`, `usage` with `prompt_tokens`, `completion_tokens`, `total_tokens`. |
-| **Correlation** | Response header **`X-Conexus-Request-Id`**; JSON `id` uses `chatcmpl-{request_id}`. |
-| **Errors** | Often `{"detail": {"code", "message", "request_id", ...}}` for gateway domain errors; FastAPI validation may produce different `422` shapes. |
+| **Chat response body (JSON)** | `id`, `object`=`chat.completion`, `created` (unix int), `model`, `provider`, `fallback_used`, **`request_id`** (same as `X-Conexus-Request-Id`), `choices[]`, `usage` with `prompt_tokens`, `completion_tokens`, `total_tokens`. |
+| **Correlation** | Response header **`X-Conexus-Request-Id`**; JSON **`request_id`**; `id` uses `chatcmpl-{request_id}`. Callers may supply their own id via the request header when it is unique. |
+| **Errors** | Often `{"detail": {"code", "message", "request_id", ...}}` for gateway domain errors; reused caller `X-Conexus-Request-Id` returns **409** `request_id_conflict`. `POST /v1/chat/completions` **422** responses include `X-Conexus-Request-Id` (generated) when body validation fails. |
 | **Model alias behavior** | Request `model` may be a configured alias key (see `model_aliases.yaml`) or a concrete provider model id with known prefixes. |
 | **Timeouts / retries** | Clients should use conservative HTTP timeouts and **retry only on idempotent reads** or application-level idempotency keys (not yet first-class on gateway). Streaming retries are inherently lossy. |
 
@@ -63,11 +63,11 @@ This is what other apps should target **today**.
 | Embeddings | **Not implemented** | Many Athanor flows | No `POST /v1/embeddings` | P0 for embedding consumers |
 | Route preview | **Not implemented** | Pre-flight routing visibility | No `POST /v1/route` | P2 |
 | Model aliases | YAML + router | Stable alias names | No `GET /v1/models` catalog | P1 |
-| Trace IDs | `X-Conexus-Request-Id` only | Portable trace document | No `trace_id` body field; no `GET /v1/traces/...` | P1 |
+| Trace IDs | `X-Conexus-Request-Id` + body `request_id` + BO logs | Portable trace document | No `trace_id` body field; no `GET /v1/traces/...` | P1 |
 | Usage lookup | Admin + DB | Caller-facing `GET /v1/usage/...` | Not implemented for project keys | P1 |
 | Request logs | BO + DB | Ops | No public API (by design today) | P2 |
 | Cost estimation | Partial via gateway + pricing | Budgeting | Not exposed as standalone public API | P2 |
-| Error normalization | Good for gateway domain errors | Uniform across all errors | `422` validation shape differs | P2 |
+| Error normalization | Good for gateway domain errors; 422 on chat includes `X-Conexus-Request-Id` header | Uniform across all errors | `422` body remains FastAPI `detail` list shape | P2 |
 | Auth / project keys | Implemented | Multi-tenant isolation | OK | — |
 | Internal service key | Implemented for `/internal/...` | adaptation services | OK when enabled | — |
 | BO visibility | Implemented | Operators | OK | — |
@@ -82,7 +82,7 @@ This is what other apps should target **today**.
 | Call chat completions | **Yes** with project API key and OpenAI-compatible payload. |
 | Model aliases | **Yes** within configured YAML aliases and concrete ids. |
 | Stable error shape | **Partially** — gateway errors are structured; validation errors differ. |
-| Trace IDs | **Partial** — use `X-Conexus-Request-Id` / `id`; not the work-package `trace_id` JSON field. |
+| Trace IDs | **Yes** — use `X-Conexus-Request-Id`, JSON `request_id`, and `id`; optional caller-owned ids when unique. Not the work-package `trace_id` JSON field. |
 | Retrieve usage via HTTP | **No** public usage-by-id API. |
 | Streaming | **Yes**, SSE; client must parse stream; usage may be missing on some streams. |
 | Tool calls | **No** — rejected with `tool_calls_not_supported`. |
@@ -138,7 +138,7 @@ It targets **only** implemented routes (`GET /health`, optional `GET /readyz`, `
 
 1. **Embeddings:** implement `POST /v1/embeddings` (or explicitly document that Athanor must not depend on Conexus for embeddings) before claiming Athanor readiness.
 2. **Contract discipline:** treat `contracts/openapi/conexus.v1.yaml` as authoritative for cross-repo work; block merges that drift OpenAPI from code without an intentional version bump.
-3. **Clarify correlation contract:** document whether clients should standardize on `X-Conexus-Request-Id` vs a future `trace_id` field — both names appear across historical docs.
+3. **Clarify correlation contract:** callers should prefer **`X-Conexus-Request-Id`** (optional) + response **`request_id`** for cross-system correlation; a separate `trace_id` JSON field is not implemented.
 
 ### P1
 

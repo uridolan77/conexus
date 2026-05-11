@@ -7,8 +7,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from app.api import (
     admin_adaptation,
@@ -28,7 +30,7 @@ from app.api import (
     internal_adapter_profiles,
     internal_domains,
 )
-from app.api.gateway import register_gateway_exception_handlers
+from app.api.gateway import REQUEST_ID_HEADER, register_gateway_exception_handlers
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
@@ -36,7 +38,7 @@ from app.llm.dependencies import shutdown_provider
 from app.services.admin_login_rate_limiter import (
     should_warn_admin_login_rate_limiter_in_memory_prod,
 )
-from app.services.secret_crypto import SecretCryptoError, ensure_encryption_ready
+from app.services.request_log_service import new_request_id
 from app.llm.model_alias_config import ModelAliasConfigError, load_model_alias_config
 
 configure_logging(settings.log_level)
@@ -146,6 +148,13 @@ def create_app() -> FastAPI:
     app.include_router(internal_domains.router)
 
     register_gateway_exception_handlers(app)
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        headers: dict[str, str] = {}
+        if request.method == "POST" and request.url.path.rstrip("/") == "/v1/chat/completions":
+            headers[REQUEST_ID_HEADER] = new_request_id()
+        return JSONResponse(status_code=422, content={"detail": exc.errors()}, headers=headers)
 
     @app.exception_handler(ModelAliasConfigError)
     async def _handle_model_alias_config(_request, exc: ModelAliasConfigError):

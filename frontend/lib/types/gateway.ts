@@ -281,9 +281,13 @@ export type GatewayAdapterProfileListResponse = {
 
 export type ChatCompletionsResponse = {
   id: string;
+  object?: string;
+  created?: number;
   model: string;
   provider: string;
   fallback_used: boolean;
+  /** Same as response header `X-Conexus-Request-Id` and gateway log `request_id`. */
+  request_id: string;
   choices: Array<{
     index: number;
     message: { role: string; content: string };

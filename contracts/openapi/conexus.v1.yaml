@@ -104,6 +104,17 @@ paths:
           schema:
             type: string
           description: Optional explicit gateway profile id (alias `X-Conexus-Adapter-Profile-Id`).
+        - name: X-Conexus-Request-Id
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 64
+            pattern: "^[a-zA-Z0-9_-]{1,64}$"
+          description: |
+            Optional caller correlation id. When present and valid, Conexus stores it as the
+            gateway ``request_id`` (must be unique per new request). When omitted, Conexus generates one.
+            Echoed on every response in this header and, for non-streaming JSON, in ``request_id``.
       requestBody:
         required: true
         content:
@@ -140,6 +151,11 @@ paths:
                 $ref: "#/components/schemas/HttpErrorWrapper"
         "422":
           description: Request body failed FastAPI/Pydantic validation
+          headers:
+            X-Conexus-Request-Id:
+              description: Present for POST /v1/chat/completions only; generated when body validation fails.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -157,6 +173,16 @@ paths:
                 $ref: "#/components/schemas/HttpErrorWrapper"
         "502":
           description: Upstream provider error surfaced by Conexus
+          headers:
+            X-Conexus-Request-Id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HttpErrorWrapper"
+        "409":
+          description: Reused X-Conexus-Request-Id for a new gateway request (unique constraint)
           headers:
             X-Conexus-Request-Id:
               schema:
@@ -501,7 +527,7 @@ components:
 
     ChatCompletionsResponse:
       type: object
-      required: [id, object, created, model, provider, fallback_used, choices, usage]
+      required: [id, object, created, model, provider, fallback_used, request_id, choices, usage]
       properties:
         id:
           type: string
@@ -519,6 +545,9 @@ components:
           type: string
         fallback_used:
           type: boolean
+        request_id:
+          type: string
+          description: Same value as response header X-Conexus-Request-Id; gateway log row key.
         choices:
           type: array
           items:

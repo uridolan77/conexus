@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyDescriptionAttribute(("Minimal typed .NET client for the Conexus gateway (health + OpenAI-compatible cha" +
     "t). No provider SDKs."))]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("0.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+54ff070156b245e50da7940bb7de2118a92c83d8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+937114fba725e3f109c2d2a43e563c3d8f9a5a8e")]
 [assembly: System.Reflection.AssemblyProductAttribute("Conexus.Client")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Conexus.Client")]
 [assembly: System.Reflection.AssemblyVersionAttribute("0.1.0.0")]

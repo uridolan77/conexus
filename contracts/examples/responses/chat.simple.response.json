@@ -5,6 +5,7 @@
   "model": "gpt-4o-mini",
   "provider": "openai",
   "fallback_used": false,
+  "request_id": "example-request-id",
   "choices": [
     {
       "index": 0,

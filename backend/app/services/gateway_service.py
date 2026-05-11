@@ -36,7 +36,12 @@ from app.llm.errors import (
 from app.llm.types import ChatMessage, ChatStreamChunk
 from app.db.models import Project, ProjectApiKey
 from app.services.gateway_context import GatewayResponse, GatewayStreamResponse
-from app.services.gateway_errors import GatewayClientError, GatewayLimitError, GatewayUpstreamError
+from app.services.gateway_errors import (
+    GatewayClientError,
+    GatewayConflictError,
+    GatewayLimitError,
+    GatewayUpstreamError,
+)
 from app.services.gateway_setup import (
     _finish_success_with_accounting,
     _record_failure,
@@ -49,6 +54,7 @@ logger = logging.getLogger(__name__)
 # Re-export for callers/tests that import from ``gateway_service``.
 __all__ = (
     "GatewayClientError",
+    "GatewayConflictError",
     "GatewayLimitError",
     "GatewayUpstreamError",
     "GatewayResponse",
@@ -70,6 +76,7 @@ async def run_chat_completion(
     temperature: float,
     domain_key: str | None = None,
     explicit_gateway_profile_id: str | None = None,
+    client_request_id: str | None = None,
 ) -> GatewayResponse:
     request_id, limit_reservation_id = await reserve_and_start_gateway_chat_request(
         sessionmaker=sessionmaker,
@@ -79,6 +86,7 @@ async def run_chat_completion(
         max_tokens=max_tokens,
         domain_key=domain_key,
         explicit_gateway_profile_id=explicit_gateway_profile_id,
+        preferred_request_id=client_request_id,
     )
 
     started = time.monotonic()
@@ -192,6 +200,7 @@ async def run_chat_completion_stream(
     temperature: float,
     domain_key: str | None = None,
     explicit_gateway_profile_id: str | None = None,
+    client_request_id: str | None = None,
 ) -> GatewayStreamResponse:
     request_id, limit_reservation_id = await reserve_and_start_gateway_chat_request(
         sessionmaker=sessionmaker,
@@ -201,6 +210,7 @@ async def run_chat_completion_stream(
         max_tokens=max_tokens,
         domain_key=domain_key,
         explicit_gateway_profile_id=explicit_gateway_profile_id,
+        preferred_request_id=client_request_id,
     )
 
     started = time.monotonic()

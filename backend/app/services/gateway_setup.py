@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -26,7 +27,11 @@ from app.db.models import (
     Project,
     ProjectApiKey,
 )
-from app.services.gateway_errors import GatewayClientError, GatewayLimitError
+from app.services.gateway_errors import (
+    GatewayClientError,
+    GatewayConflictError,
+    GatewayLimitError,
+)
 from app.services.project_limit_reservation_service import (
     reconcile_gateway_request,
     reserve_gateway_request,
@@ -210,14 +215,32 @@ async def _reconcile_reservation(
             )
 
 
+def _is_request_id_unique_violation(exc: IntegrityError) -> bool:
+    msg = str(exc.orig) if getattr(exc, "orig", None) is not None else str(exc)
+    lowered = msg.lower()
+    return "request_id" in lowered and ("unique" in lowered or "duplicate key" in lowered)
+
+
 async def _with_log_session(
     sessionmaker: async_sessionmaker[AsyncSession],
     func: Callable[[AsyncSession], Awaitable[None]],
+    *,
+    request_id_conflict_hint: str | None = None,
 ) -> None:
     """Run *func* in a fresh session and commit it."""
     async with sessionmaker() as session:
-        await func(session)
-        await session.commit()
+        try:
+            await func(session)
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            if request_id_conflict_hint is not None and _is_request_id_unique_violation(exc):
+                raise GatewayConflictError(
+                    "This X-Conexus-Request-Id is already in use for a gateway request.",
+                    code="request_id_conflict",
+                    request_id=request_id_conflict_hint,
+                ) from exc
+            raise
 
 
 async def _load_row(
@@ -316,9 +339,12 @@ async def reserve_and_start_gateway_chat_request(
     max_tokens: int,
     domain_key: str | None,
     explicit_gateway_profile_id: str | None,
+    preferred_request_id: str | None = None,
 ) -> tuple[str, str | None]:
     """Reserve hard limits, insert ``started`` gateway row, or raise limit/client errors."""
-    request_id = new_request_id()
+    caller_supplied_request_id = preferred_request_id is not None
+    request_id = preferred_request_id if caller_supplied_request_id else new_request_id()
+    conflict_hint = request_id if caller_supplied_request_id else None
 
     try:
         limit_reservation_id = await _reserve_hard_limit_or_raise(
@@ -347,7 +373,7 @@ async def reserve_and_start_gateway_chat_request(
                 error_message=blocked.error_message,
             )
 
-        await _with_log_session(sessionmaker, _log_blocked)
+        await _with_log_session(sessionmaker, _log_blocked, request_id_conflict_hint=conflict_hint)
         raise GatewayLimitError(
             blocked.error_message,
             code=blocked.error_code,
@@ -384,7 +410,7 @@ async def reserve_and_start_gateway_chat_request(
         )
 
     try:
-        await _with_log_session(sessionmaker, _start)
+        await _with_log_session(sessionmaker, _start, request_id_conflict_hint=conflict_hint)
     except GatewayClientError as exc:
         error_code = exc.code
         error_message = str(exc)
@@ -410,7 +436,7 @@ async def reserve_and_start_gateway_chat_request(
                 error_message=error_message,
             )
 
-        await _with_log_session(sessionmaker, _log_client_error)
+        await _with_log_session(sessionmaker, _log_client_error, request_id_conflict_hint=conflict_hint)
         await _reconcile_reservation(
             sessionmaker,
             limit_reservation_id=limit_reservation_id,

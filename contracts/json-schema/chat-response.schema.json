@@ -4,7 +4,7 @@
   "title": "Conexus Chat Completions Response (non-streaming)",
   "description": "Matches backend/app/schemas/openai_compat.py ChatCompletionsResponse.",
   "type": "object",
-  "required": ["id", "object", "created", "model", "provider", "fallback_used", "choices", "usage"],
+  "required": ["id", "object", "created", "model", "provider", "fallback_used", "request_id", "choices", "usage"],
   "properties": {
     "id": { "type": "string" },
     "object": { "type": "string", "const": "chat.completion" },
@@ -12,6 +12,7 @@
     "model": { "type": "string" },
     "provider": { "type": "string" },
     "fallback_used": { "type": "boolean" },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
     "choices": {
       "type": "array",
       "items": {

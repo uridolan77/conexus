@@ -29,6 +29,17 @@ class GatewayUpstreamError(ConexusDomainError):
         self.request_id = request_id
 
 
+class GatewayConflictError(ConexusDomainError):
+    """Caller-visible 409 — e.g. reused ``X-Conexus-Request-Id`` for a new gateway row."""
+
+    http_status = 409
+
+    def __init__(self, message: str, *, code: str, request_id: str) -> None:
+        super().__init__(message, request_id=request_id)
+        self.code = code
+        self.request_id = request_id
+
+
 class GatewayLimitError(ConexusDomainError):
     """Caller-visible 429 — project hard limit exceeded."""
 
